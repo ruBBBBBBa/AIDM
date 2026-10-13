@@ -11,6 +11,8 @@ from bs4 import BeautifulSoup, FeatureNotFound
 from crewai import Agent, LLM
 from pydantic import BaseModel, Field
 
+import logging
+
 
 
 
@@ -52,6 +54,7 @@ TEXT_FIELDS = {
 VALID_STATUSES = {"pending fields", "completed"}
 PROBLEM_CASE_PATH = Path("data_structures/problem_case.json")
 AGENTS_FILE = Path("data_structures/agents.yaml")
+logger = logging.getLogger("aidm")
 
 #Prueba para fallback por si uno de los modelos no llega a terminar, se puede usar otro modelo de reserva con mas tokens
 MODEL_RULES = {
@@ -143,45 +146,59 @@ def _normalize_update_value(field_key: str, value: str | List[str], operation: s
 
     raise ValueError(f"El campo {field_key} no está contemplado en la configuración de la tool.")
 
+# AÑADIDO: apply_field_update y
+# SUSTITUIDA: update_problem_scope_tool
+
+def _apply_field_update(problem_case: dict, upd: FieldUpdate) -> None:
+    """Valida UN cambio y, si es válido, lo aplica. Si lanza ValueError, no ha tocado nada."""
+    field_key = upd.field_key
+
+    if field_key not in problem_case:
+        raise ValueError(f"Campo no válido: {field_key}")
+    if field_key == "status":
+        raise ValueError("El campo 'status' no puede actualizarse dentro de 'updates'; usa 'update_status'.")
+
+    field_data = problem_case[field_key]
+    if not isinstance(field_data, dict) or "value" not in field_data:
+        raise ValueError(f"El campo {field_key} no sigue la estructura esperada con 'value'.")
+
+    normalized_value = _normalize_update_value(field_key, upd.value, upd.operation)
+    current_value = field_data["value"]
+
+    if upd.operation == "replace":
+        field_data["value"] = normalized_value
+        return
+
+    if not isinstance(current_value, list):
+        raise ValueError(f"El campo {field_key} no es una lista.")
+
+    new_items = normalized_value if isinstance(normalized_value, list) else [normalized_value]
+    if upd.operation == "append":
+        field_data["value"] = current_value + new_items
+    else:  # merge: añade solo lo que no estaba
+        merged = current_value[:]
+        for item in new_items:
+            if item not in merged:
+                merged.append(item)
+        field_data["value"] = merged
+
 
 def update_problem_scope_tool(request: ProblemScopeUpdateRequest) -> dict:
     with open(PROBLEM_CASE_PATH, "r", encoding="utf-8") as f:
         problem_case = json.load(f)
 
+    updated_fields: list[str] = []
+    rejected: list[dict[str, str]] = []
+
+    # Cada cambio se valida por separado: uno inválido se descarta y los demás se guardan.
     for upd in request.updates:
-        field_key = upd.field_key
-
-        # Validacion de que el campo existe en el JSON y sigue la estructura esperada
-        if field_key not in problem_case:
-            raise ValueError(f"Campo no válido: {field_key}")
-
-        if field_key == "status":
-            raise ValueError("El campo 'status' no puede actualizarse dentro de 'updates'; usa 'update_status'.")
-
-        field_data = problem_case[field_key]
-        if not isinstance(field_data, dict) or "value" not in field_data:
-            raise ValueError(f"El campo {field_key} no sigue la estructura esperada con 'value'.")
-
-        normalized_value = _normalize_update_value(field_key, upd.value, upd.operation)
-        current_value = problem_case[field_key]["value"]
-
-        if upd.operation == "replace":
-            problem_case[field_key]["value"] = normalized_value
-            continue
-
-        if not isinstance(current_value, list):
-            raise ValueError(f"El campo {field_key} no es una lista.")
-
-        new_items = normalized_value if isinstance(normalized_value, list) else [normalized_value]
-
-        if upd.operation == "append":
-            problem_case[field_key]["value"].extend(new_items)
-        else:
-            merged = current_value[:]
-            for item in new_items:
-                if item not in merged:
-                    merged.append(item)
-            problem_case[field_key]["value"] = merged
+        try:
+            _apply_field_update(problem_case, upd)
+            updated_fields.append(upd.field_key)
+        except ValueError as exc:
+            rejected.append({"field_key": upd.field_key, "reason": str(exc)})
+            # Solo el campo y el motivo, nunca el valor: puede llevar datos del cliente.
+            logger.warning("Cambio descartado en '%s': %s", upd.field_key, exc)
 
     if request.update_status is not None:
         if request.update_status not in VALID_STATUSES:
@@ -192,10 +209,12 @@ def update_problem_scope_tool(request: ProblemScopeUpdateRequest) -> dict:
         json.dump(problem_case, f, ensure_ascii=False, indent=2)
 
     return {
-        "message": "Problem scope actualizado correctamente",
-        "updated_fields": [u.field_key for u in request.updates],
+        "message": "Problem scope actualizado" + (f" ({len(rejected)} cambio(s) descartado(s))" if rejected else ""),
+        "updated_fields": updated_fields,
+        "rejected": rejected,
         "status": problem_case["status"],
     }
+
 
 
 def _recent_chat_transcript(chat_history: list[dict[str, str]] | None, max_messages: int = 6) -> str:

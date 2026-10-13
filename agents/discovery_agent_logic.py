@@ -6,6 +6,9 @@ from typing import Any
 import litellm
 from dotenv import load_dotenv
 
+import logging
+from pydantic import ValidationError
+
 from utils import (
     FieldUpdate,
     LIST_FIELDS,
@@ -17,6 +20,7 @@ from utils import (
 )
 
 load_dotenv(".env")
+logger = logging.getLogger("aidm")
 
 
 
@@ -97,13 +101,21 @@ def _parse_plan(raw_output: str, allowed_fields: set[str]) -> dict[str, Any]:
     return parsed
 
 
-def _apply_plan(plan: dict[str, Any]) -> None:
-    updates: list[FieldUpdate] = [FieldUpdate(**upd) for upd in plan.get("updates", [])]
+def _apply_plan(plan: dict[str, Any]) -> dict:
+# Cada cambio se construye por separado: si uno no tiene el formato esperado, se descarta solo ese.
+    updates: list[FieldUpdate] = []
+    for upd in plan.get("updates", []):
+        try:
+            updates.append(FieldUpdate(**upd))
+        except ValidationError as exc:
+            logger.warning("Cambio descartado en '%s': formato no válido (%s)",
+                           upd.get("field_key"), exc.errors()[0]["msg"])
+
     request = ProblemScopeUpdateRequest(
         updates=updates,
         update_status=plan.get("update_status"),
     )
-    update_problem_scope_tool(request)
+    return update_problem_scope_tool(request)
 
 # Fallback
 def _sync_status_with_content() -> None:
@@ -230,9 +242,9 @@ def run_agent(user_prompt, chat_history: list[dict[str, str]] | None = None):
     plan: dict[str, Any] = {"updates": [], "assistant_reply": "", "update_status": None}
     try:
         plan = _propose_plan_with_agent(user_prompt, chat_history)
-    except Exception:
-        # Si falla el LLM, se mantiene flujo de fallback determinista.
-        plan = {"updates": [], "assistant_reply": "", "update_status": None}
+    except Exception as exc:
+        # Los cambios inválidos ya se descartan uno a uno; aquí solo llega algo inesperado.
+        logger.error("No se pudo aplicar el plan del discovery: %s", exc)
 
     if plan.get("updates") or plan.get("update_status") is not None:
         try:
