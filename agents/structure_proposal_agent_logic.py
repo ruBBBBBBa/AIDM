@@ -4,7 +4,7 @@ import os
 from crewai import Agent, Crew, Process, Task
 from dotenv import load_dotenv
 
-from utils import load_agents_config, _recent_chat_transcript
+from utils import load_agents_config, _recent_chat_transcript, build_llm
 
 load_dotenv(".env")
 os.environ["OTEL_SDK_DISABLED"] = "true"
@@ -25,7 +25,7 @@ def build_structure_proposal(problem_case, chat_history: list[dict[str, str]] | 
         role = agent_data.get("role"),
         goal = agent_data.get("goal"),
         backstory = agent_data.get("backstory"),
-        llm = model_name,
+        llm = build_llm(model_name),
         verbose=False,
         allow_delegation=False,
     )

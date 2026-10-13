@@ -5,27 +5,27 @@
   },
   "tamaño_empresa": {
     "description": "Tamaño de la empresa (startup, pyme, enterprise) o número aproximado de empleados",
-    "value": "pyme de unos 350 empleados"
+    "value": "Pyme de ~350 empleados"
   },
   "sector": {
     "description": "Sector de actividad de la empresa (retail, pharma, logística, finanzas...)",
-    "value": "distribución farmacéutica"
+    "value": "Distribución farmacéutica"
   },
   "tiene_equipo_datos": {
     "description": "Si la empresa tiene equipo de datos interno o depende de externos para el desarrollo y mantenimiento",
-    "value": "no mencionado"
+    "value": "Sí, equipo técnico interno de 22 personas (15 senior, 7 junior) que operará y mantendrá la solución tras la entrega"
   },
   "tipo_de_servicio": {
     "description": "Texto legible de negocio/técnico - Tipo de servicio solicitado por el cliente",
-    "value": "implantación de plataforma de datos con componente predictivo"
+    "value": "Plataforma de datos (lakehouse) para unificar ventas, stock y logística, con modelo ML de previsión de demanda y visualización en Power BI"
   },
   "objetivo_del_proyecto": {
     "description": "Objetivos principales del proyecto o caso de uso identificado",
-    "value": "unificar información de ventas, stock y logística para incorporar un modelo de previsión de demanda"
+    "value": "Unificar ventas, stock y logística en una plataforma de datos única con modelo ML de previsión de demanda, para eliminar roturas de stock y reducir el exceso de capital inmovilizado"
   },
   "modelo_de_despliegue": {
     "description": "Modelo de despliegue preferido por el cliente (donde vivira la solución) (on-premises, cloud, híbrido...)",
-    "value": "cloud"
+    "value": "Cloud en Azure"
   },
   "cloud_provider": {
     "description": "Proveedor de nube detectado preferido por el cliente (Azure, AWS, GCP...)",
@@ -33,7 +33,7 @@
   },
   "tipo_de_arquitectura": {
     "description": "Una simplificación de la forma de solución. Estilo de arquitectura preferido por el cliente",
-    "value": "enfoque lakehouse con capas medallion"
+    "value": "Lakehouse con arquitectura medallion (capas bronze/silver/gold)"
   },
   "herramienta_de_visualizacion": {
     "description": "Herramienta de visualización preferida por el cliente si se ha detectado alguna (Power BI, Tableau, Looker...)",
@@ -41,49 +41,57 @@
   },
   "enfoque_ai": {
     "description": "Qué papel juega la IA. Enfoque de inteligencia artificial preferido por el cliente para su proyecto",
-    "value": "previsión de demanda mediante machine learning"
+    "value": "Machine Learning supervisado para previsión de demanda"
   },
   "integration_scope": {
     "description": "Ámbito de integración de datos, qué nivel de integración parece requerir",
-    "value": "integración de datos de tres orígenes: ERP, sistema de almacén y CRM de ventas"
+    "value": "Integración de datos de ventas, stock y logística desde SAP Business One (ERP), SQL Server (almacén propio) y Salesforce (CRM)"
   },
   "volumen_de_datos": {
     "description": "Volumen aproximado de datos a gestionar (GB, TB, PB), frecuencia de generación y principales fuentes de datos",
-    "value": "2 TB de histórico acumulado, con generación diaria de unos pocos GB"
+    "value": "2 TB de datos históricos, pocos GB/día de nueva generación; fuentes principales: SAP Business One, SQL Server y Salesforce"
   },
   "madurez_analitica_actual": {
     "description": "Nivel actual de madurez analítica del cliente: ¿tienen DWH, BI, solo Excel o ninguna herramienta? ¿Qué usan hoy?",
-    "value": "Actualmente utilizan Excel para consolidar informes de ventas de forma manual semanal, sin data warehouse ni plataforma de BI en producción"
+    "value": "Baja: reporting manual en Excel semanal, sin DWH ni herramientas BI"
   },
   "tamano_equipo_tecnico": {
     "description": "Tamaño del equipo técnico del cliente que operará y mantendrá la solución una vez entregada",
-    "value": "22 personas (15 seniors y 7 juniors)"
+    "value": "22 personas (15 senior, 7 junior)"
   },
   "stack_tecnologico_actual": {
     "description": "Tecnologías, plataformas y herramientas que el cliente ya tiene en uso (ERP, CRM, cloud, bases de datos...)",
-    "value": "SAP Business One como ERP, sistema propio de gestión de almacén sobre SQL Server, Salesforce como CRM, Excel para analítica"
+    "value": "SAP Business One (ERP), SQL Server (almacén propio), Salesforce (CRM), Excel para reporting manual"
   },
   "restriccion_presupuestaria": {
     "description": "Rango o restricción presupuestaria orientativa para el proyecto",
-    "value": "150.000 a 200.000 euros"
+    "value": "150–200 k€"
   },
   "plazo_objetivo": {
     "description": "Plazo objetivo para tener la solución operativa o un primer MVP entregado",
-    "value": "3 o 4 meses"
+    "value": "MVP en 3–4 meses con alcance acotado"
   },
   "regulacion_y_compliance": {
     "description": "Normativas, regulaciones o requisitos de compliance que aplican al proyecto (GDPR, HIPAA, ISO 27001...)",
-    "value": "trazabilidad del medicamento, normativa sanitaria, GDPR, objetivo de certificación en ISO 27001 a medio plazo"
+    "value": "Trazabilidad del medicamento, normativa sanitaria, RGPD; certificación ISO 27001 prevista a medio plazo"
   },
   "kpis_de_exito": {
     "description": "Métricas o KPIs concretos con los que el cliente medirá el éxito del proyecto",
-    "value": "reducción de las roturas de stock en al menos un 30%, disminución del inventario inmovilizado (capital liberado del almacén) y una exactitud del modelo de previsión de demanda por encima del 85%"
+    "value": "−30 % roturas de stock, reducción del inventario inmovilizado, precisión de previsión de demanda >85 %"
   },
   "evidencias": {
     "description": "Evidencias detectadas durante la conversación que respaldan la información extraída y el análisis realizado, incluyendo información adicional útil",
     "value": [
-      "El cliente busca resolver roturas de stock y exceso de capital parado en almacén",
-      "El cliente busca resultados tempranos y un MVP funcional con alcance acotado"
+      "Cliente identificado: FarmaNorte, distribuidora farmacéutica, pyme de ~350 empleados",
+      "Problemas de negocio declarados: roturas de stock y exceso de capital inmovilizado",
+      "Madurez analítica baja: Excel semanal manual, sin DWH ni BI",
+      "Fuentes de datos actuales: SAP Business One (ERP), SQL Server (almacén propio), Salesforce (CRM)",
+      "Volumen de datos: 2 TB de histórico, pocos GB/día de generación",
+      "Preferencias técnicas explícitas: Azure, lakehouse medallion, Power BI",
+      "Equipo técnico interno de 22 personas (15 senior, 7 junior) que operará la solución",
+      "Presupuesto declarado: 150–200 k€ con MVP en 3–4 meses y alcance acotado",
+      "Compliance: trazabilidad del medicamento, normativa sanitaria, RGPD, ISO 27001 a medio plazo",
+      "KPIs de éxito: −30 % roturas de stock, menos inventario inmovilizado, precisión de previsión >85 %"
     ]
   },
   "status": "completed"

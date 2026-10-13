@@ -8,8 +8,11 @@ from typing import List, Literal, Optional
 
 import litellm
 from bs4 import BeautifulSoup, FeatureNotFound
-from crewai import Agent
+from crewai import Agent, LLM
 from pydantic import BaseModel, Field
+
+
+
 
 litellm.drop_params = True
 
@@ -50,17 +53,39 @@ VALID_STATUSES = {"pending fields", "completed"}
 PROBLEM_CASE_PATH = Path("data_structures/problem_case.json")
 AGENTS_FILE = Path("data_structures/agents.yaml")
 
+#Prueba para fallback por si uno de los modelos no llega a terminar, se puede usar otro modelo de reserva con mas tokens
+MODEL_RULES = {
+    "groq/openai/gpt-oss-20b":  {"max_tokens": 4096, "fallback": "cloudflare/@cf/openai/gpt-oss-20b"},
+    "groq/openai/gpt-oss-120b": {"max_tokens": 6000, "fallback": "cloudflare/@cf/openai/gpt-oss-120b"},
+}
+FALLBACK_MAX_TOKENS = 6000
+
 def load_problem_case() -> dict[str, Any]:
     with open(PROBLEM_CASE_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
+
     
+def build_llm(model_name: str):
+    """LLM para CrewAI con reintentos, tope de salida explícito y modelo de reserva."""
+    if model_name.startswith("gemini/"):
+        return model_name  # cliente nativo de CrewAI, no admite estos parámetros
+    rules = MODEL_RULES.get(model_name, {})
+    params = {"num_retries": 2}
+    # Cloudflare corta a 256 tokens si no se le indica un tope
+    max_tokens = rules.get("max_tokens") or (4096 if model_name.startswith("cloudflare/") else None)
+    if max_tokens:
+        params["max_tokens"] = max_tokens
+    if rules.get("fallback"):
+        params["fallbacks"] = [{"model": rules["fallback"], "max_tokens": FALLBACK_MAX_TOKENS}]
+    return LLM(model=model_name, **params)
+
 def _make_agent(key: str, agents_config, model_name) -> Agent:
     data = agents_config.get(key, {})
     return Agent(
         role=data.get("role"),
         goal=data.get("goal"),
         backstory=data.get("backstory"),
-        llm=model_name,
+        llm=build_llm(model_name),
         verbose=False,
         allow_delegation=False,
     )

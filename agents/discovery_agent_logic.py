@@ -210,6 +210,7 @@ def _propose_plan_with_agent(user_prompt: str, chat_history: list[dict[str, str]
             {"role": "user", "content": user_message},
         ],
         temperature=0.1,
+        num_retries=3,
     )
 
     raw_output = response.choices[0].message.content or ""

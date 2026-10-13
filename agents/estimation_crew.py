@@ -10,7 +10,7 @@ import litellm
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel
 
-from utils import _make_agent, load_agents_config
+from utils import _make_agent, load_agents_config, build_llm
 
 
 def _patch_crewai_union_schema() -> None:
@@ -390,7 +390,7 @@ def run_estimation_crew(
         role=agent_data.get("role"),
         goal=agent_data.get("goal"),
         backstory=agent_data.get("backstory"),
-        llm=model_name,
+        llm=build_llm(model_name),
         tools=[],
         verbose=False,
         allow_delegation=False,

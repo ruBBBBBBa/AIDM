@@ -37,12 +37,12 @@ def discovery_node(state: AgentState) -> AgentState:
     }
 
 def structure_proposal_node(state: AgentState) -> AgentState:
-    print("DISOVERY COMPELADO\n\n\n")
+    print("DISCOVERY COMPLETADO\n\n\n")
     problem_case = state.get("problem_case", {})
     chat_history = state.get("chat_history", [])
     
     structure_proposal = build_structure_proposal(problem_case, chat_history)
-    print("ESTRUCTURE PROPOSAL COMPLETADO\n\n\n")
+    print("STRUCTURE PROPOSAL COMPLETADO\n\n\n")
     
     return {
         **state,
