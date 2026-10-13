@@ -17,6 +17,7 @@ from utils import (
     update_problem_scope_tool,
     load_problem_case,
     _recent_chat_transcript,
+    es_valor_de_relleno,
 )
 
 load_dotenv(".env")
@@ -33,7 +34,8 @@ def _get_pending_fields(problem_case: dict[str, Any]) -> list[str]:
             continue
 
         value = field_data["value"]
-        if isinstance(value, str) and not value.strip():
+        # Vacío o relleno tipo "no mencionado": el campo sigue pendiente.
+        if isinstance(value, str) and es_valor_de_relleno(value):
             pending.append(field_key)
         elif isinstance(value, list) and len(value) == 0:
             pending.append(field_key)
@@ -203,7 +205,11 @@ def _propose_plan_with_agent(user_prompt: str, chat_history: list[dict[str, str]
         "Para el campo 'evidencias' (lista), usa operation 'merge' y value como array de strings.\n"
         "Regla de cierre: si tras tus updates no quedan campos pendientes, usa update_status='completed' "
         "y assistant_reply sin preguntas de seguimiento.\n"
-        "Sé descriptivo en los values: evita palabras genéricas o vacías."
+        "Sé descriptivo en los values: evita palabras genéricas o vacías.\n"
+        "Campos sin dato: si el usuario no ha dado un dato, NO incluyas ese campo en 'updates' "
+        "(nada de 'no mencionado', 'desconocido', 'N/A' ni similares); se queda pendiente y se pregunta después. "
+        "Solo si el usuario dice explícitamente que no aplica o que no lo sabe, escribe "
+        "'Confirmado por el usuario: no aplica' o 'Confirmado por el usuario: no lo sabe'."
     )
 
     user_message = (
@@ -262,5 +268,12 @@ def run_agent(user_prompt, chat_history: list[dict[str, str]] | None = None):
         and problem_case_after.get("status") == "completed"
     )
     llm_reply = "" if just_completed else plan.get("assistant_reply", "")
+
+    # Si el LLM da el caso por cerrado pero quedan campos sin dato real, su despedida no vale: se pregunta por lo que falta.
+    if plan.get("update_status") == "completed" and problem_case_after.get("status") != "completed":
+        pending = _get_pending_fields(problem_case_after)
+        if pending:
+            primero = pending[0].split(": ", 1)[-1]
+            llm_reply = f"Aún me faltan {len(pending)} datos para cerrar el caso. Empecemos por este: {primero}"
     
     return _build_assistant_reply(problem_case_before, problem_case_after, llm_reply)

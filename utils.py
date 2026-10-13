@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 
 import logging
 
+import unicodedata
+
 
 
 
@@ -125,6 +127,40 @@ class ProblemScopeUpdateRequest(BaseModel):
         description="Nuevo valor de status cuando proceda.",
     )
 
+
+# Valores con los que el LLM "rellena" un campo del que no sabe nada.
+PLACEHOLDER_EXACT = {
+    "desconocido", "desconocida", "pendiente", "por determinar", "por definir",
+    "sin datos", "sin informacion", "sin especificar", "n/a", "na", "n.a", "n/d", "nd",
+    "-", "--", "?", "unknown", "tbd", "none", "null",
+}
+PLACEHOLDER_PREFIXES = (
+    "no mencionad", "no se menciona", "no especificad", "no indicad", "no proporcionad",
+    "no facilitad", "not mentioned", "not specified", "not provided",
+)
+# Una respuesta explícita del usuario ("no aplica", "no lo sé") se guarda con este prefijo.
+CONFIRMED_PREFIX = "confirmado por el usuario"
+
+
+def _normalize_text(value: str) -> str:
+    sin_tildes = "".join(c for c in unicodedata.normalize("NFKD", value) if not unicodedata.combining(c))
+    texto = " ".join(sin_tildes.lower().split())
+    return texto.strip(" .,;:\"'()[]¿¡")
+
+def es_valor_de_relleno(value: Any) -> bool:
+    """True si el valor no es un dato real: vacío o un relleno tipo 'no mencionado'."""
+    if value is None:
+        return True
+    if not isinstance(value, str):
+        return False
+    texto = _normalize_text(value)
+    if not texto:
+        return True
+    if texto.startswith(CONFIRMED_PREFIX):
+        return False
+    return texto in PLACEHOLDER_EXACT or texto.startswith(PLACEHOLDER_PREFIXES)
+
+#MODIFICADO: _normalize_update_value y _apply_field_update para que no se guarden valores de relleno
 def _normalize_update_value(field_key: str, value: str | List[str], operation: str) -> str | List[str]:
     if field_key in TEXT_FIELDS:
         if operation != "replace":
@@ -135,6 +171,8 @@ def _normalize_update_value(field_key: str, value: str | List[str], operation: s
         normalized = value.strip()
         if not normalized:
             raise ValueError(f"El campo {field_key} no puede actualizarse con texto vacío.")
+        if es_valor_de_relleno(normalized):
+            raise ValueError(f"El campo {field_key} no se guarda: es un valor de relleno, no un dato del cliente.")
         return normalized
 
     if field_key in LIST_FIELDS:
