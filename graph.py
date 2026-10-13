@@ -66,7 +66,7 @@ def solution_building_node(state: AgentState) -> AgentState:
 def roadmap_node(state: AgentState) -> AgentState:
     problem_solution = state.get("problem_solution")
 
-    roadmap_response = roadmap_builder(problem_solution)
+    roadmap_response = roadmap_builder(problem_solution, state.get("problem_case"))
     print("ROADMAP COMPLETADO\n\n\n")
 
     return {

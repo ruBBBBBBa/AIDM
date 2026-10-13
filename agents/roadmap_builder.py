@@ -4,7 +4,7 @@ from pathlib import Path
 from crewai import Agent, Crew, Process, Task
 from dotenv import load_dotenv
 
-from utils import _make_agent, load_agents_config, parse_html, md_to_html
+from utils import _make_agent, es_valor_de_relleno, load_agents_config, load_problem_case, parse_html, md_to_html
 
 load_dotenv(".env")
 
@@ -61,6 +61,18 @@ def inject_roadmap_into_html(
     print(f"[roadmap_builder] Roadmap inyectado en {REPORT_PATH}")
 
 
+#Necesario para que no se pierda contexto entre las 7 tareas ni entre las crews.
+def caso_compacto(problem_case: dict) -> str:
+    """Los datos del cliente en pocas líneas: solo los campos con un valor real, sin descripciones."""
+    lineas = []
+    for campo, datos in problem_case.items():
+        if campo in ("status", "evidencias") or not isinstance(datos, dict):
+            continue
+        valor = datos.get("value")
+        if isinstance(valor, str) and not es_valor_de_relleno(valor):
+            lineas.append(f"- {campo}: {valor.strip()}")
+    return "\n".join(lineas) or "(sin datos del cliente)"
+
 def resumir_solucion(propuesta_solucion: str, agents_config: dict) -> str:
     resumen_agent = _make_agent("resume_agent", agents_config, MODEL_NAME)
     resumen_task = Task(
@@ -86,7 +98,9 @@ def resumir_solucion(propuesta_solucion: str, agents_config: dict) -> str:
     return getattr(result, "raw", str(result)) if result else ""
 
 
-def roadmap_builder(combined_response: dict) -> dict:
+
+
+def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -> dict:
     agents_config = load_agents_config()
     captured_outputs = []
 
@@ -107,12 +121,21 @@ def roadmap_builder(combined_response: dict) -> dict:
     visualizacion = _make_agent("bi_visualization_agent", agents_config, MODEL_NAME)
 
     resumen = resumir_solucion(combined_response, agents_config)
+    
+    # Las 7 tareas reciben, además del resumen, los datos del cliente del discovery.
+    if problem_case is None:
+        problem_case = load_problem_case()
+    contexto = (
+        f"{resumen}\n\n"
+        "DATOS DEL CLIENTE (caso del discovery):\n"
+        f"{caso_compacto(problem_case)}\n\n"
+    )
 
     data_sources_task = Task(
         description=(
             "Eres el primer agente en ejecutarse. Tu análisis sentará las bases para todos los agentes posteriores.\n\n"
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
-            f"{resumen}\n\n"
+            f"{contexto}"
             "Tu tarea es analizar la propuesta de solución e integración de un problema propuesto e identificar todas las fuentes de datos relevantes para el proyecto. "
             "Para cada fuente debes determinar: qué sistema o plataforma la origina, qué tipo de datos contiene y su relevancia "
             "para el caso de uso, el formato probable (estructurado, semiestructurado, no estructurado), la frecuencia de "
@@ -135,7 +158,7 @@ def roadmap_builder(combined_response: dict) -> dict:
         description=(
             "El agente de fuentes de datos ha completado su análisis. Úsalo como base para diseñar la estrategia de ingesta.\n\n"
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
-            f"{resumen}\n\n"
+            f"{contexto}"
             "Basándote en las fuentes identificadas por el agente anterior y en el contexto del cliente, diseña la estrategia "
             "de ingesta con Azure Data Factory. Define para cada fuente o grupo de fuentes: el patrón de ingesta más adecuado "
             "(batch, streaming, change data capture...), la estructura de pipelines recomendada, los conectores de ADF a utilizar "
@@ -160,7 +183,7 @@ def roadmap_builder(combined_response: dict) -> dict:
         description=(
             "Los agentes de fuentes de datos e ingesta han completado sus análisis. Úsalos como base para diseñar la arquitectura de almacenamiento.\n\n"
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
-            f"{resumen}\n\n"
+            f"{contexto}"
             "Basándote en las fuentes y la estrategia de ingesta definidas por los agentes anteriores, diseña la arquitectura "
             "de almacenamiento en Azure. Define la estructura de capas del Data Lake (evalúa si aplica arquitectura medallion "
             "completa Bronze/Silver/Gold o si una solución más simple es más adecuada para este cliente), los servicios de "
@@ -199,13 +222,23 @@ def roadmap_builder(combined_response: dict) -> dict:
         raise
 
     print(f"\n\n[roadmap_builder] PRIMERA CREW completada. Outputs capturados: {len(captured_outputs)}\n")
+    
+    # La segunda crew no ve lo que escribió la primera: se lo pasamos a ETL, la tarea que la abre.
+    # Modelado, ML y BI lo reciben a través de la salida de ETL.
+    titulos = ["Fuentes de datos", "Ingesta", "Almacenamiento"]
+    analisis_primera_crew = (
+        "ANÁLISIS DE LA PRIMERA CREW (fuentes, ingesta y almacenamiento):\n"
+        + "\n\n".join(f"### {titulo}\n{texto}" for titulo, texto in zip(titulos, captured_outputs))
+        + "\n\n"
+    )
 
     etl_processing_task = Task(
         description=(
             "La primera crew ha completado el análisis de fuentes, ingesta y almacenamiento. "
             "Úsalo como base para diseñar la capa de procesamiento y ETL.\n\n"
+            f"{analisis_primera_crew}"
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
-            f"{resumen}\n\n"
+            f"{contexto}"
             "Basándote en la arquitectura de almacenamiento y la estrategia de ingesta definidas "
             "en el análisis previo, diseña la capa de procesamiento. Evalúa si el perfil del "
             "cliente requiere Databricks o si Azure Synapse Analytics es suficiente, justificando "
@@ -233,7 +266,7 @@ def roadmap_builder(combined_response: dict) -> dict:
             "El análisis previo ha definido toda la cadena de datos hasta la capa de serving. "
             "Úsalo como base para diseñar la capa de modelado y serving.\n\n"
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
-            f"{resumen}\n\n"
+            f"{contexto}"
             "Basándote en los datos procesados disponibles en la capa Gold del Data Lake y en los "
             "casos de uso de negocio del cliente, diseña el modelo de datos analítico. Define si "
             "aplica un esquema en estrella clásico, un modelo más flexible o una capa semántica "
@@ -261,7 +294,7 @@ def roadmap_builder(combined_response: dict) -> dict:
             "El análisis previo ha definido toda la cadena de datos hasta la capa de serving. "
             "Úsalo como base para diseñar la estrategia de machine learning y MLOps.\n\n"
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
-            f"{resumen}\n\n"
+            f"{contexto}"
             "Basándote en los casos de uso de IA identificados en la propuesta de solución y en "
             "los datos disponibles en la capa de serving, define los modelos de ML más adecuados "
             "para el proyecto. Para cada caso de uso especifica: el tipo de modelo recomendado y "
@@ -291,7 +324,7 @@ def roadmap_builder(combined_response: dict) -> dict:
             "Tu tarea es diseñar la capa de visualización que hará que todo ese trabajo sea visible "
             "y útil para el cliente.\n\n"
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
-            f"{resumen}\n\n"
+            f"{contexto}"
             "Basándote en el modelo de datos de la capa de serving y en los perfiles de usuario "
             "del cliente, diseña la arquitectura de Power BI. Define el modo de conexión más "
             "adecuado (Import, DirectQuery o Composite) justificando la decisión según el volumen "
