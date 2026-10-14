@@ -36,8 +36,10 @@ equipo = EquipoEstimado(
 calculo = _calcular_equipo(equipo, tarifas)
 assert calculo["mensual"] == 13_200
 assert (calculo["total_min"], calculo["total_max"]) == (39_600, 52_800)
-assert "Experto en SAP (Senior): sin tarifa en la tabla" in calculo["texto"]
-assert "Coste mensual del equipo: 13.200 €" in calculo["texto"]
+assert "| Data Engineer | Senior | 160 | 45 €/h | 7.200 € |" in calculo["texto"]
+assert "| Experto en SAP | Senior | 40 | sin tarifa | no se suma |" in calculo["texto"]
+assert "| **Total mensual** | | | | **13.200 €** |" in calculo["texto"]
+assert "Coste del equipo en 3–4 meses: 39.600 € – 52.800 €" in calculo["texto"]
 print("OK 2: equipo = 13.200 €/mes → 39.600 – 52.800 € en 3–4 meses; el perfil sin tarifa no se suma")
 
 # 3) La regla del encaje con el presupuesto
@@ -95,7 +97,7 @@ html = resultado.cost_estimation
 assert "79.600 € – 112.800 €" in html, "el total no suma infraestructura + equipo"
 assert "Encaje con el presupuesto" in html and "Alto" in html
 assert "Equipo: 39.600 € – 52.800 €" in html, "la barra de desarrollo debe mostrar el coste del equipo"
-assert "Coste mensual del equipo: 13.200 €" in resultado.team_profiles
+assert "| **Total mensual** | | | | **13.200 €** |" in resultado.team_profiles
 print("OK 5: el informe suma infraestructura + equipo (79.600 – 112.800 €) y el encaje sale 'Alto'")
 
 print("\nTodo bien: el fallo 5 está arreglado.")

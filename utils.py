@@ -1,7 +1,5 @@
 import json
-import re
 import yaml
-from html import escape
 from pathlib import Path
 from typing import Any
 from typing import List, Literal, Optional
@@ -9,6 +7,7 @@ from typing import List, Literal, Optional
 import litellm
 from bs4 import BeautifulSoup, FeatureNotFound
 from crewai import Agent, LLM
+from markdown_it import MarkdownIt
 from pydantic import BaseModel, Field
 
 import logging
@@ -292,88 +291,17 @@ def parse_html(markup: str) -> BeautifulSoup:
         return BeautifulSoup(markup, "html.parser")
 
 
+# Conversor Markdown → HTML: CommonMark + tablas. Con html=False, el HTML que escriba el LLM
+# se muestra como texto en vez de ejecutarse; breaks=True convierte cada salto de línea en <br>.
+_MD = MarkdownIt("commonmark", {"html": False, "breaks": True}).enable(["table", "strikethrough"])
+
+
 def md_to_html(text: str) -> str:
     if not text or not text.strip():
         return "<p>No se ha generado contenido.</p>"
-
-    lines = text.splitlines()
-    html_parts: list[str] = []
-    in_ul = False
-    in_ol = False
-
-    def close_lists():
-        nonlocal in_ul, in_ol
-        if in_ul:
-            html_parts.append("</ul>")
-            in_ul = False
-        if in_ol:
-            html_parts.append("</ol>")
-            in_ol = False
-
-    def inline(s: str) -> str:
-        s = escape(s)
-        s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
-        s = re.sub(r"\*(.+?)\*",     r"<em>\1</em>", s)
-        s = re.sub(r"_(.+?)_",       r"<em>\1</em>", s)
-        s = re.sub(r"`(.+?)`",       r"<code>\1</code>", s)
-        return s
-
-    pending_paragraph: list[str] = []
-
-    def flush_paragraph():
-        if pending_paragraph:
-            html_parts.append("<p>" + "<br>".join(pending_paragraph) + "</p>")
-            pending_paragraph.clear()
-
-    for line in lines:
-        heading_match = re.match(r"^(#{1,4})\s+(.*)", line)
-        if heading_match:
-            close_lists()
-            flush_paragraph()
-            level = len(heading_match.group(1))
-            tag = "h3" if level <= 2 else "h4"
-            html_parts.append(f"<{tag}>{inline(heading_match.group(2))}</{tag}>")
-            continue
-
-        if re.match(r"^[-*_]{3,}$", line.strip()):
-            close_lists()
-            flush_paragraph()
-            html_parts.append("<hr>")
-            continue
-
-        ul_match = re.match(r"^[\s]*[-*+]\s+(.*)", line)
-        if ul_match:
-            flush_paragraph()
-            if in_ol:
-                html_parts.append("</ol>")
-                in_ol = False
-            if not in_ul:
-                html_parts.append("<ul>")
-                in_ul = True
-            html_parts.append(f"<li>{inline(ul_match.group(1))}</li>")
-            continue
-
-        ol_match = re.match(r"^[\s]*\d+[.)]\s+(.*)", line)
-        if ol_match:
-            flush_paragraph()
-            if in_ul:
-                html_parts.append("</ul>")
-                in_ul = False
-            if not in_ol:
-                html_parts.append("<ol>")
-                in_ol = True
-            html_parts.append(f"<li>{inline(ol_match.group(1))}</li>")
-            continue
-
-        if not line.strip():
-            close_lists()
-            flush_paragraph()
-            continue
-
-        close_lists()
-        pending_paragraph.append(inline(line))
-
-    close_lists()
-    flush_paragraph()
-
-    return "\n".join(html_parts) if html_parts else "<p>No se ha generado contenido.</p>"
+    tokens = _MD.parse(text)
+    # Los títulos del LLM no deben competir con los del informe: # y ## → h3, el resto → h4 (como antes)
+    for token in tokens:
+        if token.type in ("heading_open", "heading_close"):
+            token.tag = "h3" if token.tag in ("h1", "h2") else "h4"
+    return _MD.renderer.render(tokens, _MD.options, {})

@@ -153,23 +153,30 @@ def _cargar_tarifas() -> dict[tuple[str, str], float]:
 
 def _calcular_equipo(equipo: EquipoEstimado, tarifas: dict[tuple[str, str], float]) -> dict:
     """Coste del equipo calculado en Python (horas × tarifa del CSV), nunca por el LLM."""
-    lineas, mensual = [], 0.0
+    filas, mensual = [], 0.0
     for p in equipo.perfiles:
+        nombre = p.perfil.strip().replace("|", "/")  # una barra rompería la tabla
         tarifa = tarifas.get((p.perfil.strip().lower(), p.nivel.lower()))
         if tarifa is None:
             logger.warning("Perfil sin tarifa en costes_perfil.csv: '%s' (%s); no se suma", p.perfil, p.nivel)
-            lineas.append(f"- {p.perfil} ({p.nivel}): sin tarifa en la tabla, no se suma")
+            filas.append(f"| {nombre} | {p.nivel} | {p.horas_mes} | sin tarifa | no se suma |")
             continue
         coste = p.horas_mes * tarifa
         mensual += coste
-        lineas.append(f"- {p.perfil} ({p.nivel}): {p.horas_mes} h/mes × {_eur(tarifa)}/h = {_eur(coste)}/mes")
+        filas.append(f"| {nombre} | {p.nivel} | {p.horas_mes} | {_eur(tarifa)}/h | {_eur(coste)} |")
 
     meses_min, meses_max = sorted((max(equipo.meses_min, 1), max(equipo.meses_max, 1)))
     total_min, total_max = mensual * meses_min, mensual * meses_max
     meses = f"{meses_min}" if meses_min == meses_max else f"{meses_min}–{meses_max}"
     total = _eur(total_min) if meses_min == meses_max else f"{_eur(total_min)} – {_eur(total_max)}"
-    lineas += ["", f"**Coste mensual del equipo: {_eur(mensual)}**", "",
-               f"**Coste del equipo en {meses} meses: {total}**"]
+    lineas = [
+        "| Perfil | Nivel | Horas/mes | Tarifa | Coste mensual |",
+        "| --- | --- | ---: | ---: | ---: |",
+        *filas,
+        f"| **Total mensual** | | | | **{_eur(mensual)}** |",
+        "",
+        f"**Coste del equipo en {meses} meses: {total}**",
+    ]
     return {"mensual": mensual, "total_min": total_min, "total_max": total_max,
             "meses_min": meses_min, "meses_max": meses_max, "texto": "\n".join(lineas)}
 
