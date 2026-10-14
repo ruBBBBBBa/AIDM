@@ -86,7 +86,7 @@ def propose_solution(
 
     try:
         proposal = run_proposal_crew(structure_proposal, problem_case, chat_history, model_name)
-        estimation = run_estimation_crew(proposal.as_combined_context(), model_name)
+        estimation = run_estimation_crew(proposal.as_combined_context(), model_name, problem_case=problem_case)
     except RuntimeError as e:
         return str(e)
 

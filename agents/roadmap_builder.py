@@ -4,7 +4,7 @@ from pathlib import Path
 from crewai import Agent, Crew, Process, Task
 from dotenv import load_dotenv
 
-from utils import _make_agent, es_valor_de_relleno, load_agents_config, load_problem_case, parse_html, md_to_html
+from utils import _make_agent, caso_compacto, load_agents_config, load_problem_case, parse_html, md_to_html
 
 load_dotenv(".env")
 
@@ -59,19 +59,6 @@ def inject_roadmap_into_html(
 
     REPORT_PATH.write_text(str(soup), encoding="utf-8")
     print(f"[roadmap_builder] Roadmap inyectado en {REPORT_PATH}")
-
-
-#Necesario para que no se pierda contexto entre las 7 tareas ni entre las crews.
-def caso_compacto(problem_case: dict) -> str:
-    """Los datos del cliente en pocas líneas: solo los campos con un valor real, sin descripciones."""
-    lineas = []
-    for campo, datos in problem_case.items():
-        if campo in ("status", "evidencias") or not isinstance(datos, dict):
-            continue
-        valor = datos.get("value")
-        if isinstance(valor, str) and not es_valor_de_relleno(valor):
-            lineas.append(f"- {campo}: {valor.strip()}")
-    return "\n".join(lineas) or "(sin datos del cliente)"
 
 def resumir_solucion(propuesta_solucion: str, agents_config: dict) -> str:
     resumen_agent = _make_agent("resume_agent", agents_config, MODEL_NAME)

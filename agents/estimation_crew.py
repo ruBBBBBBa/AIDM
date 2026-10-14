@@ -1,3 +1,5 @@
+import csv
+import logging
 import os
 import re
 import shutil
@@ -8,9 +10,11 @@ from typing import Any, Literal
 
 import litellm
 from crewai import Agent, Crew, Process, Task
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from utils import _make_agent, load_agents_config, build_llm
+from utils import _make_agent, build_llm, caso_compacto, load_agents_config
+
+logger = logging.getLogger("aidm")
 
 
 def _patch_crewai_union_schema() -> None:
@@ -77,11 +81,15 @@ _patch_crewai_force_required()
 
 
 class ResumenEjecutivo(BaseModel):
-    coste_total_minimo: str
-    coste_total_maximo: str
+    # El LLM solo estima lo que no es equipo; el total y el encaje con el presupuesto se calculan en Python.
+    coste_sin_equipo_min_eur: int = Field(
+        description="Infraestructura, licencias y formación durante todo el proyecto, SIN el equipo, en euros (escenario bajo)")
+    coste_sin_equipo_max_eur: int = Field(
+        description="Lo mismo en el escenario alto, en euros")
+    presupuesto_cliente_max_eur: int = Field(
+        description="Máximo del presupuesto que indica el caso del cliente, en euros; 0 si no lo indica")
     horizonte_temporal: str
-    nivel_confianza: Literal["alto", "medio", "bajo"]
-    justificacion_confianza: str
+    justificacion: str = Field(description="De dónde salen las cifras y qué las haría variar")
 
 
 class DesglosePorCategoria(BaseModel):
@@ -110,9 +118,84 @@ class EstimationResult(BaseModel):
     cost_estimation: str
     team_profiles: str
 
+class PerfilEquipo(BaseModel):
+    perfil: str = Field(description="Nombre exacto del perfil, copiado de la primera columna de la tabla de tarifas")
+    nivel: Literal["Junior", "Middle", "Senior"]
+    horas_mes: int = Field(description="Horas de dedicación al mes (160 = jornada completa)")
 
-def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "") -> str:
+
+class EquipoEstimado(BaseModel):
+    perfiles: list[PerfilEquipo]
+    meses_min: int = Field(description="Meses de trabajo del equipo según el plazo del cliente (escenario corto)")
+    meses_max: int = Field(description="Meses de trabajo del equipo según el plazo del cliente (escenario largo)")
+
+
+def _eur(valor: float) -> str:
+    """12345.6 -> '12.346 €'"""
+    return f"{valor:,.0f} €".replace(",", ".")
+
+
+def _cargar_tarifas() -> dict[tuple[str, str], float]:
+    """Tarifas de bd/costes_perfil.csv como {(perfil, nivel) en minúsculas: €/hora}."""
+    csv_path = Path(__file__).parent.parent / "bd" / "costes_perfil.csv"
+    tarifas: dict[tuple[str, str], float] = {}
+    if not csv_path.exists():
+        return tarifas
+    with open(csv_path, encoding="utf-8-sig", newline="") as f:
+        for fila in csv.DictReader(f, skipinitialspace=True):
+            perfil = (fila.get("Perfil") or "").strip().lower()
+            for nivel in ("Junior", "Middle", "Senior"):
+                valor = (fila.get(f"{nivel} (€/h)") or "").strip()
+                if perfil and valor:
+                    tarifas[(perfil, nivel.lower())] = float(valor)
+    return tarifas
+
+
+def _calcular_equipo(equipo: EquipoEstimado, tarifas: dict[tuple[str, str], float]) -> dict:
+    """Coste del equipo calculado en Python (horas × tarifa del CSV), nunca por el LLM."""
+    lineas, mensual = [], 0.0
+    for p in equipo.perfiles:
+        tarifa = tarifas.get((p.perfil.strip().lower(), p.nivel.lower()))
+        if tarifa is None:
+            logger.warning("Perfil sin tarifa en costes_perfil.csv: '%s' (%s); no se suma", p.perfil, p.nivel)
+            lineas.append(f"- {p.perfil} ({p.nivel}): sin tarifa en la tabla, no se suma")
+            continue
+        coste = p.horas_mes * tarifa
+        mensual += coste
+        lineas.append(f"- {p.perfil} ({p.nivel}): {p.horas_mes} h/mes × {_eur(tarifa)}/h = {_eur(coste)}/mes")
+
+    meses_min, meses_max = sorted((max(equipo.meses_min, 1), max(equipo.meses_max, 1)))
+    total_min, total_max = mensual * meses_min, mensual * meses_max
+    meses = f"{meses_min}" if meses_min == meses_max else f"{meses_min}–{meses_max}"
+    total = _eur(total_min) if meses_min == meses_max else f"{_eur(total_min)} – {_eur(total_max)}"
+    lineas += ["", f"**Coste mensual del equipo: {_eur(mensual)}**", "",
+               f"**Coste del equipo en {meses} meses: {total}**"]
+    return {"mensual": mensual, "total_min": total_min, "total_max": total_max,
+            "meses_min": meses_min, "meses_max": meses_max, "texto": "\n".join(lineas)}
+
+
+def _encaje_presupuesto(total_min: float, total_max: float, presupuesto: int) -> tuple[str, str]:
+    """Nivel ('alto', 'medio' o 'bajo') y motivo, comparando el total con el presupuesto del cliente."""
+    if presupuesto <= 0:
+        return "medio", "El cliente no ha indicado presupuesto, así que no se puede comprobar si el total cabe."
+    if total_max <= presupuesto:
+        return "alto", f"Incluso el escenario alto ({_eur(total_max)}) cabe en el presupuesto del cliente ({_eur(presupuesto)})."
+    if total_min <= presupuesto:
+        return "medio", (f"Solo el escenario bajo ({_eur(total_min)}) cabe en el presupuesto del cliente "
+                         f"({_eur(presupuesto)}); el alto ({_eur(total_max)}) lo supera.")
+    return "bajo", f"Incluso el escenario bajo ({_eur(total_min)}) supera el presupuesto del cliente ({_eur(presupuesto)})."
+
+def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", equipo: dict | None = None) -> str:
     r = report.resumen_ejecutivo
+
+    # Total = lo que estima el LLM sin equipo + el equipo calculado en Python
+    equipo_min = equipo["total_min"] if equipo else 0
+    equipo_max = equipo["total_max"] if equipo else 0
+    total_min = r.coste_sin_equipo_min_eur + equipo_min
+    total_max = r.coste_sin_equipo_max_eur + equipo_max
+    nivel, motivo = _encaje_presupuesto(total_min, total_max, r.presupuesto_cliente_max_eur)
+    if not equipo:
+        motivo += " Ojo: el total no incluye el equipo, que no se pudo calcular."
 
     # Semantic confidence colors, harmonized with the template warm palette
     confidence_map = {
@@ -120,7 +203,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "") -
         "medio": ("60%",  "#b45309"),           # amber — matches template warm tones
         "alto":  ("100%", "var(--accent)"),     # template gold — clearly "good"
     }
-    conf_pct, conf_color = confidence_map.get(r.nivel_confianza, ("50%", "var(--muted)"))
+    conf_pct, conf_color = confidence_map.get(nivel, ("50%", "var(--muted)"))
 
     def _extract_val(text: str) -> float:
         m = re.search(r'[€$]\s*([\d][0-9.,]*)', text)
@@ -137,7 +220,8 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "") -
         ("Licencias y herramientas",  d.licencias_y_herramientas,  "#1d4ed8"),  # blue
         ("Formación y onboarding",    d.formacion_y_onboarding,    "#b45309"),  # amber
         ("Mantenimiento y soporte",   d.mantenimiento_y_soporte,   "#6d28d9"),  # purple
-        ("Desarrollo e implantación", d.desarrollo_e_implantacion, "#0f766e"),  # teal
+                ("Desarrollo e implantación",                              # teal
+         f"Equipo: {_eur(equipo_min)} – {_eur(equipo_max)}" if equipo else d.desarrollo_e_implantacion, "#0f766e"),
     ]
     cat_vals = [(_extract_val(raw), color, label, raw) for label, raw, color in cat_data]
     max_val = max((v for v, *_ in cat_vals), default=1) or 1
@@ -209,9 +293,10 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "") -
         f'<div style="display:flex;gap:1rem;margin-bottom:1.25rem;flex-wrap:wrap;">'
         f'<div style="flex:1;min-width:140px;background:var(--surface);border:1px solid var(--border);'
         f'border-radius:9px;padding:1.1rem;text-align:center;box-shadow:var(--shadow);">'
-        f'<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Coste estimado</div>'
+        f'<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">'
+        f'{"Coste total (equipo incluido)" if equipo else "Coste estimado (sin equipo)"}</div>'
         f'<div style="font-size:1.5rem;font-weight:700;color:var(--text);">'
-        f'{r.coste_total_minimo} – {r.coste_total_maximo}</div></div>'
+        f'{_eur(total_min)} – {_eur(total_max)}</div></div>'
         f'<div style="flex:1;min-width:140px;background:var(--surface);border:1px solid var(--border);'
         f'border-radius:9px;padding:1.1rem;text-align:center;box-shadow:var(--shadow);">'
         f'<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Horizonte temporal</div>'
@@ -220,13 +305,14 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "") -
         f'</div>'
         f'<div style="margin-bottom:0.875rem;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
-        f'<span style="font-size:0.82rem;color:var(--muted);">Nivel de confianza</span>'
-        f'<span style="font-size:0.82rem;font-weight:600;color:{conf_color};">{r.nivel_confianza.capitalize()}</span>'
+        f'<span style="font-size:0.82rem;color:var(--muted);">Encaje con el presupuesto</span>'
+        f'<span style="font-size:0.82rem;font-weight:600;color:{conf_color};">{nivel.capitalize()}</span>'
         f'</div>'
         f'<div style="background:var(--border);border-radius:999px;height:9px;overflow:hidden;">'
         f'<div style="background:{conf_color};width:{conf_pct};height:100%;border-radius:999px;"></div>'
         f'</div></div>'
-        f'<p style="color:var(--muted);font-size:0.875rem;margin:0;font-style:italic;">{r.justificacion_confianza}</p>'
+        f'<p style="color:var(--text);font-size:0.875rem;margin:0 0 0.5rem;">{motivo}</p>'
+        f'<p style="color:var(--muted);font-size:0.875rem;margin:0;font-style:italic;">{r.justificacion}</p>'
         f'</div>'
 
         # ── Supuestos ──
@@ -353,6 +439,7 @@ def run_estimation_crew(
     proposal_context: str,
     model_name: str,
     tools: list | None = None,
+    problem_case: dict | None = None,
 ) -> EstimationResult:
     """
     Ejecuta la crew de estimación de costos y perfiles de equipo.
@@ -384,6 +471,12 @@ def run_estimation_crew(
 
     team_costs_table = _load_team_costs_context()
 
+    tarifas = _cargar_tarifas()
+    datos_cliente = (
+        "DATOS DEL CLIENTE (caso del discovery):\n"
+        f"{caso_compacto(problem_case or {})}\n\n"
+    )
+
     # --- Fase CrewAI: report writer + team builder (ambos sin tools) ---
     agent_data = agents_config.get("cost_estimation_agent", {})
     report_writer_agent = Agent(
@@ -407,8 +500,13 @@ def run_estimation_crew(
         description=(
             "A partir de la propuesta de solución y los precios indicados, genera un informe de estimación de costos estructurado. "
             f"{pricing_note}\n"
+            "El coste del equipo se calcula aparte con las tarifas de la empresa: NO lo incluyas en "
+            "coste_sin_equipo_min_eur ni en coste_sin_equipo_max_eur, que solo cubren infraestructura, licencias y "
+            "formación durante todo el proyecto. En presupuesto_cliente_max_eur pon el máximo del presupuesto que "
+            "indica el caso del cliente, o 0 si no lo indica.\n"
             "Para los supuestos: si te falta información, indícalo como "
-            "'Por determinar, requiere [dato X]' o 'Se asume [dato X]' — nunca inventes datos críticos. "
+            "'Por determinar, requiere [dato X]' o 'Se asume [dato X]' — nunca inventes datos críticos.\n\n"
+            f"{datos_cliente}"
             "Propuesta de solución:\n"
             f"{proposal_context}"
         ),
@@ -422,6 +520,8 @@ def run_estimation_crew(
             "A partir de la propuesta de solución y la descripción del problema, identifica los perfiles profesionales necesarios para llevar a cabo la implementación de la solución propuesta. "
             "Considera roles como arquitecto de datos, ingeniero de datos, científico de datos, analista de BI, entre otros. "
             "Proporciona una descripción detallada de cada perfil profesional identificado, incluyendo sus responsabilidades clave y las habilidades requeridas. "
+            "Ten en cuenta el equipo que ya tiene el cliente, su plazo y su presupuesto.\n\n"
+            f"{datos_cliente}"
             "Esta es la solución propuesta sobre la que debes identificar los perfiles profesionales necesarios:\n"
             f"{proposal_context}"
         ),
@@ -431,17 +531,16 @@ def run_estimation_crew(
 
     team_cost_task = Task(
         description=(
-            "A partir de los perfiles de equipo identificados en la tarea anterior, "
-            "genera una estimación de coste del equipo. "
-            "Para cada perfil, indica: nivel recomendado (Junior/Middle/Senior), "
-            "horas estimadas al mes y coste mensual calculado con las tarifas de referencia. "
-            "Finaliza con el coste total mensual del equipo.\n"
+            "A partir de los perfiles de equipo identificados en la tarea anterior, define el equipo que se va a presupuestar. "
+            "Para cada perfil indica: su nombre exacto en la tabla de tarifas (primera columna), "
+            "el nivel (Junior/Middle/Senior) y las horas al mes (160 = jornada completa). "
+            "Indica también cuántos meses trabajará el equipo según el plazo del cliente (meses_min y meses_max). "
+            "No calcules costes: se calculan aparte con la tabla.\n\n"
+            f"{datos_cliente}"
             f"Tarifas de referencia (€/hora):\n{team_costs_table}"
         ),
-        expected_output=(
-            "Tabla de estimación de costes del equipo: perfil, nivel recomendado, horas/mes, coste mensual. "
-            "Coste total mensual del equipo al final."
-        ),
+        expected_output="Perfiles del equipo con su nivel y horas al mes, y duración del trabajo en meses (mínima y máxima).",
+        output_pydantic=EquipoEstimado,
         context=[team_building_task],
         agent=team_builder,
     ) if team_costs_table else None
@@ -458,10 +557,16 @@ def run_estimation_crew(
     )
     result = crew.kickoff()
 
+    # Coste del equipo: el LLM elige perfiles, nivel, horas y meses; las cuentas se hacen aquí
+    equipo_pydantic = getattr(getattr(team_cost_task, "output", None), "pydantic", None) if team_cost_task else None
+    equipo = _calcular_equipo(equipo_pydantic, tarifas) if isinstance(equipo_pydantic, EquipoEstimado) else None
+    if team_cost_task and equipo is None:
+        logger.warning("No se pudo leer el equipo estimado: el coste total no incluirá el equipo.")
+
     # Extraer output de costos: preferir pydantic validado, fallback a raw
     report_pydantic = getattr(getattr(cost_report_task, "output", None), "pydantic", None)
     if isinstance(report_pydantic, CostEstimationReport):
-        cost_estimation = _format_cost_report(report_pydantic, infracost_prices or "")
+        cost_estimation = _format_cost_report(report_pydantic, infracost_prices or "", equipo)
     else:
         raw_obj = getattr(cost_report_task, "output", None)
         cost_estimation = getattr(raw_obj, "raw", "") or str(raw_obj or "")
@@ -469,11 +574,8 @@ def run_estimation_crew(
     team_obj = getattr(team_building_task, "output", None)
     team_profiles = getattr(team_obj, "raw", "") or str(team_obj or "")
 
-    if team_cost_task:
-        cost_obj = getattr(team_cost_task, "output", None)
-        team_cost_text = getattr(cost_obj, "raw", "") or str(cost_obj or "")
-        if team_cost_text:
-            team_profiles = team_profiles + "\n\n---\n\n## Estimación de Coste del Equipo\n\n" + team_cost_text
+    if equipo:
+        team_profiles = team_profiles + "\n\n---\n\n## Estimación de Coste del Equipo\n\n" + equipo["texto"]
 
     if not (cost_estimation and team_profiles):
         raise RuntimeError(getattr(result, "raw", "Error: estimation crew produjo outputs incompletos."))

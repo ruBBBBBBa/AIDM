@@ -160,6 +160,18 @@ def es_valor_de_relleno(value: Any) -> bool:
         return False
     return texto in PLACEHOLDER_EXACT or texto.startswith(PLACEHOLDER_PREFIXES)
 
+#Necesario para que no se pierda contexto entre las 7 tareas ni entre las crews.
+def caso_compacto(problem_case: dict) -> str:
+    """Los datos del cliente en pocas líneas: solo los campos con un valor real, sin descripciones."""
+    lineas = []
+    for campo, datos in problem_case.items():
+        if campo in ("status", "evidencias") or not isinstance(datos, dict):
+            continue
+        valor = datos.get("value")
+        if isinstance(valor, str) and not es_valor_de_relleno(valor):
+            lineas.append(f"- {campo}: {valor.strip()}")
+    return "\n".join(lineas) or "(sin datos del cliente)"
+
 #MODIFICADO: _normalize_update_value y _apply_field_update para que no se guarden valores de relleno
 def _normalize_update_value(field_key: str, value: str | List[str], operation: str) -> str | List[str]:
     if field_key in TEXT_FIELDS:
