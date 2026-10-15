@@ -1,98 +1,113 @@
 {
   "nombre_del_cliente": {
     "description": "Nombre del cliente o empresa",
-    "value": "FarmaNorte"
+    "value": "Transportes Cantábrico"
   },
   "tamaño_empresa": {
     "description": "Tamaño de la empresa (startup, pyme, enterprise) o número aproximado de empleados",
-    "value": "Pyme de ~350 empleados"
+    "value": "Empresa mediana-grande (600 empleados)"
   },
   "sector": {
     "description": "Sector de actividad de la empresa (retail, pharma, logística, finanzas...)",
-    "value": "Distribución farmacéutica"
+    "value": "Logística por carretera"
   },
   "tiene_equipo_datos": {
     "description": "Si la empresa tiene equipo de datos interno o depende de externos para el desarrollo y mantenimiento",
-    "value": "Sí, equipo técnico interno de 22 personas (15 senior, 7 junior) que operará y mantendrá la solución tras la entrega"
+    "value": "Confirmado por el usuario: no tienen equipo de datos interno especializado. El equipo IT (8 personas) incluye 2 con conocimientos básicos de SQL (3 sistemas, 3 desarrollo, 2 soporte). Dependencia actual de proveedores externos para gestión avanzada de datos."
   },
   "tipo_de_servicio": {
     "description": "Texto legible de negocio/técnico - Tipo de servicio solicitado por el cliente",
-    "value": "Plataforma de datos (lakehouse) para unificar ventas, stock y logística, con modelo ML de previsión de demanda y visualización en Power BI"
+    "value": "Plataforma de datos centralizada para gestión de flota, rutas y entregas, con componente de predicción de retrasos (AI/ML)"
   },
   "objetivo_del_proyecto": {
     "description": "Objetivos principales del proyecto o caso de uso identificado",
-    "value": "Unificar ventas, stock y logística en una plataforma de datos única con modelo ML de previsión de demanda, para eliminar roturas de stock y reducir el exceso de capital inmovilizado"
+    "value": "Predicción proactiva de retrasos en entregas con 24 horas de antelación, utilizando modelos de IA/ML para identificar patrones en datos operativos de flota, rutas y condiciones externas (ej: tráfico, clima, incidencias). Objetivo clave: minimizar impactos logísticos y mejorar la planificación operativa."
   },
   "modelo_de_despliegue": {
     "description": "Modelo de despliegue preferido por el cliente (donde vivira la solución) (on-premises, cloud, híbrido...)",
-    "value": "Cloud en Azure"
+    "value": "100% en la nube (Azure)"
   },
   "cloud_provider": {
     "description": "Proveedor de nube detectado preferido por el cliente (Azure, AWS, GCP...)",
-    "value": "Azure"
+    "value": "Azure (Microsoft Azure) como proveedor de nube preferido, con uso actual limitado pero alineado con su stack tecnológico (Microsoft 365)"
   },
   "tipo_de_arquitectura": {
     "description": "Una simplificación de la forma de solución. Estilo de arquitectura preferido por el cliente",
-    "value": "Lakehouse con arquitectura medallion (capas bronze/silver/gold)"
+    "value": "Arquitectura basada en **event-driven data pipeline** en Azure para procesamiento en tiempo real y batch, con componentes clave: (1) **Data Ingestion Layer** (Azure Event Hubs o Azure Data Factory para telemetría en tiempo real y batch de TMS/ERP), (2) **Data Processing Layer** (Azure Databricks o Azure Synapse Analytics para transformación y modelado de datos), (3) **Storage Layer** (Azure Data Lake Storage para datos crudos y procesados), (4) **ML Layer** (Azure Machine Learning para entrenamiento y despliegue de modelos predictivos), y (5) **Visualization Layer** (Power BI integrado con Azure para dashboards operativos. Incluye posible uso de **Azure Kubernetes Service (AKS)** para orquestación de microservicios si se escalan componentes de IA/ML)."
   },
   "herramienta_de_visualizacion": {
     "description": "Herramienta de visualización preferida por el cliente si se ha detectado alguna (Power BI, Tableau, Looker...)",
-    "value": "Power BI"
+    "value": "Power BI (15 licencias Pro activas)"
   },
   "enfoque_ai": {
     "description": "Qué papel juega la IA. Enfoque de inteligencia artificial preferido por el cliente para su proyecto",
-    "value": "Machine Learning supervisado para previsión de demanda"
+    "value": "Predicción de retrasos en entregas (modelos de machine learning para análisis de patrones en datos operativos)"
   },
   "integration_scope": {
     "description": "Ámbito de integración de datos, qué nivel de integración parece requerir",
-    "value": "Integración de datos de ventas, stock y logística desde SAP Business One (ERP), SQL Server (almacén propio) y Salesforce (CRM)"
+    "value": "Integración de múltiples fuentes heterogéneas en cloud: (1) TMS alojado en SQL Server (Azure o híbrido), (2) telemetría de flota en tiempo real (API cada 5 minutos), (3) ERP Navision (cloud), y (4) posibles fuentes externas (clima, tráfico). Requiere orquestación de datos en Azure para consolidación y procesamiento en tiempo real."
   },
   "volumen_de_datos": {
     "description": "Volumen aproximado de datos a gestionar (GB, TB, PB), frecuencia de generación y principales fuentes de datos",
-    "value": "2 TB de datos históricos, pocos GB/día de nueva generación; fuentes principales: SAP Business One, SQL Server y Salesforce"
+    "value": "Volumen estimado: datos operativos en tiempo real (telemetría de flota: ~100-500 MB/hora por API) + datos históricos de TMS/ERP (estimación: cientos de GB a TB, dependiendo de años de historiales). Frecuencia: datos en tiempo real (cada 5 minutos para telemetría) y batch para TMS/ERP (diario/semanal). Fuentes principales: SQL Server (TMS), API (telemetría), Navision (ERP), y posibles fuentes externas (clima/tráfico)."
   },
   "madurez_analitica_actual": {
     "description": "Nivel actual de madurez analítica del cliente: ¿tienen DWH, BI, solo Excel o ninguna herramienta? ¿Qué usan hoy?",
-    "value": "Baja: reporting manual en Excel semanal, sin DWH ni herramientas BI"
+    "value": "Madurez analítica **muy baja**: informes manuales en Excel generados semanalmente por el equipo IT (sin automatización, sin pipelines de datos ni herramientas de BI avanzadas). Dependencia total de procesos manuales para análisis operativos, lo que refuerza la necesidad de una solución de **data integration + predictive analytics** desde cero."
   },
   "tamano_equipo_tecnico": {
     "description": "Tamaño del equipo técnico del cliente que operará y mantendrá la solución una vez entregada",
-    "value": "22 personas (15 senior, 7 junior)"
+    "value": "Equipo IT interno de 8 personas (3 sistemas, 3 desarrollo, 2 soporte), con 2 miembros con habilidades básicas en SQL. Sin especialistas en datos o analítica avanzada."
   },
   "stack_tecnologico_actual": {
     "description": "Tecnologías, plataformas y herramientas que el cliente ya tiene en uso (ERP, CRM, cloud, bases de datos...)",
-    "value": "SAP Business One (ERP), SQL Server (almacén propio), Salesforce (CRM), Excel para reporting manual"
+    "value": "Stack tecnológico actual detallado: (1) **SQL Server 2019 en local** (TMS), (2) **Navision** (ERP en cloud), (3) **Microsoft 365** (suite empresarial), (4) **Excel** (herramienta principal para informes manuales), y (5) **Power BI** (15 licencias Pro, uso limitado a visualización ad-hoc sin integración con datos operativos en tiempo real). **Sin herramientas de data engineering o ciencia de datos internas**."
   },
   "restriccion_presupuestaria": {
     "description": "Rango o restricción presupuestaria orientativa para el proyecto",
-    "value": "150–200 k€"
+    "value": ""
   },
   "plazo_objetivo": {
     "description": "Plazo objetivo para tener la solución operativa o un primer MVP entregado",
-    "value": "MVP en 3–4 meses con alcance acotado"
+    "value": "Entrega de un **primer MVP (piloto funcional)** en **4 meses**, con enfoque en predicción de retrasos para un subconjunto de rutas/flota (ej: 20-30% de la flota total). Plazo alineado con la necesidad de validar el modelo predictivo en un entorno controlado antes de escalar."
   },
   "regulacion_y_compliance": {
     "description": "Normativas, regulaciones o requisitos de compliance que aplican al proyecto (GDPR, HIPAA, ISO 27001...)",
-    "value": "Trazabilidad del medicamento, normativa sanitaria, RGPD; certificación ISO 27001 prevista a medio plazo"
+    "value": ""
   },
   "kpis_de_exito": {
     "description": "Métricas o KPIs concretos con los que el cliente medirá el éxito del proyecto",
-    "value": "−30 % roturas de stock, reducción del inventario inmovilizado, precisión de previsión de demanda >85 %"
+    "value": ""
   },
   "evidencias": {
     "description": "Evidencias detectadas durante la conversación que respaldan la información extraída y el análisis realizado, incluyendo información adicional útil",
     "value": [
-      "Cliente identificado: FarmaNorte, distribuidora farmacéutica, pyme de ~350 empleados",
-      "Problemas de negocio declarados: roturas de stock y exceso de capital inmovilizado",
-      "Madurez analítica baja: Excel semanal manual, sin DWH ni BI",
-      "Fuentes de datos actuales: SAP Business One (ERP), SQL Server (almacén propio), Salesforce (CRM)",
-      "Volumen de datos: 2 TB de histórico, pocos GB/día de generación",
-      "Preferencias técnicas explícitas: Azure, lakehouse medallion, Power BI",
-      "Equipo técnico interno de 22 personas (15 senior, 7 junior) que operará la solución",
-      "Presupuesto declarado: 150–200 k€ con MVP en 3–4 meses y alcance acotado",
-      "Compliance: trazabilidad del medicamento, normativa sanitaria, RGPD, ISO 27001 a medio plazo",
-      "KPIs de éxito: −30 % roturas de stock, menos inventario inmovilizado, precisión de previsión >85 %"
+      "El cliente menciona explícitamente un componente de IA para predecir retrasos en entregas, indicando un enfoque en *predictive analytics* aplicado a logística",
+      "La necesidad de unificar datos sugiere un proyecto de *data integration* con posible evolución hacia *advanced analytics*",
+      "El sector (logística) y el tamaño de la empresa (600 empleados) indican un proyecto con complejidad media-alta en volumen de datos y fuentes heterogéneas",
+      "Confirmado: Transportes Cantábrico no tiene equipo interno de datos. Solo 2 de los 8 miembros del equipo IT tienen conocimientos básicos de SQL, lo que sugiere una madurez técnica limitada en gestión de datos avanzada.",
+      "La dependencia de proveedores externos para datos refuerza la necesidad de una solución escalable y con soporte integrado, especialmente en el componente de IA/ML.",
+      "Confirmado: el cliente opera 100% en cloud y tiene preferencia por Azure, alineado con su uso actual de Microsoft 365 y herramientas de Microsoft (Power BI).",
+      "La existencia de 15 licencias Pro de Power BI sugiere un uso básico de BI, pero sin mencionar integraciones avanzadas con datos operativos de flota/rutas.",
+      "La preferencia por Azure refuerza la posibilidad de implementar soluciones de IA/ML en su ecosistema actual (ej: Azure Machine Learning, Azure Synapse).",
+      "El uso de Power BI indica que el cliente ya tiene una herramienta de visualización, pero podría requerir integraciones más profundas con datos estructurados/no estructurados para el componente predictivo.",
+      "El objetivo principal del proyecto se centra en *predictive analytics* para anticipar retrasos en entregas, con un horizonte temporal concreto de 24 horas. Esto refuerza la necesidad de un modelo de IA basado en datos históricos y en tiempo real.",
+      "La precisión del objetivo (24 horas de antelación) sugiere requisitos técnicos específicos: integración de datos operativos (flota, rutas), fuentes externas (clima, tráfico) y modelos de ML con umbrales de confianza definidos.",
+      "La falta de equipo interno de datos y la dependencia de proveedores externos para gestión avanzada de datos implica que el proyecto requerirá un diseño robusto de *data pipeline* y posible soporte en la fase de despliegue y mantenimiento.",
+      "Confirmado: despliegue 100% en cloud (Azure), alineado con su stack actual (Microsoft 365, Power BI) y preferencia por evitar infraestructura híbrida.",
+      "Detectadas fuentes de datos clave para integración: (1) TMS en SQL Server (posible migración o conexión directa), (2) telemetría en tiempo real (API cada 5 minutos), (3) ERP Navision (cloud), y (4) datos externos (clima/tráfico). Esto sugiere un *scope* de integración complejo con requisitos de latencia baja para el componente predictivo.",
+      "Volumen de datos estimado significativo: telemetría en tiempo real (100-500 MB/hora) + históricos de TMS/ERP (cientos de GB-TB), lo que requiere arquitectura escalable en Azure (ej: Azure Data Factory, Synapse, o Databricks para procesamiento).",
+      "Madurez analítica actual limitada a Power BI sin DWH centralizado, lo que implica necesidad de diseñar un *data pipeline* desde cero para consolidar fuentes heterogéneas y alimentar modelos de ML.",
+      "La telemetría en tiempo real (cada 5 minutos) y el objetivo de predicción con 24h de antelación refuerzan la necesidad de un *data lake* o *data warehouse* en Azure para almacenar y procesar datos históricos y en tiempo real.",
+      "El uso de SQL Server para TMS sugiere posible compatibilidad con Azure SQL o migración a servicios nativos de Azure (ej: Azure SQL Database) para simplificar la integración.",
+      "Confirmado: el **SQL Server 2019 está en local**, lo que implica necesidad de migración a Azure SQL Database o conexión híbrida segura (ej: Azure SQL Managed Instance) para integrar datos en el pipeline de Azure.",
+      "La madurez analítica actual (informes manuales en Excel) y la falta de pipelines de datos refuerzan la necesidad de diseñar una arquitectura **desde cero** para consolidar fuentes heterogéneas (SQL Server local, telemetría en tiempo real, ERP Navision) en Azure.",
+      "El plazo de **4 meses para el MVP** sugiere un enfoque **ágil y priorizado**: (1) integración básica de telemetría y datos históricos críticos, (2) modelo predictivo simplificado (ej: regresión o árbol de decisión) para validar la precisión en 24h, y (3) dashboard en Power BI con métricas clave (ej: % de retrasos predichos correctamente).",
+      "La dependencia de Excel para informes manuales indica que el proyecto debe incluir **automatización de reportes** como parte del MVP para demostrar ROI rápido al negocio.",
+      "El uso de **SQL Server 2019 en local** y la preferencia por Azure sugieren un **enfoque híbrido temporal** durante la migración, aunque el despliegue final sea 100% cloud. Esto debe documentarse como riesgo en el *scope*.",
+      "La telemetría en tiempo real (100-500 MB/hora) y el plazo de 4 meses para el MVP limitan el alcance inicial a un **subconjunto de datos críticos** (ej: solo rutas con historial de retrasos frecuentes) para evitar sobrecarga técnica.",
+      "La falta de herramientas de data engineering internas (ej: Apache Spark, Airflow) refuerza la necesidad de usar servicios gestionados de Azure (ej: Azure Databricks, Data Factory) para el pipeline de datos."
     ]
   },
-  "status": "completed"
+  "status": "pending fields"
 }

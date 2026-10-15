@@ -3,12 +3,20 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+import sys
+
 import streamlit as st
 
 from graph import run_graph
 
 REPORT_PATH = Path("data_structures/solution_builder_report.html")
 
+# En Windows, si la salida va a un archivo, Python escribe en cp1252 y un print con "≥" o un emoji
+# lanza un error que tumba el turno. Con UTF-8 (y "replace" por si acaso) un print nunca rompe nada.
+for _flujo in (sys.stdout, sys.stderr):
+    if hasattr(_flujo, "reconfigure"):
+        _flujo.reconfigure(encoding="utf-8", errors="replace")
+        
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="AIDM - Discovery Agent",

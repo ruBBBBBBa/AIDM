@@ -70,7 +70,7 @@ def _extract_json_object(text: str) -> str:
 def _parse_plan(raw_output: str, allowed_fields: set[str]) -> dict[str, Any]:
     parsed: dict[str, Any] = {"updates": [], "assistant_reply": "", "update_status": None}
     try:
-        payload = json.loads(_extract_json_object(raw_output))
+        payload = json.loads(_extract_json_object(raw_output), strict =False)
     except Exception:
         return parsed
 
@@ -93,6 +93,9 @@ def _parse_plan(raw_output: str, allowed_fields: set[str]) -> dict[str, Any]:
         parsed["updates"] = safe_updates
 
     assistant_reply = payload.get("assistant_reply")
+    if isinstance(assistant_reply, dict):
+        # Algunos modelos devuelven {"text": "..."} en vez del texto directamente
+        assistant_reply = assistant_reply.get("text") or ""
     if isinstance(assistant_reply, str):
         parsed["assistant_reply"] = assistant_reply.strip()
 
@@ -249,15 +252,16 @@ def run_agent(user_prompt, chat_history: list[dict[str, str]] | None = None):
     try:
         plan = _propose_plan_with_agent(user_prompt, chat_history)
     except Exception as exc:
-        # Los cambios inválidos ya se descartan uno a uno; aquí solo llega algo inesperado.
-        logger.error("No se pudo aplicar el plan del discovery: %s", exc)
+       # Falló la llamada al LLM (o leer su respuesta): se sigue con el plan vacío, pero queda registrado.
+        logger.error("Falló la llamada al LLM del discovery: %s", exc)
 
     if plan.get("updates") or plan.get("update_status") is not None:
         try:
             _apply_plan(plan)
-        except Exception:
-            # Evita romper la conversación por un update inválido.
-            pass
+        except Exception as exc:
+            # Los cambios inválidos ya se descartan uno a uno; aquí solo llega un fallo inesperado
+            # (p. ej. no se puede leer o escribir problem_case.json). Se registra en vez de ocultarlo.
+            logger.error("No se pudo aplicar el plan del discovery: %s", exc)
 
     # Actualiza el status del caso según los campos pendientes, para mantener consistencia aunque el LLM no lo haya hecho bien.
     _sync_status_with_content()
