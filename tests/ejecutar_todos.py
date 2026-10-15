@@ -20,6 +20,7 @@ TESTS = [
     "test_md_to_html.py",           # fallo 11
     "test_discovery_inventos.py",   # fallo 21
     "test_discovery_formato.py",    # fallo 22
+    "test_md_br.py",                # fallo 30
 ]
 
 # Los resultados llevan «≥», «€»…: en Windows, sin esto, la salida por tubería usa cp1252 y falla.

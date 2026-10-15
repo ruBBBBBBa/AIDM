@@ -8,10 +8,11 @@ import litellm
 from bs4 import BeautifulSoup, FeatureNotFound
 from crewai import Agent, LLM
 from markdown_it import MarkdownIt
+from markdown_it.token import Token
 from pydantic import BaseModel, Field
 
 import logging
-
+import re
 import unicodedata
 
 
@@ -294,7 +295,25 @@ def parse_html(markup: str) -> BeautifulSoup:
 # Conversor Markdown → HTML: CommonMark + tablas. Con html=False, el HTML que escriba el LLM
 # se muestra como texto en vez de ejecutarse; breaks=True convierte cada salto de línea en <br>.
 _MD = MarkdownIt("commonmark", {"html": False, "breaks": True}).enable(["table", "strikethrough"])
+_BR = re.compile(r"<br\s*/?>", re.IGNORECASE)
 
+def _br_como_salto(inline: Token) -> None:
+    """Los agentes escriben <br> dentro de las celdas para partir líneas. Con el HTML desactivado
+    saldría como texto, así que se cambia por un salto de línea real. Solo en texto normal:
+    un `<br>` entre comillas de código se queda como código, y el resto del HTML sigue escapado."""
+    hijos = []
+    for hijo in inline.children or []:
+        if hijo.type != "text" or not _BR.search(hijo.content):
+            hijos.append(hijo)
+            continue
+        for i, trozo in enumerate(_BR.split(hijo.content)):
+            if i:
+                hijos.append(Token("hardbreak", "br", 0))
+            if trozo:
+                texto = Token("text", "", 0)
+                texto.content = trozo
+                hijos.append(texto)
+    inline.children = hijos
 
 def md_to_html(text: str) -> str:
     if not text or not text.strip():
@@ -304,4 +323,6 @@ def md_to_html(text: str) -> str:
     for token in tokens:
         if token.type in ("heading_open", "heading_close"):
             token.tag = "h3" if token.tag in ("h1", "h2") else "h4"
+        elif token.type == "inline":
+            _br_como_salto(token)
     return _MD.renderer.render(tokens, _MD.options, {})
