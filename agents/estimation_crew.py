@@ -89,7 +89,9 @@ class ResumenEjecutivo(BaseModel):
     presupuesto_cliente_max_eur: int = Field(
         description="Máximo del presupuesto que indica el caso del cliente, en euros; 0 si no lo indica")
     horizonte_temporal: str
-    justificacion: str = Field(description="De dónde salen las cifras y qué las haría variar")
+    justificacion: str = Field(
+        description="De dónde salen las cifras de infraestructura, licencias y formación y qué las haría variar. "
+                    "Sin valorar si caben en el presupuesto: eso se calcula después, con el equipo incluido")
 
 
 class DesglosePorCategoria(BaseModel):
@@ -134,6 +136,9 @@ def _eur(valor: float) -> str:
     """12345.6 -> '12.346 €'"""
     return f"{valor:,.0f} €".replace(",", ".")
 
+def _rango(minimo: float, maximo: float) -> str:
+    """'75.000 € – 90.000 €', o un solo valor si los dos coinciden ('214.400 €')."""
+    return _eur(minimo) if _eur(minimo) == _eur(maximo) else f"{_eur(minimo)} – {_eur(maximo)}"
 
 def _cargar_tarifas() -> dict[tuple[str, str], float]:
     """Tarifas de bd/costes_perfil.csv como {(perfil, nivel) en minúsculas: €/hora}."""
@@ -228,7 +233,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         ("Formación y onboarding",    d.formacion_y_onboarding,    "#b45309"),  # amber
         ("Mantenimiento y soporte",   d.mantenimiento_y_soporte,   "#6d28d9"),  # purple
                 ("Desarrollo e implantación",                              # teal
-         f"Equipo: {_eur(equipo_min)} – {_eur(equipo_max)}" if equipo else d.desarrollo_e_implantacion, "#0f766e"),
+        f"Equipo: {_rango(equipo_min, equipo_max)}" if equipo else d.desarrollo_e_implantacion, "#0f766e"),
     ]
     cat_vals = [(_extract_val(raw), color, label, raw) for label, raw, color in cat_data]
     max_val = max((v for v, *_ in cat_vals), default=1) or 1
@@ -303,7 +308,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         f'<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">'
         f'{"Coste total (equipo incluido)" if equipo else "Coste estimado (sin equipo)"}</div>'
         f'<div style="font-size:1.5rem;font-weight:700;color:var(--text);">'
-        f'{_eur(total_min)} – {_eur(total_max)}</div></div>'
+        f'{_rango(total_min, total_max)}</div></div>'
         f'<div style="flex:1;min-width:140px;background:var(--surface);border:1px solid var(--border);'
         f'border-radius:9px;padding:1.1rem;text-align:center;box-shadow:var(--shadow);">'
         f'<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Horizonte temporal</div>'
@@ -319,7 +324,10 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         f'<div style="background:{conf_color};width:{conf_pct};height:100%;border-radius:999px;"></div>'
         f'</div></div>'
         f'<p style="color:var(--text);font-size:0.875rem;margin:0 0 0.5rem;">{motivo}</p>'
-        f'<p style="color:var(--muted);font-size:0.875rem;margin:0;font-style:italic;">{r.justificacion}</p>'
+        # La justificación la escribe el LLM sin conocer el equipo: se dice a qué cifras se refiere
+        f'<p style="color:var(--muted);font-size:0.875rem;margin:0;font-style:italic;">'
+        f'Infraestructura, licencias y formación ({_rango(r.coste_sin_equipo_min_eur, r.coste_sin_equipo_max_eur)}, '
+        f'sin el equipo): {r.justificacion}</p>'
         f'</div>'
 
         # ── Supuestos ──
@@ -510,7 +518,9 @@ def run_estimation_crew(
             "El coste del equipo se calcula aparte con las tarifas de la empresa: NO lo incluyas en "
             "coste_sin_equipo_min_eur ni en coste_sin_equipo_max_eur, que solo cubren infraestructura, licencias y "
             "formación durante todo el proyecto. En presupuesto_cliente_max_eur pon el máximo del presupuesto que "
-            "indica el caso del cliente, o 0 si no lo indica.\n"
+            "indica el caso del cliente, o 0 si no lo indica. En justificacion explica solo de dónde salen esas "
+            "cifras y qué las haría variar; no digas si caben en el presupuesto del cliente, porque el total con el "
+            "equipo se calcula después.\n"
             "Para los supuestos: si te falta información, indícalo como "
             "'Por determinar, requiere [dato X]' o 'Se asume [dato X]' — nunca inventes datos críticos.\n\n"
             f"{datos_cliente}"
