@@ -4,14 +4,20 @@ Ejecuta interface.py sin navegador con el AppTest de Streamlit. El grafo se
 sustituye por uno simulado, así que no llama a ningún LLM ni cambia ningún archivo.
 
 Uso (desde la carpeta del proyecto, con el venv activado):
-    python test_interfaz_informe.py
+    python tests/test_interfaz_informe.py
 
 Los avisos "missing ScriptRunContext" que salgan son normales con AppTest.
 """
+import os
 import sys
+from pathlib import Path
+
+RAIZ = Path(__file__).resolve().parent.parent  # la carpeta del proyecto (este archivo está en tests/)
+sys.path.insert(0, str(RAIZ))  # para importar utils, agents, graph… desde aquí
+os.chdir(RAIZ)                 # para que las rutas relativas (data_structures/…) apunten al proyecto
+
 import types
 import webbrowser
-from pathlib import Path
 
 import streamlit as st
 from streamlit.testing.v1 import AppTest
@@ -37,7 +43,7 @@ webbrowser.open = lambda *args, **kwargs: abiertos.append(args)
 
 # 1) Un turno normal de discovery: respuesta en el chat, sin informe
 grafo.completar = False
-at = AppTest.from_file("interface.py", default_timeout=60)
+at = AppTest.from_file(str(RAIZ / "interface.py"), default_timeout=60)
 at.run()
 at.chat_input[0].set_value("Somos una distribuidora farmacéutica").run()
 assert not at.exception, at.exception
@@ -47,7 +53,7 @@ print("OK 1: un turno normal responde en el chat y no muestra informe")
 
 # 2) El turno que completa el discovery: informe en la página y botón de descarga
 grafo.completar = True
-at = AppTest.from_file("interface.py", default_timeout=60)
+at = AppTest.from_file(str(RAIZ / "interface.py"), default_timeout=60)
 at.run()
 at.chat_input[0].set_value("Ya está todo").run()
 assert not at.exception, at.exception

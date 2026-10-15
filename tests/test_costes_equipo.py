@@ -4,9 +4,16 @@ No llama a ningún LLM: se sustituye Crew.kickoff por una versión que guarda el
 de cada tarea y devuelve respuestas simuladas. Tampoco usa Infracost.
 
 Uso (desde la carpeta del proyecto, con el venv activado):
-    python test_costes_equipo.py
+    python tests/test_costes_equipo.py
 """
 import os
+import sys
+from pathlib import Path
+
+RAIZ = Path(__file__).resolve().parent.parent  # la carpeta del proyecto (este archivo está en tests/)
+sys.path.insert(0, str(RAIZ))  # para importar utils, agents, graph… desde aquí
+os.chdir(RAIZ)                 # para que las rutas relativas (data_structures/…) apunten al proyecto
+
 from types import SimpleNamespace
 
 from crewai import Crew

@@ -105,6 +105,39 @@ def _parse_plan(raw_output: str, allowed_fields: set[str]) -> dict[str, Any]:
 
     return parsed
 
+#RED DE SEGURIDAD PARA QUE EL DISCOVERY NO SE INVENTE DATOS QUE NO HA DADO EL USUARIO O INFLE LOS DADOS
+_CIFRA = re.compile(r"\d+(?:[.,]\d+)*")
+_ENUMERACION = re.compile(r"\(\d{1,2}\)|(?:^|(?<=\s))\d{1,2}[.)](?=\s)")  # (1)  1.  2)
+_TODO = re.compile(r"\b100\s?%")  # «100 %» es otra forma de decir «todo»
+
+def _cifras(texto: str) -> set[str]:
+    """Números que aparecen en un texto, sin separadores: '90.000' y '90000' cuentan igual.
+    No cuentan los de una enumeración ni el «100 %»."""
+    limpio = _TODO.sub("", _ENUMERACION.sub("", texto or ""))
+    return {c.replace(".", "").replace(",", "") for c in _CIFRA.findall(limpio)}
+
+
+def _sin_cifras_inventadas(updates: list[dict[str, Any]], textos_usuario: str) -> list[dict[str, Any]]:
+    """Quita los valores con cifras que el usuario no ha dicho: suelen ser estimaciones del modelo."""
+    dichas = _cifras(textos_usuario)
+    limpios: list[dict[str, Any]] = []
+    for upd in updates:
+        valor = upd.get("value")
+        if isinstance(valor, list):  # evidencias: se quitan solo las frases con cifras inventadas
+            buenas = [v for v in valor if not isinstance(v, str) or _cifras(v) <= dichas]
+            if len(buenas) < len(valor):
+                logger.warning("Evidencias descartadas en '%s': %d con cifras que el usuario no ha dicho",
+                               upd.get("field_key"), len(valor) - len(buenas))
+            if buenas:
+                limpios.append({**upd, "value": buenas})
+            continue
+        nuevas = _cifras(valor) - dichas if isinstance(valor, str) else set()
+        if nuevas:
+            logger.warning("Cambio descartado en '%s': lleva cifras que el usuario no ha dicho (%s)",
+                           upd.get("field_key"), ", ".join(sorted(nuevas)))
+            continue
+        limpios.append(upd)
+    return limpios
 
 def _apply_plan(plan: dict[str, Any]) -> dict:
 # Cada cambio se construye por separado: si uno no tiene el formato esperado, se descarta solo ese.
@@ -196,23 +229,26 @@ def _propose_plan_with_agent(user_prompt: str, chat_history: list[dict[str, str]
 
     system_prompt = (
         "Eres un agente de discovery para proyectos de Data & AI de Inetum. "
-        "Tu objetivo es extraer información del cliente en cada mensaje y actualizar el caso de problema campo a campo.\n\n"
+        "Tu objetivo es recoger los datos que da el cliente y guardarlos en el caso, campo a campo.\n\n"
         "REGLAS ESTRICTAS:\n"
-        "1. En CADA turno, extrae y actualiza TODOS los campos que puedas deducir del mensaje actual o del historial.\n"
-        "2. No acumules información: si el usuario menciona algo relevante, escríbelo YA en 'updates'.\n"
-        "3. Haz UNA sola pregunta clara y concreta sobre el campo pendiente más relevante.\n"
-        "4. Devuelve EXCLUSIVAMENTE un JSON válido sin markdown ni texto extra, con este esquema:\n"
+        "1. Guarda SOLO lo que el usuario ha dicho explícitamente, en este mensaje o en el historial. "
+        "No deduzcas, no estimes ni completes nada por tu cuenta: si un dato no se ha dicho, el campo se queda pendiente. "
+        "Nunca escribas cifras (volúmenes, porcentajes, importes, plazos) que el usuario no haya dado.\n"
+        "2. Si el usuario da varios datos a la vez, guárdalos todos en este turno.\n"
+        "3. Valores breves y literales: una frase como máximo, con las palabras y cifras del usuario. "
+        "Sin markdown (ni ** ni listas) y sin análisis ni recomendaciones: la solución la diseñan otros agentes después.\n"
+        "4. En 'evidencias' (lista, operation 'merge') anota frases cortas de lo que ha dicho el usuario, nunca conclusiones tuyas.\n"
+        "5. Campos sin dato: no los incluyas en 'updates' (nada de 'no mencionado', 'desconocido', 'N/A' ni similares). "
+        "Solo si el usuario dice explícitamente que no aplica o que no lo sabe, escribe "
+        "'Confirmado por el usuario: no aplica' o 'Confirmado por el usuario: no lo sabe'. No uses ese prefijo en ningún otro caso.\n"
+        "6. Haz UNA sola pregunta, clara y breve, sobre el campo pendiente más relevante.\n"
+        "7. Regla de cierre: si tras tus updates no quedan campos pendientes, usa update_status='completed' "
+        "y un assistant_reply sin preguntas.\n"
+        "8. Devuelve EXCLUSIVAMENTE un JSON válido, sin markdown ni texto extra, con este esquema "
+        "(assistant_reply es un texto, no un objeto; un salto de línea dentro de un texto se escribe \\n):\n"
         '{"updates": [{"field_key": "...", "value": "...", "operation": "replace"}], '
         '"assistant_reply": "...", "update_status": "pending fields" | "completed" | null}\n\n'
-        f"Campos válidos (únicos permitidos en field_key): {sorted(allowed_fields)}\n\n"
-        "Para el campo 'evidencias' (lista), usa operation 'merge' y value como array de strings.\n"
-        "Regla de cierre: si tras tus updates no quedan campos pendientes, usa update_status='completed' "
-        "y assistant_reply sin preguntas de seguimiento.\n"
-        "Sé descriptivo en los values: evita palabras genéricas o vacías.\n"
-        "Campos sin dato: si el usuario no ha dado un dato, NO incluyas ese campo en 'updates' "
-        "(nada de 'no mencionado', 'desconocido', 'N/A' ni similares); se queda pendiente y se pregunta después. "
-        "Solo si el usuario dice explícitamente que no aplica o que no lo sabe, escribe "
-        "'Confirmado por el usuario: no aplica' o 'Confirmado por el usuario: no lo sabe'."
+        f"Campos válidos (únicos permitidos en field_key): {sorted(allowed_fields)}"
     )
 
     user_message = (
@@ -254,6 +290,13 @@ def run_agent(user_prompt, chat_history: list[dict[str, str]] | None = None):
     except Exception as exc:
        # Falló la llamada al LLM (o leer su respuesta): se sigue con el plan vacío, pero queda registrado.
         logger.error("Falló la llamada al LLM del discovery: %s", exc)
+
+     # Red de seguridad del prompt: un valor con cifras que el usuario no ha dicho es una estimación del modelo.
+    textos_usuario = " ".join(
+        m.get("content", "") for m in (chat_history or []) if m.get("role") == "user"
+    ) + " " + str(user_prompt)
+    plan["updates"] = _sin_cifras_inventadas(plan.get("updates", []), textos_usuario)
+
 
     if plan.get("updates") or plan.get("update_status") is not None:
         try:

@@ -5,13 +5,19 @@ de cada tarea y devuelve una salida simulada. Tampoco toca tu informe: el roadma
 inyecta en una copia temporal.
 
 Uso (desde la carpeta del proyecto, con el venv activado):
-    python test_roadmap_contexto.py
+    python tests/test_roadmap_contexto.py
 """
-import hashlib
 import os
+import sys
+from pathlib import Path
+
+RAIZ = Path(__file__).resolve().parent.parent  # la carpeta del proyecto (este archivo está en tests/)
+sys.path.insert(0, str(RAIZ))  # para importar utils, agents, graph… desde aquí
+os.chdir(RAIZ)                 # para que las rutas relativas (data_structures/…) apunten al proyecto
+
+import hashlib
 import shutil
 import tempfile
-from pathlib import Path
 from types import SimpleNamespace
 
 # Modelos de relleno solo para poder crear los agentes; no se llega a llamar a ninguno.

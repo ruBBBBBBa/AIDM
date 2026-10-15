@@ -4,13 +4,19 @@ No llama a ningún LLM (se simula su respuesta) ni toca tu problem_case.json:
 trabaja sobre una copia temporal de la plantilla vacía.
 
 Uso (desde la carpeta del proyecto, con el venv activado):
-    python test_discovery_relleno.py
+    python tests/test_discovery_relleno.py
 """
-import json
 import os
+import sys
+from pathlib import Path
+
+RAIZ = Path(__file__).resolve().parent.parent  # la carpeta del proyecto (este archivo está en tests/)
+sys.path.insert(0, str(RAIZ))  # para importar utils, agents, graph… desde aquí
+os.chdir(RAIZ)                 # para que las rutas relativas (data_structures/…) apunten al proyecto
+
+import json
 import shutil
 import tempfile
-from pathlib import Path
 from types import SimpleNamespace
 
 import utils

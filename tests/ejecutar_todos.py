@@ -1,0 +1,46 @@
+"""Ejecuta los tests de los arreglos, uno detrás de otro, y resume el resultado.
+
+No incluye test_modelos.py ni test_fallback*.py, que llaman a los modelos de verdad.
+
+Uso (desde la carpeta del proyecto, con el venv activado):
+    python tests/ejecutar_todos.py
+"""
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+CARPETA = Path(__file__).resolve().parent
+TESTS = [
+    "test_discovery_update.py",     # fallo 1
+    "test_discovery_relleno.py",    # fallo 2
+    "test_interfaz_informe.py",     # fallo 3
+    "test_roadmap_contexto.py",     # fallo 4
+    "test_costes_equipo.py",        # fallo 5
+    "test_md_to_html.py",           # fallo 11
+    "test_discovery_inventos.py",   # fallo 21
+    "test_discovery_formato.py",    # fallo 22
+]
+
+# Los resultados llevan «≥», «€»…: en Windows, sin esto, la salida por tubería usa cp1252 y falla.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+entorno = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+fallos = []
+for nombre in TESTS:
+    test = CARPETA / nombre
+    if not test.exists():
+        print(f"NO ESTÁ  {nombre}")
+        fallos.append(nombre)
+        continue
+    r = subprocess.run([sys.executable, str(test)], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", env=entorno)
+    ultima = (r.stdout.strip().splitlines() or ["(sin salida)"])[-1]
+    if r.returncode == 0:
+        print(f"OK       {nombre}: {ultima}")
+    else:
+        fallos.append(nombre)
+        print(f"FALLA    {nombre}\n" + "\n".join((r.stderr or r.stdout).strip().splitlines()[-6:]))
+
+print(f"\n{len(TESTS) - len(fallos)} de {len(TESTS)} tests pasan." + (f" Fallan: {', '.join(fallos)}" if fallos else ""))
+sys.exit(1 if fallos else 0)
