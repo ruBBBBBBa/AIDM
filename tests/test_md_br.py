@@ -31,10 +31,10 @@ assert "<td>driver_id</td>" in html
 print("OK 1: un <br> dentro de una celda parte la línea y no se ve como texto")
 
 # 2) Las variantes que usan los modelos
-for variante in ("<br/>", "<br />", "<BR>", "<Br >"):
+for variante in ("<br/>", "<br />", "<BR>", "<Br >", "</br>", "</BR>"):
     html = md_to_html(f"| A |\n| --- |\n| uno{variante}dos |")
     assert "<td>uno<br />\ndos</td>" in html, f"{variante!r} no se ha convertido:\n{html}"
-print("OK 2: <br/>, <br /> y las mayúsculas también se convierten")
+print("OK 2: <br/>, <br />, </br> y las mayúsculas también se convierten")
 
 # 3) Fuera de las tablas y dentro de negrita
 assert md_to_html("uno<br>dos") == "<p>uno<br />\ndos</p>\n"

@@ -237,6 +237,7 @@ def update_problem_scope_tool(request: ProblemScopeUpdateRequest) -> dict:
     with open(PROBLEM_CASE_PATH, "r", encoding="utf-8") as f:
         problem_case = json.load(f)
 
+    #TODO: cambiar la funcion y las listas por una base de datos???
     updated_fields: list[str] = []
     rejected: list[dict[str, str]] = []
 
@@ -295,7 +296,7 @@ def parse_html(markup: str) -> BeautifulSoup:
 # Conversor Markdown → HTML: CommonMark + tablas. Con html=False, el HTML que escriba el LLM
 # se muestra como texto en vez de ejecutarse; breaks=True convierte cada salto de línea en <br>.
 _MD = MarkdownIt("commonmark", {"html": False, "breaks": True}).enable(["table", "strikethrough"])
-_BR = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_BR = re.compile(r"</?br\s*/?>", re.IGNORECASE)  # <br>, <br/>, <br /> y también </br>, que el navegador lee como <br>
 
 def _br_como_salto(inline: Token) -> None:
     """Los agentes escriben <br> dentro de las celdas para partir líneas. Con el HTML desactivado
