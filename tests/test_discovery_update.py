@@ -35,13 +35,14 @@ def leer(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-# 1) El caso de la revisión: 3 campos, uno viene como lista en un campo de texto
+# 1) El caso de la revisión: 3 campos, uno con una operación que un campo de texto no admite.
+#    (Antes el ejemplo era una lista en un campo de texto; desde el fallo 35 esa lista se une en un texto.)
 path = caso_temporal()
 resultado = _apply_plan({
     "updates": [
         {"field_key": "nombre_del_cliente", "value": "FarmaNorte", "operation": "replace"},
         {"field_key": "sector", "value": "distribución farmacéutica", "operation": "replace"},
-        {"field_key": "stack_tecnologico_actual", "value": ["SAP Business One", "Salesforce"], "operation": "replace"},
+        {"field_key": "stack_tecnologico_actual", "value": "SAP Business One", "operation": "merge"},
     ],
     "update_status": None,
 })

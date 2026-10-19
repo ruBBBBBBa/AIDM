@@ -177,8 +177,11 @@ def _normalize_update_value(field_key: str, value: str | List[str], operation: s
     if field_key in TEXT_FIELDS:
         if operation != "replace":
             raise ValueError(f"El campo {field_key} es de texto y solo permite operation='replace'.")
-        if not isinstance(value, str):
-            raise ValueError(f"El campo {field_key} debe actualizarse con texto, no con lista.")
+        if isinstance(value, list):
+            # Algunos modelos mandan un campo de texto como lista: se une en un texto en vez de perder el dato
+            value = "; ".join(str(item).strip() for item in value if str(item).strip())
+        elif not isinstance(value, str):
+            raise ValueError(f"El campo {field_key} debe actualizarse con texto.")
 
         normalized = value.strip()
         if not normalized:
