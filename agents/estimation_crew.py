@@ -123,7 +123,7 @@ class EstimationResult(BaseModel):
 class PerfilEquipo(BaseModel):
     perfil: str = Field(description="Nombre exacto del perfil, copiado de la primera columna de la tabla de tarifas")
     nivel: Literal["Junior", "Middle", "Senior"]
-    horas_mes: int = Field(description="Horas de dedicación al mes (160 = jornada completa)")
+    horas_mes: int = Field(description="Horas de dedicación al mes en este proyecto (160 = jornada completa; menos si es parcial)")
 
 
 class EquipoEstimado(BaseModel):
@@ -487,7 +487,7 @@ def run_estimation_crew(
     team_costs_table = _load_team_costs_context()
 
     tarifas = _cargar_tarifas()
-    datos_cliente = f"{contexto_cliente(problem_case or {})}\n"
+    datos_cliente = f"{contexto_cliente(problem_case or {}, con_costes=True)}\n"
 
     # --- Fase CrewAI: report writer + team builder (ambos sin tools) ---
     agent_data = agents_config.get("cost_estimation_agent", {})
@@ -515,7 +515,8 @@ def run_estimation_crew(
             "El coste del equipo se calcula aparte con las tarifas de la empresa: NO lo incluyas en "
             "coste_sin_equipo_min_eur ni en coste_sin_equipo_max_eur, que solo cubren infraestructura, licencias y "
             "formación durante todo el proyecto. En presupuesto_cliente_max_eur pon el máximo del presupuesto que "
-            "indica el caso del cliente, o 0 si no lo indica. En justificacion explica solo de dónde salen esas "
+            "indica el caso del cliente, o 0 si no lo indica. Si incluyes una contingencia, usa un único porcentaje, "
+            "el mismo en todo el informe. En justificacion explica solo de dónde salen esas "
             "cifras y qué las haría variar; no digas si caben en el presupuesto del cliente, porque el total con el "
             "equipo se calcula después.\n"
             "Para los supuestos: si te falta información, indícalo como "
@@ -531,23 +532,29 @@ def run_estimation_crew(
 
     team_building_task = Task(
         description=(
-            "A partir de la propuesta de solución y la descripción del problema, identifica los perfiles profesionales necesarios para llevar a cabo la implementación de la solución propuesta. "
-            "Considera roles como arquitecto de datos, ingeniero de datos, científico de datos, analista de BI, entre otros. "
-            "Proporciona una descripción detallada de cada perfil profesional identificado, incluyendo sus responsabilidades clave y las habilidades requeridas. "
-            "Ten en cuenta el equipo que ya tiene el cliente, su plazo y su presupuesto.\n\n"
+            "A partir de la propuesta de solución y de los datos del cliente, identifica los perfiles profesionales necesarios "
+            "para implementar lo que pide el cliente en el plazo que indica (el piloto, si lo hay), no la solución completa a largo plazo. "
+            "Incluye solo los perfiles imprescindibles para ese alcance y, para cada uno, sus responsabilidades clave, las "
+            "habilidades requeridas y si su dedicación es completa o parcial. "
+            "Ten en cuenta el tipo de servicio que pide el cliente: si quiere que Inetum lo implemente, los perfiles son del "
+            "equipo de Inetum, y el equipo interno del cliente participa y se forma; dilo así. Ten en cuenta también el "
+            "equipo técnico que ya tiene el cliente y lo que sabe hacer. "
+            "No des cifras de coste: el coste del equipo se calcula aparte con las tarifas de la empresa.\n\n"
             f"{datos_cliente}"
             "Esta es la solución propuesta sobre la que debes identificar los perfiles profesionales necesarios:\n"
             f"{proposal_context}"
         ),
-        expected_output="Un informe detallado que identifique los perfiles profesionales necesarios para la implementación de la solución propuesta, incluyendo una descripción de cada rol (responsabilidades clave y habilidades requeridas).",
+        expected_output="Los perfiles necesarios para el alcance pedido, con las responsabilidades, las habilidades y la dedicación (completa o parcial) de cada uno.",
         agent=team_builder,
     )
 
     team_cost_task = Task(
         description=(
-            "A partir de los perfiles de equipo identificados en la tarea anterior, define el equipo que se va a presupuestar. "
+            "A partir de los perfiles de equipo identificados en la tarea anterior, define el equipo que se va a presupuestar: "
+            "los mismos perfiles, sin añadir otros. "
             "Para cada perfil indica: su nombre exacto en la tabla de tarifas (primera columna), "
-            "el nivel (Junior/Middle/Senior) y las horas al mes (160 = jornada completa). "
+            "el nivel (Junior/Middle/Senior) y las horas al mes. 160 horas al mes es jornada completa: úsala solo para "
+            "quien trabaje a tiempo completo en este alcance, y a los perfiles con dedicación parcial ponles las horas que les correspondan. "
             "Indica también cuántos meses trabajará el equipo según el plazo del cliente (meses_min y meses_max). "
             "No calcules costes: se calculan aparte con la tabla.\n\n"
             f"{datos_cliente}"

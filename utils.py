@@ -172,6 +172,10 @@ REGLAS_DATOS_CLIENTE = (
     "incidencia, fechas o número de usuarios.\n"
 )
 
+REGLA_PRESUPUESTO = (
+    "- Las cifras de presupuesto y coste salen solo de la sección de costes: no hagas presupuestos ni repartos de "
+    "importes, ni pongas precios o porcentajes de contingencia. Puedes comparar opciones por coste sin dar cifras.\n"
+)
 
 def _estado_del_valor(valor: Any) -> tuple[str, str]:
     """('confirmado' | 'no_lo_sabe' | 'no_aplica' | 'sin_dato', valor limpio) de un campo de texto del caso."""
@@ -189,7 +193,7 @@ def _estado_del_valor(valor: Any) -> tuple[str, str]:
     return "confirmado", texto
 
 
-def contexto_cliente(problem_case: dict) -> str:
+def contexto_cliente(problem_case: dict, con_costes: bool = False) -> str:
     """Los datos del cliente para los agentes, cada campo con su estado, y las reglas para usarlos.
 
     Todos los agentes reciben lo mismo, así que ninguno tiene que rellenar huecos por su cuenta.
@@ -221,7 +225,8 @@ def contexto_cliente(problem_case: dict) -> str:
                       "dato confirmado):\n" + "\n".join(f"- {n}" for n in notas))
     if len(partes) == 1:
         partes.append("(sin datos del cliente)")
-    return "\n\n".join(partes) + "\n\n" + REGLAS_DATOS_CLIENTE
+    reglas = REGLAS_DATOS_CLIENTE if con_costes else REGLAS_DATOS_CLIENTE + REGLA_PRESUPUESTO
+    return "\n\n".join(partes) + "\n\n" + reglas
 
 #MODIFICADO: _normalize_update_value y _apply_field_update para que no se guarden valores de relleno
 def _normalize_update_value(field_key: str, value: str | List[str], operation: str) -> str | List[str]:
