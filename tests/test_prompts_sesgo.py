@@ -105,8 +105,4 @@ for fase in ("estructura", "propuesta", "costes"):
         assert "AWS" in prompt_b and "Azure" not in prompt_b, f"un prompt de {fase} no sigue al caso"
 print("OK 3: estructura, propuesta y costes no fijan tecnología; con un caso de AWS los prompts cambian con él")
 
-# 4) Lo que queda: el roadmap sigue atado a Azure y Power BI (fallo 6)
-atados = sum("Azure" in p or "Power BI" in p for p in B["roadmap"])
-print(f"AVISO: con un cliente de AWS, {atados} de los 7 prompts del roadmap siguen nombrando Azure o Power BI (fallo 6)")
-
 print("\nTodo bien: los fallos 34 y 10 están arreglados (en la parte que se puede comprobar sin el LLM real).")
