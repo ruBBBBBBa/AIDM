@@ -12,11 +12,11 @@
   "value": ""
   },
   "tiene_equipo_datos": {
-  "description": "Si la empresa tiene equipo de datos interno o depende de externos para el desarrollo y mantenimiento",
+  "description": "Si la empresa tiene equipo de datos propio (cuántas personas y qué saben hacer) o no lo tiene, y si trabaja con proveedores externos. Un «no tenemos» también es una respuesta",
   "value": ""
   },
   "tipo_de_servicio": {
-    "description": "Texto legible de negocio/técnico - Tipo de servicio solicitado por el cliente",
+    "description": "Qué servicio pide el cliente a Inetum: implementación completa, consultoría o diseño, formación, soporte o mantenimiento, o una combinación (por ejemplo, «que lo implementéis y luego forméis a nuestro equipo»)",
     "value": ""
   },
   "objetivo_del_proyecto": {
@@ -36,7 +36,7 @@
     "value": ""
   },
   "herramienta_de_visualizacion": {
-    "description": "Herramienta de visualización preferida por el cliente si se ha detectado alguna (Power BI, Tableau, Looker...)",
+    "description": "Herramienta de visualización preferida por el cliente si se ha detectado alguna (Power BI, Tableau, Looker...) y las licencias que ya tiene (tipo y número)",
     "value": ""
   },
   "enfoque_ai": {
@@ -56,11 +56,11 @@
     "value": ""
   },
   "tamano_equipo_tecnico": {
-    "description": "Tamaño del equipo técnico del cliente que operará y mantendrá la solución una vez entregada",
+    "description": "Tamaño del equipo técnico del cliente que operará y mantendrá la solución una vez entregada, y qué conocimientos tiene (por ejemplo, cuántos saben SQL)",
     "value": ""
   },
   "stack_tecnologico_actual": {
-    "description": "Tecnologías, plataformas y herramientas que el cliente ya tiene en uso (ERP, CRM, cloud, bases de datos...)",
+    "description": "Tecnologías, plataformas y herramientas que el cliente ya tiene en uso (ERP, CRM, cloud, bases de datos, licencias...), aunque las use poco",
     "value": ""
   },
   "restriccion_presupuestaria": {

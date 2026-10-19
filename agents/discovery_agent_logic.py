@@ -234,13 +234,17 @@ def _propose_plan_with_agent(user_prompt: str, chat_history: list[dict[str, str]
         "1. Guarda SOLO lo que el usuario ha dicho explícitamente, en este mensaje o en el historial. "
         "No deduzcas, no estimes ni completes nada por tu cuenta: si un dato no se ha dicho, el campo se queda pendiente. "
         "Nunca escribas cifras (volúmenes, porcentajes, importes, plazos) que el usuario no haya dado.\n"
-        "2. Si el usuario da varios datos a la vez, guárdalos todos en este turno.\n"
+        "2. Si el usuario da varios datos a la vez, guárdalos todos en este turno, cada uno en su campo, "
+        "aunque no sea el campo por el que preguntaste.\n"
         "3. Valores breves y literales: una frase como máximo, con las palabras y cifras del usuario. "
         "Sin markdown (ni ** ni listas) y sin análisis ni recomendaciones: la solución la diseñan otros agentes después.\n"
-        "4. En 'evidencias' (lista, operation 'merge') anota frases cortas de lo que ha dicho el usuario, nunca conclusiones tuyas.\n"
+        "4. En 'evidencias' (lista, operation 'merge') anota frases cortas de lo que ha dicho el usuario, nunca conclusiones tuyas, "
+        "y sin cambiarles el sentido. Anota también ahí los detalles que no encajan en ningún campo.\n"
         "5. Campos sin dato: no los incluyas en 'updates' (nada de 'no mencionado', 'desconocido', 'N/A' ni similares). "
-        "Solo si el usuario dice explícitamente que no aplica o que no lo sabe, escribe "
-        "'Confirmado por el usuario: no aplica' o 'Confirmado por el usuario: no lo sabe'. No uses ese prefijo en ningún otro caso.\n"
+        "Una respuesta negativa SÍ es un dato y se guarda tal cual: si dice «no tenemos equipo de datos», escribe "
+        "'No tiene equipo de datos'. El prefijo 'Confirmado por el usuario' es solo para dos casos: si dice que el tema "
+        "no aplica a su proyecto ('Confirmado por el usuario: no aplica') o que no lo sabe "
+        "('Confirmado por el usuario: no lo sabe'). No lo uses en ningún otro caso.\n"
         "6. Haz UNA sola pregunta, clara y breve, sobre el campo pendiente más relevante.\n"
         "7. Regla de cierre: si tras tus updates no quedan campos pendientes, usa update_status='completed' "
         "y un assistant_reply sin preguntas.\n"
@@ -248,6 +252,11 @@ def _propose_plan_with_agent(user_prompt: str, chat_history: list[dict[str, str]
         "(assistant_reply es un texto, no un objeto; un salto de línea dentro de un texto se escribe \\n):\n"
         '{"updates": [{"field_key": "...", "value": "...", "operation": "replace"}], '
         '"assistant_reply": "...", "update_status": "pending fields" | "completed" | null}\n\n'
+        "EJEMPLO. Pregunta: «¿Tenéis equipo de datos?». Respuesta: «No, IT son 5 personas y una sabe Python. "
+        "Queremos que lo montéis vosotros y luego nos forméis.» Updates correctos: "
+        "tiene_equipo_datos='No tiene equipo de datos'; tamano_equipo_tecnico='5 personas de IT, una sabe Python'; "
+        "tipo_de_servicio='Que Inetum lo implemente y después forme al equipo del cliente'. Incorrecto: "
+        "tiene_equipo_datos='Confirmado por el usuario: no aplica', o dejar el tipo de servicio solo en evidencias.\n\n"
         f"Campos válidos (únicos permitidos en field_key): {sorted(allowed_fields)}"
     )
 

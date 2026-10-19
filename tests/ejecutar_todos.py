@@ -22,6 +22,7 @@ TESTS = [
     "test_discovery_formato.py",    # fallo 22
     "test_md_br.py",                # fallo 30
     "test_costes_resumen.py",       # fallo 23
+    "test_discovery_respuestas.py", # fallo 33
 ]
 
 # Los resultados llevan «≥», «€»…: en Windows, sin esto, la salida por tubería usa cp1252 y falla.
