@@ -40,7 +40,7 @@ def build_structure_proposal(problem_case, chat_history: list[dict[str, str]] | 
             "La respuesta tiene que ser una estructura fija como 1- Texto con introducción inicial a la propuesta \n 2- Propuesta de Servicios y paltaformas \n 3- Propuesta de arquitectura\n"
             "Procura redactar la respuesta de una forma legible y bien redactada, sin dibujar ningún diagrama, usando tabulados y de mas cuando sea propio para dar una respuesta facil de leer."
         ),
-        expected_output="Una propuesta de estructura de solución detallada, extensa y justificada, siguiendo el formato indicado.",
+        expected_output="Una propuesta de estructura de solución clara y justificada, proporcionada al tamaño del cliente, siguiendo el formato indicado.",
         agent=structure_proposal_agent
     )
 
