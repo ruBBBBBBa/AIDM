@@ -1,7 +1,7 @@
 from crewai import Crew, Process, Task
 from pydantic import BaseModel
 
-from utils import _make_agent, _recent_chat_transcript, load_agents_config
+from utils import _make_agent, _recent_chat_transcript, load_agents_config, contexto_cliente
 
 
 class ProposalResult(BaseModel):
@@ -30,6 +30,7 @@ def run_proposal_crew(
 ) -> ProposalResult:
     agents_config = load_agents_config()
     transcript = _recent_chat_transcript(chat_history)
+    contexto = contexto_cliente(problem_case)  # los mismos datos, con su estado, para los 4 agentes
 
     architect = _make_agent("structure_proposal_agent", agents_config, model_name)
     data_governance = _make_agent("data_governance_agent", agents_config, model_name)
@@ -42,7 +43,7 @@ def run_proposal_crew(
             "Recomienda plataformas/servicios, justifica cada decisión y explicita supuestos cuando falten datos. "
             "Tambien dispones de el historial de el chat para que tengas contexto. "
             f"- Propuesta de solución:\n{structure_proposal}\n"
-            f"- Descripción del problema:\n{problem_case}\n"
+            f"{contexto}"
             f"- Historial reciente:\n{transcript}\n"
             "Procura que la respuesta sea detallada y este bien redactada."
         ),
@@ -56,7 +57,7 @@ def run_proposal_crew(
             "A partir de esta información, diseña una propuesta de gobernanza del dato y de inteligencia artificial adaptada al proyecto. "
             "Tambien dispones de el historial de el chat para que tengas contexto. "
             f"- Propuesta de solución:\n{structure_proposal}\n"
-            f"- Descripción del problema:\n{problem_case}\n"
+            f"{contexto}"
             f"- Historial reciente:\n{transcript}\n"
         ),
         expected_output="Texto estructurado que describa la propuesta de gobernanza del dato y AI para el proyecto, incluyendo secciones claras, explicaciones comprensibles y justificación de las decisiones tomadas. Sin dibujar ninguna tabla ni gráfico, solo texto.",
@@ -66,7 +67,7 @@ def run_proposal_crew(
     data_ai_task = Task(
         description=(
             "Toma estos inputs como contexto: "
-            f"problem case: {problem_case}\n"
+            f"{contexto}"
             f"estructura propuesta: {structure_proposal}\n"
             "Basándote en el 'problem case' completo y en la propuesta de arquitectura realizada para el problema, realiza lo siguiente: "
             "1. Análisis Crítico: Evalúa el problema de negocio y la madurez de datos actual. "
@@ -84,7 +85,7 @@ def run_proposal_crew(
     bi_visualization_task = Task(
         description=(
             "Toma estos inputs como contexto: "
-            f"problem case: {problem_case}\n"
+            f"{contexto}"
             f"estructura propuesta: {structure_proposal}\n"
             "Basándote en el 'Client Context' y las soluciones de IA propuestas anteriormente, desarrolla la estrategia de BI: "
             "1. Definición de KPIs de Visualización: Traduce las 'success_metrics' en indicadores "

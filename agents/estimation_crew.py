@@ -12,7 +12,7 @@ import litellm
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
-from utils import _make_agent, build_llm, caso_compacto, load_agents_config
+from utils import _make_agent, build_llm, contexto_cliente, load_agents_config
 
 logger = logging.getLogger("aidm")
 
@@ -487,10 +487,7 @@ def run_estimation_crew(
     team_costs_table = _load_team_costs_context()
 
     tarifas = _cargar_tarifas()
-    datos_cliente = (
-        "DATOS DEL CLIENTE (caso del discovery):\n"
-        f"{caso_compacto(problem_case or {})}\n\n"
-    )
+    datos_cliente = f"{contexto_cliente(problem_case or {})}\n"
 
     # --- Fase CrewAI: report writer + team builder (ambos sin tools) ---
     agent_data = agents_config.get("cost_estimation_agent", {})

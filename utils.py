@@ -161,16 +161,67 @@ def es_valor_de_relleno(value: Any) -> bool:
     return texto in PLACEHOLDER_EXACT or texto.startswith(PLACEHOLDER_PREFIXES)
 
 #Necesario para que no se pierda contexto entre las 7 tareas ni entre las crews.
-def caso_compacto(problem_case: dict) -> str:
-    """Los datos del cliente en pocas líneas: solo los campos con un valor real, sin descripciones."""
-    lineas = []
-    for campo, datos in problem_case.items():
-        if campo in ("status", "evidencias") or not isinstance(datos, dict):
+#MODIFICADO, para que no se pierdan los datos del cliente y no se guarden valores de relleno
+REGLAS_DATOS_CLIENTE = (
+    "CÓMO USAR ESTOS DATOS:\n"
+    "- Solo lo confirmado y las notas del discovery son hechos sobre el cliente. No le atribuyas herramientas, "
+    "licencias, sistemas, cifras ni preferencias que no estén aquí.\n"
+    "- Si necesitas un dato que no está, no lo inventes: escribe «Por confirmar: …» si hay que preguntárselo al "
+    "cliente, o «Se asume: …» si es una suposición tuya para poder avanzar, y di de qué depende.\n"
+    "- No escribas cifras del cliente que no estén aquí: porcentajes actuales, volúmenes, ahorros, costes por "
+    "incidencia, fechas o número de usuarios.\n"
+)
+
+
+def _estado_del_valor(valor: Any) -> tuple[str, str]:
+    """('confirmado' | 'no_lo_sabe' | 'no_aplica' | 'sin_dato', valor limpio) de un campo de texto del caso."""
+    if not isinstance(valor, str) or es_valor_de_relleno(valor):
+        return "sin_dato", ""
+    texto = valor.strip()
+    normalizado = _normalize_text(texto)
+    if normalizado.startswith(CONFIRMED_PREFIX):
+        resto = normalizado[len(CONFIRMED_PREFIX):].strip(" :.-")
+        if resto.startswith(("no lo sabe", "no sabe", "no lo se")):
+            return "no_lo_sabe", ""
+        if resto.startswith("no aplica"):
+            return "no_aplica", ""
+        texto = texto[len(CONFIRMED_PREFIX):].strip(" :.-") or texto  # «Confirmado por el usuario: X» → X
+    return "confirmado", texto
+
+
+def contexto_cliente(problem_case: dict) -> str:
+    """Los datos del cliente para los agentes, cada campo con su estado, y las reglas para usarlos.
+
+    Todos los agentes reciben lo mismo, así que ninguno tiene que rellenar huecos por su cuenta.
+    """
+    grupos: dict[str, list[str]] = {"confirmado": [], "no_lo_sabe": [], "no_aplica": [], "sin_dato": []}
+    notas: list[str] = []
+    for campo, datos in (problem_case or {}).items():
+        if campo == "status" or not isinstance(datos, dict):
             continue
         valor = datos.get("value")
-        if isinstance(valor, str) and not es_valor_de_relleno(valor):
-            lineas.append(f"- {campo}: {valor.strip()}")
-    return "\n".join(lineas) or "(sin datos del cliente)"
+        if campo == "evidencias":
+            notas = list(dict.fromkeys(v.strip() for v in valor or [] if isinstance(v, str) and v.strip()))
+            continue
+        estado, limpio = _estado_del_valor(valor)
+        grupos[estado].append(f"- {campo}: {limpio}" if estado == "confirmado" else f"- {campo}")
+
+    titulos = {
+        "confirmado": "Confirmados por el cliente:",
+        "no_lo_sabe": "El cliente no lo sabe (si hace falta, propón una opción y márcala como «Se asume»):",
+        "no_aplica": "El cliente dice que no aplica a su proyecto:",
+        "sin_dato": "Sin dato (no se preguntó o no se respondió):",
+    }
+    partes = ["DATOS DEL CLIENTE (caso del discovery)"]
+    for estado, lineas in grupos.items():
+        if lineas:
+            partes.append(titulos[estado] + "\n" + "\n".join(lineas))
+    if notas:
+        partes.append("Notas del discovery (frases del cliente; si alguna choca con un dato confirmado, manda el "
+                      "dato confirmado):\n" + "\n".join(f"- {n}" for n in notas))
+    if len(partes) == 1:
+        partes.append("(sin datos del cliente)")
+    return "\n\n".join(partes) + "\n\n" + REGLAS_DATOS_CLIENTE
 
 #MODIFICADO: _normalize_update_value y _apply_field_update para que no se guarden valores de relleno
 def _normalize_update_value(field_key: str, value: str | List[str], operation: str) -> str | List[str]:

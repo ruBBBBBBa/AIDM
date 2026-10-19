@@ -59,11 +59,12 @@ caso = {
     "evidencias": {"description": "Evidencias", "value": ["Frase larga de la conversación"]},
 }
 
-# 1) caso_compacto: solo valores reales, sin descripciones, rellenos ni evidencias
-compacto = rb.caso_compacto(caso)
+# 1) contexto_cliente (desde el fallo 25 sustituye a caso_compacto): datos reales, sin descripciones ni rellenos
+compacto = rb.contexto_cliente(caso)
 assert "- volumen_de_datos: 2 TB de histórico" in compacto
-assert "no mencionado" not in compacto and "Frase larga" not in compacto and "Volumen" not in compacto
-print("OK 1: el caso compacto lleva solo los datos reales")
+assert "no mencionado" not in compacto and "Volumen" not in compacto
+assert "- regulacion_y_compliance" in compacto.split("Sin dato")[1], "el relleno debe salir como «Sin dato»"
+print("OK 1: el contexto del cliente lleva solo los datos reales; el relleno sale como «Sin dato»")
 
 # 2) Las 7 tareas del roadmap reciben el caso
 rb.roadmap_builder("PROPUESTA SIMULADA", problem_case=caso)

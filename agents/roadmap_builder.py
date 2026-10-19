@@ -4,7 +4,7 @@ from pathlib import Path
 from crewai import Agent, Crew, Process, Task
 from dotenv import load_dotenv
 
-from utils import _make_agent, caso_compacto, load_agents_config, load_problem_case, parse_html, md_to_html
+from utils import _make_agent, contexto_cliente, load_agents_config, load_problem_case, parse_html, md_to_html
 
 load_dotenv(".env")
 
@@ -112,11 +112,7 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
     # Las 7 tareas reciben, además del resumen, los datos del cliente del discovery.
     if problem_case is None:
         problem_case = load_problem_case()
-    contexto = (
-        f"{resumen}\n\n"
-        "DATOS DEL CLIENTE (caso del discovery):\n"
-        f"{caso_compacto(problem_case)}\n\n"
-    )
+    contexto = f"{resumen}\n\n{contexto_cliente(problem_case)}\n"
 
     data_sources_task = Task(
         description=(

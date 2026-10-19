@@ -24,6 +24,7 @@ TESTS = [
     "test_costes_resumen.py",       # fallo 23
     "test_discovery_respuestas.py", # fallo 33
     "test_discovery_listas.py",     # fallo 35
+    "test_contexto_cliente.py",     # fallo 25
 ]
 
 # Los resultados llevan «≥», «€»…: en Windows, sin esto, la salida por tubería usa cp1252 y falla.
