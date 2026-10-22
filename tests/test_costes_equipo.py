@@ -60,18 +60,20 @@ print("OK 3: encaje alto / medio / bajo según el presupuesto, y 'medio' si no h
 os.environ.pop("INFRACOST_API_KEY", None)
 ec._resolve_infracost_binary = lambda: None  # sin Infracost: no se llama a ningún LLM para el Terraform
 
+# Sin equipo, en los 3–4 meses del equipo: 10.000 €/mes + 10.000 € únicos = 40.000–50.000 €,
+# y la contingencia del 20 % sube el escenario alto a 60.000 € (fallo 32: las sumas las hace Python)
 informe_simulado = CostEstimationReport(
+    componentes=[
+        {"componente": "Azure Synapse", "categoria": "infraestructura", "importe_eur": 10_000,
+         "periodicidad": "mensual", "calculo": "Pool dedicado"},
+        {"componente": "Formación", "categoria": "formacion", "importe_eur": 10_000,
+         "periodicidad": "unico", "calculo": "2 talleres"},
+    ],
     resumen_ejecutivo={
-        "coste_sin_equipo_min_eur": 40_000, "coste_sin_equipo_max_eur": 60_000,
-        "presupuesto_cliente_max_eur": 200_000, "horizonte_temporal": "3-4 meses",
+        "meses_proyecto": 4, "presupuesto_cliente_max_eur": 200_000, "contingencia_pct": 20,
         "justificacion": "Infraestructura Azure de tamaño medio.",
     },
     supuestos=["Se asume Power BI Pro."],
-    desglose_por_categoria={
-        "licencias_y_herramientas": "10.000 €", "formacion_y_onboarding": "15.000 €",
-        "mantenimiento_y_soporte": "15.000 €", "desarrollo_e_implantacion": "calculado aparte",
-    },
-    precio_por_componentes=[],
 )
 prompts: list[str] = []
 

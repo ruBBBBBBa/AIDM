@@ -28,6 +28,7 @@ TESTS = [
     "test_presupuesto_unico.py",    # fallo 24
     "test_prompts_sesgo.py",        # fallos 34 y 10
     "test_roadmap_plataforma.py",   # fallo 6
+    "test_costes_componentes.py",   # fallo 32
 ]
 
 # Los resultados llevan «≥», «€»…: en Windows, sin esto, la salida por tubería usa cp1252 y falla.

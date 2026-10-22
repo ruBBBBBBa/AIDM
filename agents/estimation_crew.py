@@ -1,18 +1,20 @@
 import csv
 import logging
+import math
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+from html import escape
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import litellm
 from crewai import Agent, Crew, Process, Task
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from utils import _make_agent, build_llm, contexto_cliente, load_agents_config
+from utils import _make_agent, _normalize_text, build_llm, contexto_cliente, load_agents_config
 
 logger = logging.getLogger("aidm")
 
@@ -81,47 +83,117 @@ _patch_crewai_force_required()
 
 
 class ResumenEjecutivo(BaseModel):
-    # El LLM solo estima lo que no es equipo; el total y el encaje con el presupuesto se calculan en Python.
-    coste_sin_equipo_min_eur: int = Field(
-        description="Infraestructura, licencias y formación durante todo el proyecto, SIN el equipo, en euros (escenario bajo)")
-    coste_sin_equipo_max_eur: int = Field(
-        description="Lo mismo en el escenario alto, en euros")
+    # El LLM valora cada componente; los totales, el horizonte y el encaje con el presupuesto se calculan en Python.
+    meses_proyecto: int = Field(
+        description="Meses del alcance que se presupuesta (el piloto, si lo hay), según el plazo del cliente")
     presupuesto_cliente_max_eur: int = Field(
         description="Máximo del presupuesto que indica el caso del cliente, en euros; 0 si no lo indica")
-    horizonte_temporal: str
+    contingencia_pct: int = Field(
+        default=0,
+        description="Porcentaje de contingencia sobre infraestructura, licencias, formación y soporte, que se suma "
+                    "en el escenario alto; 0 si no hay")
     justificacion: str = Field(
-        description="De dónde salen las cifras de infraestructura, licencias y formación y qué las haría variar. "
+        description="De dónde salen los importes de los componentes y qué los haría variar. "
                     "Sin valorar si caben en el presupuesto: eso se calcula después, con el equipo incluido")
 
 
-class DesglosePorCategoria(BaseModel):
-    licencias_y_herramientas: str
-    formacion_y_onboarding: str
-    mantenimiento_y_soporte: str
-    desarrollo_e_implantacion: str
+Categoria = Literal["infraestructura", "licencias", "formacion", "mantenimiento"]
+Periodicidad = Literal["mensual", "anual", "unico"]
 
 
-class ItemInfraestructura(BaseModel):
-    servicio: str
-    sku: str
-    precio_unitario: str
-    unidades_estimadas: str
-    coste_mensual_estimado: str
+def _a_numero(valor: Any) -> Any:
+    """'1.250 €', '1,250.50 EUR' o '32,50 €/mes' → número. Lo demás (como 'estimated') se deja tal cual y
+    la validación lo rechaza, así que el modelo tiene que repetirlo con un número."""
+    if not isinstance(valor, str):
+        return valor
+    m = re.fullmatch(r"\s*(?:€|eur)?\s*(-?\d[\d.,]*)\s*(?:€|eur|euros)?\s*(?:/\s*\w+)?\s*", valor, re.IGNORECASE)
+    if not m:
+        return valor
+    texto = m.group(1)
+    if "," in texto and "." in texto:  # el separador que va al final es el decimal
+        decimal = "," if texto.rfind(",") > texto.rfind(".") else "."
+        texto = texto.replace("." if decimal == "," else ",", "").replace(decimal, ".")
+    elif "," in texto:
+        texto = texto.replace(",", "") if re.fullmatch(r"-?\d{1,3}(,\d{3})+", texto) else texto.replace(",", ".")
+    elif re.fullmatch(r"-?\d{1,3}(\.\d{3})+", texto):  # 15.000 → miles, 32.5 → decimales
+        texto = texto.replace(".", "")
+    try:
+        return float(texto)
+    except ValueError:
+        return valor
+
+
+def _opcion(valor: Any, opciones: tuple[str, ...]) -> Any:
+    """'Único' → 'unico', 'Formación y onboarding' → 'formacion': la opción que empieza igual, sin tildes ni mayúsculas."""
+    if not isinstance(valor, str):
+        return valor
+    texto = _normalize_text(valor)
+    return next((o for o in opciones if texto.startswith(o[:5])), valor)
+
+
+class ComponenteCoste(BaseModel):
+    componente: str = Field(
+        description="Componente de la propuesta que se valora: un servicio cloud, una licencia, una formación o el soporte")
+    categoria: Categoria
+    importe_eur: float = Field(ge=0, description="Importe en euros: solo el número, sin símbolo ni texto")
+    periodicidad: Periodicidad = Field(
+        description="mensual o anual si se paga cada mes o cada año; unico si se paga una sola vez")
+    calculo: str = Field(description="De dónde sale el importe: precio unitario × unidades, o la referencia usada")
+
+    @field_validator("importe_eur", mode="before")
+    @classmethod
+    def _importe_numerico(cls, valor: Any) -> Any:
+        return _a_numero(valor)
+
+    @field_validator("categoria", mode="before")
+    @classmethod
+    def _categoria_sin_tildes(cls, valor: Any) -> Any:
+        return _opcion(valor, get_args(Categoria))
+
+    @field_validator("periodicidad", mode="before")
+    @classmethod
+    def _periodicidad_sin_tildes(cls, valor: Any) -> Any:
+        return _opcion(valor, get_args(Periodicidad))
 
 
 class CostEstimationReport(BaseModel):
+    # Los componentes van primero: la justificación explica unos importes que el modelo ya ha escrito
+    componentes: list[ComponenteCoste] = Field(
+        description="Un elemento por cada componente con coste de la propuesta, sin el equipo")
     resumen_ejecutivo: ResumenEjecutivo
     supuestos: list[str]
-    desglose_por_categoria: DesglosePorCategoria
-    precio_por_componentes: list[ItemInfraestructura]
 
 
 class EstimationResult(BaseModel):
     cost_estimation: str
     team_profiles: str
 
+
+
+CSV_TARIFAS = Path(__file__).parent.parent / "bd" / "costes_perfil.csv"
+
+def _clave_perfil(nombre: str) -> str:
+    """'MLOps / AIOps engineer' -> 'mlops/aiops engineer': compara perfiles sin mayúsculas, tildes ni espacios."""
+    return re.sub(r"\s*/\s*", "/", _normalize_text(nombre or ""))
+
+def _perfiles_con_tarifa() -> list[str]:
+    """Los perfiles de bd/costes_perfil.csv, tal cual: la lista cerrada que puede usar el agente."""
+    if not CSV_TARIFAS.exists():
+        return []
+    with open(CSV_TARIFAS, encoding="utf-8-sig", newline="") as f:
+        nombres = [(fila.get("Perfil") or "").strip() for fila in csv.DictReader(f, skipinitialspace=True)]
+    return [n for n in nombres if n]
+
+PERFILES_CON_TARIFA = _perfiles_con_tarifa()  # lista cerrada de perfiles que puede usar el agente; si no hay CSV, queda vacía
+
+
 class PerfilEquipo(BaseModel):
-    perfil: str = Field(description="Nombre exacto del perfil, copiado de la primera columna de la tabla de tarifas")
+    # El enum va solo en el esquema que ve el modelo. Python acepta cualquier nombre para no perder el
+    # equipo entero por uno mal escrito: el que no tenga tarifa se marca y se avisa junto al total.
+    perfil: str = Field(
+        description="Nombre exacto del perfil, copiado de la primera columna de la tabla de tarifas",
+        json_schema_extra={"enum": PERFILES_CON_TARIFA} if PERFILES_CON_TARIFA else None,
+    )
     nivel: Literal["Junior", "Middle", "Senior"]
     horas_mes: int = Field(description="Horas de dedicación al mes en este proyecto (160 = jornada completa; menos si es parcial)")
 
@@ -130,6 +202,10 @@ class EquipoEstimado(BaseModel):
     perfiles: list[PerfilEquipo]
     meses_min: int = Field(description="Meses de trabajo del equipo según el plazo del cliente (escenario corto)")
     meses_max: int = Field(description="Meses de trabajo del equipo según el plazo del cliente (escenario largo)")
+    funciones_sin_tarifa: list[str] = Field(
+        default_factory=list,
+        description="Funciones que hacen falta y no encajan en ningún perfil de la tabla de tarifas (por ejemplo, "
+                    "la gestión del proyecto). No se presupuestan: se avisa de ellas junto al total")
 
 
 def _eur(valor: float) -> str:
@@ -142,13 +218,12 @@ def _rango(minimo: float, maximo: float) -> str:
 
 def _cargar_tarifas() -> dict[tuple[str, str], float]:
     """Tarifas de bd/costes_perfil.csv como {(perfil, nivel) en minúsculas: €/hora}."""
-    csv_path = Path(__file__).parent.parent / "bd" / "costes_perfil.csv"
     tarifas: dict[tuple[str, str], float] = {}
-    if not csv_path.exists():
+    if not CSV_TARIFAS.exists():
         return tarifas
-    with open(csv_path, encoding="utf-8-sig", newline="") as f:
+    with open(CSV_TARIFAS, encoding="utf-8-sig", newline="") as f:
         for fila in csv.DictReader(f, skipinitialspace=True):
-            perfil = (fila.get("Perfil") or "").strip().lower()
+            perfil = _clave_perfil(fila.get("Perfil") or "")
             for nivel in ("Junior", "Middle", "Senior"):
                 valor = (fila.get(f"{nivel} (€/h)") or "").strip()
                 if perfil and valor:
@@ -158,13 +233,14 @@ def _cargar_tarifas() -> dict[tuple[str, str], float]:
 
 def _calcular_equipo(equipo: EquipoEstimado, tarifas: dict[tuple[str, str], float]) -> dict:
     """Coste del equipo calculado en Python (horas × tarifa del CSV), nunca por el LLM."""
-    filas, mensual = [], 0.0
+    filas, mensual, no_sumados = [], 0.0, []
     for p in equipo.perfiles:
         nombre = p.perfil.strip().replace("|", "/")  # una barra rompería la tabla
-        tarifa = tarifas.get((p.perfil.strip().lower(), p.nivel.lower()))
+        tarifa = tarifas.get((_clave_perfil(p.perfil), p.nivel.lower()))
         if tarifa is None:
             logger.warning("Perfil sin tarifa en costes_perfil.csv: '%s' (%s); no se suma", p.perfil, p.nivel)
             filas.append(f"| {nombre} | {p.nivel} | {p.horas_mes} | sin tarifa | no se suma |")
+            no_sumados.append(f"{nombre} ({p.nivel}, {p.horas_mes} h/mes)")
             continue
         coste = p.horas_mes * tarifa
         mensual += coste
@@ -182,8 +258,13 @@ def _calcular_equipo(equipo: EquipoEstimado, tarifas: dict[tuple[str, str], floa
         "",
         f"**Coste del equipo en {meses} meses: {total}**",
     ]
+    # Funciones que el agente no pudo asignar a un perfil con tarifa: tampoco se suman
+    no_sumados += [f.strip().replace("|", "/") for f in equipo.funciones_sin_tarifa if f.strip()]
+    if no_sumados:
+        lineas += ["", f"Sin presupuestar, porque no tienen tarifa en la tabla: {'; '.join(no_sumados)}."]
     return {"mensual": mensual, "total_min": total_min, "total_max": total_max,
-            "meses_min": meses_min, "meses_max": meses_max, "texto": "\n".join(lineas)}
+            "meses_min": meses_min, "meses_max": meses_max, "no_sumados": no_sumados,
+            "texto": "\n".join(lineas)}
 
 
 def _encaje_presupuesto(total_min: float, total_max: float, presupuesto: int) -> tuple[str, str]:
@@ -197,17 +278,88 @@ def _encaje_presupuesto(total_min: float, total_max: float, presupuesto: int) ->
                          f"({_eur(presupuesto)}); el alto ({_eur(total_max)}) lo supera.")
     return "bajo", f"Incluso el escenario bajo ({_eur(total_min)}) supera el presupuesto del cliente ({_eur(presupuesto)})."
 
+# Bar colors reuse the template icon-section palette
+CATEGORIAS = {
+    "infraestructura": ("Infraestructura cloud", "#0369a1"),       # sky
+    "licencias":       ("Licencias y herramientas", "#1d4ed8"),    # blue
+    "formacion":       ("Formación y onboarding", "#b45309"),      # amber
+    "mantenimiento":   ("Mantenimiento y soporte", "#6d28d9"),     # purple
+}
+_UNIDAD = {"mensual": "€/mes", "anual": "€/año", "unico": "€, pago único"}
+
+
+def _cifra(valor: float) -> str:
+    """1250 -> '1.250'; los importes pequeños con céntimos conservan dos decimales: 32.5 -> '32,50'."""
+    if valor < 100 and valor != int(valor):
+        return f"{valor:.2f}".replace(".", ",")
+    return f"{valor:,.0f}".replace(",", ".")
+
+
+def _coste_en_proyecto(c: ComponenteCoste, meses: int) -> float:
+    """Lo que cuesta un componente en `meses` meses: lo mensual, cada mes; lo anual, por año empezado; lo único, una vez."""
+    if c.periodicidad == "mensual":
+        return c.importe_eur * meses
+    if c.periodicidad == "anual":
+        return c.importe_eur * math.ceil(meses / 12)
+    return c.importe_eur
+
+def _sin_valorar_presupuesto(texto: str) -> str:
+    """Quita de la justificación las frases que hablan del presupuesto. El encaje se calcula en Python con el
+    equipo incluido, que el LLM no conoce; ministral lo valoraba igualmente aunque el prompt se lo prohíbe."""
+    lineas, quitadas = [], 0
+    for linea in texto.splitlines():
+        frases = re.split(r"(?<=[.!?])\s+", linea)
+        quedan = [f for f in frases if "presupuesto" not in _normalize_text(f)]
+        quitadas += len(frases) - len(quedan)
+        if quedan or not linea.strip():
+            lineas.append(" ".join(quedan))
+    if quitadas:
+        logger.warning("Justificación de costes: se quitan %d frase(s) que valoran el presupuesto", quitadas)
+    return "\n".join(lineas).strip()
+
 def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", equipo: dict | None = None) -> str:
     r = report.resumen_ejecutivo
 
-    # Total = lo que estima el LLM sin equipo + el equipo calculado en Python
+    justificacion = _sin_valorar_presupuesto(r.justificacion)
+
+    # Fallo 32: el LLM da el importe de cada componente y si es mensual, anual o único; las sumas se hacen aquí, con los mismos meses que el equipo para que todo cubra el mismo periodo
+    if equipo and "meses_min" in equipo:
+        meses_min, meses_max = equipo["meses_min"], equipo["meses_max"]
+    else:
+        meses_min = meses_max = max(r.meses_proyecto, 1)
+    meses = f"{meses_min}" if meses_min == meses_max else f"{meses_min}–{meses_max}"
+    meses_txt = f"{meses} {'mes' if meses_max == 1 else 'meses'}"
+
+    por_categoria = {cat: [0.0, 0.0] for cat in CATEGORIAS}
+    for c in report.componentes:
+        por_categoria[c.categoria][0] += _coste_en_proyecto(c, meses_min)
+        por_categoria[c.categoria][1] += _coste_en_proyecto(c, meses_max)
+    base_min = sum(v[0] for v in por_categoria.values())
+    base_max = sum(v[1] for v in por_categoria.values())
+    contingencia = base_max * max(r.contingencia_pct, 0) / 100  # solo en el escenario alto
+    sin_equipo_min, sin_equipo_max = base_min, base_max + contingencia
+
+    # Total = componentes (sin el equipo) + el equipo calculado en Python
     equipo_min = equipo["total_min"] if equipo else 0
     equipo_max = equipo["total_max"] if equipo else 0
-    total_min = r.coste_sin_equipo_min_eur + equipo_min
-    total_max = r.coste_sin_equipo_max_eur + equipo_max
+    total_min = sin_equipo_min + equipo_min
+    total_max = sin_equipo_max + equipo_max
     nivel, motivo = _encaje_presupuesto(total_min, total_max, r.presupuesto_cliente_max_eur)
     if not equipo:
         motivo += " Ojo: el total no incluye el equipo, que no se pudo calcular."
+
+    # Lo que no está en el total se avisa al lado del total y del encaje
+    avisos = []
+    no_sumados = (equipo or {}).get("no_sumados") or []
+    if no_sumados:
+        avisos.append(f"Ojo: el total y el encaje no incluyen {escape('; '.join(no_sumados))}, porque no tienen "
+                      f"tarifa en la tabla de la empresa. El coste real será mayor.")
+    if not report.componentes:
+        avisos.append("Ojo: el total no incluye infraestructura, licencias, formación ni soporte, porque el modelo "
+                      "no ha valorado ningún componente de la propuesta.")
+    aviso_html = "".join(
+        f'<p style="color:#b45309;font-size:0.875rem;font-weight:600;margin:0 0 0.5rem;">{aviso}</p>' for aviso in avisos
+    )
 
     # Semantic confidence colors, harmonized with the template warm palette
     confidence_map = {
@@ -217,52 +369,52 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     }
     conf_pct, conf_color = confidence_map.get(nivel, ("50%", "var(--muted)"))
 
-    def _extract_val(text: str) -> float:
-        m = re.search(r'[€$]\s*([\d][0-9.,]*)', text)
-        if m:
-            try:
-                return float(m.group(1).replace('.', '').replace(',', '.'))
-            except ValueError:
-                pass
-        return 0.0
-
-    d = report.desglose_por_categoria
-    # Bar colors reuse the template icon-section palette
-    cat_data = [
-        ("Licencias y herramientas",  d.licencias_y_herramientas,  "#1d4ed8"),  # blue
-        ("Formación y onboarding",    d.formacion_y_onboarding,    "#b45309"),  # amber
-        ("Mantenimiento y soporte",   d.mantenimiento_y_soporte,   "#6d28d9"),  # purple
-                ("Desarrollo e implantación",                              # teal
-        f"Equipo: {_rango(equipo_min, equipo_max)}" if equipo else d.desarrollo_e_implantacion, "#0f766e"),
-    ]
-    cat_vals = [(_extract_val(raw), color, label, raw) for label, raw, color in cat_data]
-    max_val = max((v for v, *_ in cat_vals), default=1) or 1
+    # Desglose: (etiqueta, texto, valor de la barra, color), con los importes calculados arriba
+    filas = [(CATEGORIAS[cat][0], _rango(vmin, vmax), vmax, CATEGORIAS[cat][1])
+             for cat, (vmin, vmax) in por_categoria.items() if vmax]
+    if contingencia:
+        filas.append((f"Contingencia ({r.contingencia_pct} %, solo escenario alto)", _eur(contingencia),
+                      contingencia, "#64748b"))  # slate
+    if equipo:
+        filas.append(("Desarrollo e implantación", f"Equipo: {_rango(equipo_min, equipo_max)}", equipo_max,
+                      "#0f766e"))  # teal
+    max_val = max((valor for _, _, valor, _ in filas), default=0) or 1
 
     bars_html = ""
-    for val, color, label, raw_text in cat_vals:
-        pct = round(val / max_val * 100) if val else 20
-        short = raw_text[:80] + ("…" if len(raw_text) > 80 else "")
+    for label, texto, valor, color in filas:
+        pct = max(round(valor / max_val * 100), 2)
         bars_html += (
             f'<div style="margin-bottom:0.875rem;">'
             f'<span style="font-size:0.78rem;color:var(--muted);">{label}</span>'
-            f'<div title="{raw_text}" style="background:var(--border);border-radius:4px;height:8px;overflow:hidden;margin:4px 0 2px;">'
+            f'<div style="background:var(--border);border-radius:4px;height:8px;overflow:hidden;margin:4px 0 2px;">'
             f'<div style="background:{color};width:{pct}%;height:100%;border-radius:4px;"></div></div>'
-            f'<div style="font-size:0.72rem;color:var(--muted);opacity:0.8;">{short}</div>'
+            f'<div style="font-size:0.72rem;color:var(--muted);opacity:0.8;">{texto}</div>'
             f'</div>'
         )
+    if not bars_html:
+        bars_html = '<div style="font-size:0.78rem;color:var(--muted);">Sin importes que desglosar.</div>'
 
     cards_html = ""
-    for item in report.precio_por_componentes:
+    for c in report.componentes:
+        categoria, color = CATEGORIAS[c.categoria]
+        en_proyecto = _rango(_coste_en_proyecto(c, meses_min), _coste_en_proyecto(c, meses_max))
         cards_html += (
-            f'<div style="background:var(--surface);border:1px solid var(--border);border-radius:9px;'
-            f'padding:0.75rem;min-width:150px;flex:1;box-shadow:var(--shadow);">'
-            f'<div style="font-size:0.75rem;color:var(--muted);margin-bottom:3px;">{item.servicio}</div>'
-            f'<div style="font-size:1rem;font-weight:700;color:var(--text);">{item.coste_mensual_estimado}</div>'
-            f'<div style="font-size:0.7rem;color:var(--muted);margin-top:3px;opacity:0.75;">'
-            f'{item.precio_unitario} × {item.unidades_estimadas}</div>'
-            f'<div style="font-size:0.7rem;color:var(--muted);opacity:0.5;">{item.sku}</div>'
+            f'<div style="background:var(--surface);border:1px solid var(--border);border-top:3px solid {color};'
+            f'border-radius:9px;padding:0.75rem;min-width:150px;flex:1;box-shadow:var(--shadow);">'
+            f'<div style="font-size:0.75rem;color:var(--muted);margin-bottom:3px;">{escape(c.componente)}</div>'
+            f'<div style="font-size:1rem;font-weight:700;color:var(--text);">{_cifra(c.importe_eur)} {_UNIDAD[c.periodicidad]}</div>'
+            f'<div style="font-size:0.75rem;color:var(--text);margin-top:3px;">En {meses_txt}: {en_proyecto}</div>'
+            f'<div style="font-size:0.7rem;color:var(--muted);margin-top:3px;opacity:0.75;">{escape(c.calculo)}</div>'
+            f'<div style="font-size:0.7rem;color:var(--muted);opacity:0.5;">{categoria}</div>'
             f'</div>'
         )
+    if not cards_html:
+        cards_html = ('<p style="font-size:0.85rem;color:var(--muted);margin:0;">La propuesta no trae componentes '
+                      'valorados: no hay importes de infraestructura, licencias, formación ni soporte.</p>')
+    nota_precios = "" if infracost_raw else (
+        '<p style="font-size:0.75rem;color:var(--muted);margin:0 0 0.5rem;">'
+        'Importes estimados por el modelo, sin contrastar con Infracost.</p>'
+    )
 
     supuestos_html = ""
     for s in report.supuestos:
@@ -313,7 +465,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         f'border-radius:9px;padding:1.1rem;text-align:center;box-shadow:var(--shadow);">'
         f'<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Horizonte temporal</div>'
         f'<div style="font-size:1.5rem;font-weight:700;color:var(--text);">'
-        f'{r.horizonte_temporal}</div></div>'
+        f'{meses_txt}</div></div>'
         f'</div>'
         f'<div style="margin-bottom:0.875rem;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
@@ -323,11 +475,12 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         f'<div style="background:var(--border);border-radius:999px;height:9px;overflow:hidden;">'
         f'<div style="background:{conf_color};width:{conf_pct};height:100%;border-radius:999px;"></div>'
         f'</div></div>'
+        f'{aviso_html}'
         f'<p style="color:var(--text);font-size:0.875rem;margin:0 0 0.5rem;">{motivo}</p>'
         # La justificación la escribe el LLM sin conocer el equipo: se dice a qué cifras se refiere
         f'<p style="color:var(--muted);font-size:0.875rem;margin:0;font-style:italic;">'
-        f'Infraestructura, licencias y formación ({_rango(r.coste_sin_equipo_min_eur, r.coste_sin_equipo_max_eur)}, '
-        f'sin el equipo): {r.justificacion}</p>'
+        f'Infraestructura, licencias, formación y soporte ({_rango(sin_equipo_min, sin_equipo_max)}, '
+        f'sin el equipo){": " + justificacion if justificacion else "."}</p>'
         f'</div>'
 
         # ── Supuestos ──
@@ -340,11 +493,12 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         f'<div style="display:flex;gap:1.25rem;margin-bottom:1.25rem;flex-wrap:wrap;align-items:flex-start;">'
         f'<div style="flex:1;min-width:220px;background:var(--surface-alt);border:1px solid var(--border);'
         f'border-radius:12px;padding:1.25rem;">'
-        f'<div style="{lbl}">Desglose por Categoría</div>'
+        f'<div style="{lbl}">Desglose por Categoría ({meses_txt})</div>'
         f'{bars_html}'
         f'</div>'
         f'<div style="flex:2;min-width:260px;">'
-        f'<div style="{lbl}">Componentes de Infraestructura</div>'
+        f'<div style="{lbl}">Componentes valorados</div>'
+        f'{nota_precios}'
         f'<div style="display:flex;flex-wrap:wrap;gap:0.75rem;">{cards_html}</div>'
         f'</div>'
         f'</div>'
@@ -505,30 +659,43 @@ def run_estimation_crew(
     pricing_note = (
         f"Resumen de costos reales obtenido de Infracost (basado en infraestructura generada desde la propuesta):\n{infracost_prices}"
         if infracost_prices else
-        "No hay precios reales disponibles. Usa estimaciones razonables e indica 'estimado' en el campo sku."
+        "No hay precios reales disponibles: usa estimaciones razonables a partir de precios públicos, en euros."
     )
 
     cost_report_task = Task(
         description=(
-            "A partir de la propuesta de solución y los precios indicados, genera un informe de estimación de costos estructurado. "
+            "A partir de la propuesta de solución y los precios indicados, valora el coste de cada componente de la propuesta. "
             f"{pricing_note}\n"
-            "El coste del equipo se calcula aparte con las tarifas de la empresa: NO lo incluyas en "
-            "coste_sin_equipo_min_eur ni en coste_sin_equipo_max_eur, que solo cubren infraestructura, licencias y "
-            "formación durante todo el proyecto. En presupuesto_cliente_max_eur pon el máximo del presupuesto que "
+            "En componentes pon un elemento por cada servicio cloud, licencia, formación o soporte que aparezca en la "
+            "propuesta, sin dejarte ninguno, cada uno con su categoría, su importe en euros (solo el número) y su "
+            "periodicidad: mensual, anual o unico (si se paga una sola vez). Si no tienes el precio exacto, da tu mejor "
+            "estimación y explica en calculo de dónde sale. "
+            "El coste del equipo (desarrollo e implantación) se calcula aparte con las tarifas de la empresa: NO lo "
+            "incluyas como componente. Los totales, el horizonte y el encaje con el presupuesto se calculan después a "
+            "partir de tus importes. En meses_proyecto pon los meses del alcance que se presupuesta (el piloto, si lo "
+            "hay) según el plazo del cliente. En presupuesto_cliente_max_eur pon el máximo del presupuesto que "
             "indica el caso del cliente, o 0 si no lo indica. Si incluyes una contingencia, usa un único porcentaje, "
-            "el mismo en todo el informe. En justificacion explica solo de dónde salen esas "
-            "cifras y qué las haría variar; no digas si caben en el presupuesto del cliente, porque el total con el "
-            "equipo se calcula después.\n"
+            "el mismo en todo el informe: ponlo en contingencia_pct (0 si no hay) y no lo añadas como componente. "
+            "En justificacion explica solo de dónde salen los importes y qué los haría variar; no digas si caben en "
+            "el presupuesto del cliente, porque el total con el equipo se calcula después.\n"
             "Para los supuestos: si te falta información, indícalo como "
             "'Por determinar, requiere [dato X]' o 'Se asume [dato X]' — nunca inventes datos críticos.\n\n"
             f"{datos_cliente}"
             "Propuesta de solución:\n"
             f"{proposal_context}"
         ),
-        expected_output="Informe estructurado de estimación con resumen ejecutivo, supuestos, desglose por categorías y tabla de infraestructura.",
+        expected_output="Un elemento por componente de la propuesta, con su importe en euros y su periodicidad, más el resumen y los supuestos.",
         output_pydantic=CostEstimationReport,
         agent=report_writer_agent,
     )
+
+    # Fallo 37: los perfiles se nombran como en la tabla de tarifas desde el principio, para que el texto y el coste coincidan
+    catalogo_perfiles = (
+        "Nombra cada perfil con uno de estos, tal cual, porque son los que tienen tarifa en la empresa: "
+        f"{', '.join(PERFILES_CON_TARIFA)}. Es un catálogo para elegir, no una lista que haya que cubrir. "
+        "Si hace falta una función que no encaja en ninguno (por ejemplo, la gestión del proyecto), dilo aparte "
+        "como función sin perfil en la tabla de tarifas; no inventes un perfil para ella. "
+    ) if PERFILES_CON_TARIFA else ""
 
     team_building_task = Task(
         description=(
@@ -536,6 +703,7 @@ def run_estimation_crew(
             "para implementar lo que pide el cliente en el plazo que indica (el piloto, si lo hay), no la solución completa a largo plazo. "
             "Incluye solo los perfiles imprescindibles para ese alcance y, para cada uno, sus responsabilidades clave, las "
             "habilidades requeridas y si su dedicación es completa o parcial. "
+            f"{catalogo_perfiles}"
             "Ten en cuenta el tipo de servicio que pide el cliente: si quiere que Inetum lo implemente, los perfiles son del "
             "equipo de Inetum, y el equipo interno del cliente participa y se forma; dilo así. Ten en cuenta también el "
             "equipo técnico que ya tiene el cliente y lo que sabe hacer. "
@@ -552,6 +720,7 @@ def run_estimation_crew(
         description=(
             "A partir de los perfiles de equipo identificados en la tarea anterior, define el equipo que se va a presupuestar: "
             "los mismos perfiles, sin añadir otros. "
+            "Las funciones que la tarea anterior dejó sin perfil en la tabla de tarifas van en funciones_sin_tarifa, no en perfiles. "
             "Para cada perfil indica: su nombre exacto en la tabla de tarifas (primera columna), "
             "el nivel (Junior/Middle/Senior) y las horas al mes. 160 horas al mes es jornada completa: úsala solo para "
             "quien trabaje a tiempo completo en este alcance, y a los perfiles con dedicación parcial ponles las horas que les correspondan. "

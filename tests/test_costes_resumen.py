@@ -22,25 +22,24 @@ from types import SimpleNamespace
 from crewai import Crew
 
 import agents.estimation_crew as ec
-from agents.estimation_crew import CostEstimationReport, EquipoEstimado, ResumenEjecutivo, _format_cost_report, _rango
+from agents.estimation_crew import (
+    CostEstimationReport, EquipoEstimado, ResumenEjecutivo, _format_cost_report, _rango, _sin_valorar_presupuesto,
+)
 
 TEXTO_REAL = ("El presupuesto del cliente de 90.000 € cubre completamente este escenario, "
               "incluyendo una contingencia del 15% para imprevistos.")
 
 
 def informe(minimo: int, maximo: int, justificacion: str = TEXTO_REAL) -> CostEstimationReport:
+    """Sin el equipo, `minimo` en el escenario bajo y `maximo` en el alto (la diferencia es la contingencia)."""
     return CostEstimationReport(
+        componentes=[{"componente": "Infraestructura Azure", "categoria": "infraestructura",
+                      "importe_eur": minimo, "periodicidad": "unico", "calculo": "Referencia de Azure"}],
         resumen_ejecutivo={
-            "coste_sin_equipo_min_eur": minimo, "coste_sin_equipo_max_eur": maximo,
-            "presupuesto_cliente_max_eur": 90_000, "horizonte_temporal": "4 meses",
-            "justificacion": justificacion,
+            "meses_proyecto": 4, "presupuesto_cliente_max_eur": 90_000,
+            "contingencia_pct": round((maximo - minimo) * 100 / minimo), "justificacion": justificacion,
         },
         supuestos=["Se asume Power BI Pro."],
-        desglose_por_categoria={
-            "licencias_y_herramientas": "10.000 €", "formacion_y_onboarding": "12.000 €",
-            "mantenimiento_y_soporte": "15.000 €", "desarrollo_e_implantacion": "calculado aparte",
-        },
-        precio_por_componentes=[],
     )
 
 
@@ -58,11 +57,13 @@ assert "Equipo: 214.400 €" in html
 assert "289.400 € – 304.400 €" in html and ">Bajo<" in html
 print("OK 2: total 289.400 € – 304.400 €, encaje Bajo y la barra del equipo con un solo valor")
 
-# 3) El texto del LLM dice a qué cifras se refiere, así que ya no contradice la etiqueta
-etiqueta = "Infraestructura, licencias y formación (75.000 € – 90.000 €, sin el equipo): "
-assert etiqueta + TEXTO_REAL in html, "la justificación debe ir precedida de las cifras a las que se refiere"
+# 3) La etiqueta dice a qué cifras se refiere el texto del LLM, y la frase que valora el presupuesto
+#    se quita, porque el LLM no conoce el equipo (refuerzo tras la prueba del 20 oct con ministral)
+etiqueta = "Infraestructura, licencias, formación y soporte (75.000 € – 90.000 €, sin el equipo)."
+assert etiqueta in html, "sin justificación que mostrar, la etiqueta queda sola"
+assert "cubre completamente" not in html, "la frase que valora el presupuesto no debe salir"
 assert html.index("Incluso el escenario bajo") < html.index(etiqueta), "el motivo del encaje va antes que el texto del LLM"
-print("OK 3: «cubre completamente este escenario» se lee como lo que es: solo infraestructura, licencias y formación")
+print("OK 3: «cubre completamente este escenario» ya no sale; queda el motivo calculado en Python")
 
 # 4) Sin equipo, el coste estimado con mínimo = máximo también sale como un valor
 html = _format_cost_report(informe(50_000, 50_000, "Precios de referencia de Azure."))
@@ -92,5 +93,16 @@ ec.run_estimation_crew("PROPUESTA SIMULADA", "groq/openai/gpt-oss-20b",
                        problem_case={"restriccion_presupuestaria": {"description": "", "value": "90.000 € máximo"}})
 assert "no digas si caben en el presupuesto del cliente" in prompts[0], "la tarea de costes debe pedirlo"
 print("OK 5: la tarea de costes pide explicar las cifras sin valorar el presupuesto")
+
+# 6) El texto de ministral del 20 oct: se quitan las frases del presupuesto y se queda el resto
+MINISTRAL = ("Las cifras se basan en Azure Synapse y Data Factory.\n"
+             "El presupuesto del cliente (90.000 €) cubre estos costes, pero se recomienda priorizar el MVP. "
+             "El modelo predictivo se pospondría hasta confirmar los datos históricos.")
+limpio = _sin_valorar_presupuesto(MINISTRAL)
+assert limpio == ("Las cifras se basan en Azure Synapse y Data Factory.\n"
+                  "El modelo predictivo se pospondría hasta confirmar los datos históricos."), limpio
+html = _format_cost_report(informe(75_000, 90_000, MINISTRAL), equipo=equipo)
+assert "cubre estos costes" not in html and "Las cifras se basan en Azure Synapse" in html
+print("OK 6: de la justificación de ministral sale la frase «el presupuesto cubre estos costes» y queda el resto")
 
 print("\nTodo bien: el fallo 23 está arreglado.")
