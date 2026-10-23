@@ -64,10 +64,10 @@ ec._resolve_infracost_binary = lambda: None  # sin Infracost: no se llama a ning
 # y la contingencia del 20 % sube el escenario alto a 60.000 € (fallo 32: las sumas las hace Python)
 informe_simulado = CostEstimationReport(
     componentes=[
-        {"componente": "Azure Synapse", "categoria": "infraestructura", "importe_eur": 10_000,
-         "periodicidad": "mensual", "calculo": "Pool dedicado"},
-        {"componente": "Formación", "categoria": "formacion", "importe_eur": 10_000,
-         "periodicidad": "unico", "calculo": "2 talleres"},
+        {"componente": "Azure Synapse", "categoria": "infraestructura", "precio_unitario_eur": 10_000,
+         "unidades": 1, "unidad": "pool", "periodicidad": "mensual", "referencia": "Pool dedicado"},
+        {"componente": "Formación", "categoria": "formacion", "precio_unitario_eur": 5_000,
+         "unidades": 2, "unidad": "taller", "periodicidad": "unico", "referencia": "2 talleres"},
     ],
     resumen_ejecutivo={
         "meses_proyecto": 4, "presupuesto_cliente_max_eur": 200_000, "contingencia_pct": 20,

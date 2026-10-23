@@ -32,7 +32,8 @@ def informe() -> CostEstimationReport:
     """Un informe de costes con 20.000 € sin el equipo y los 90.000 € de presupuesto del 19 de octubre."""
     return CostEstimationReport(
         componentes=[{"componente": "Azure Synapse Analytics", "categoria": "infraestructura",
-                      "importe_eur": 20_000, "periodicidad": "unico", "calculo": "Referencia de Azure"}],
+                      "precio_unitario_eur": 20_000, "unidades": 1, "unidad": "proyecto",
+                      "periodicidad": "unico", "referencia": "Referencia de Azure"}],
         resumen_ejecutivo={
             "meses_proyecto": 4, "presupuesto_cliente_max_eur": 90_000,
             "justificacion": "Precios de referencia de Azure.",

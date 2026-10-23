@@ -29,8 +29,9 @@ from agents.estimation_crew import (
 
 
 def componente(nombre: str, categoria: str, importe, periodicidad: str) -> dict:
-    return {"componente": nombre, "categoria": categoria, "importe_eur": importe,
-            "periodicidad": periodicidad, "calculo": "Referencia pública"}
+    """Un componente de una sola unidad: su importe es el precio unitario (el fallo 41 separa precio y unidades)."""
+    return {"componente": nombre, "categoria": categoria, "precio_unitario_eur": importe, "unidades": 1,
+            "unidad": "servicio", "periodicidad": periodicidad, "referencia": "Referencia pública"}
 
 
 def informe(componentes: list[dict], contingencia: int = 0) -> CostEstimationReport:
@@ -44,7 +45,7 @@ def informe(componentes: list[dict], contingencia: int = 0) -> CostEstimationRep
 
 # 1) El esquema que ve el modelo pide números y una periodicidad cerrada
 esquema = CostEstimationReport.model_json_schema()["$defs"]["ComponenteCoste"]["properties"]
-assert esquema["importe_eur"]["type"] == "number"
+assert esquema["precio_unitario_eur"]["type"] == "number" and esquema["unidades"]["type"] == "number"
 assert esquema["periodicidad"]["enum"] == ["mensual", "anual", "unico"]
 assert esquema["categoria"]["enum"] == ["infraestructura", "licencias", "formacion", "mantenimiento"]
 print("OK 1: cada componente lleva importe numérico, periodicidad (mensual/anual/unico) y categoría")
@@ -74,9 +75,9 @@ html = _format_cost_report(informe([
 ]))
 assert "15.000 €, pago único" in html and "En 4 meses: 15.000 €" in html
 assert "1.250 €/mes" in html and "En 4 meses: 5.000 €" in html
-assert "1.200 €/año" in html and "En 4 meses: 1.200 €" in html  # una licencia anual se paga entera
-assert ">21.200 €</div>" in html, "el total debe ser 15.000 + 5.000 + 1.200"
-print("OK 4: «15.000 €, pago único», «1.250 €/mes» y «1.200 €/año»; total sin equipo 21.200 €")
+assert "1.200 €/año" in html and "En 4 meses: 400 € (parte proporcional)" in html  # fallo 41: se prorratea
+assert ">20.400 €</div>" in html, "el total debe ser 15.000 + 5.000 + 400"
+print("OK 4: «15.000 €, pago único», «1.250 €/mes» y «1.200 €/año»; total sin equipo 20.400 €")
 
 # 5) El desglose suma las tarjetas de cada categoría, con los meses del equipo y la contingencia aparte
 equipo = {"total_min": 60_000, "total_max": 80_000, "meses_min": 3, "meses_max": 4}
@@ -129,7 +130,7 @@ ec.run_estimation_crew("PROPUESTA SIMULADA", "groq/openai/gpt-oss-20b",
                        problem_case={"restriccion_presupuestaria": {"description": "", "value": "90.000 €"}})
 costes = prompts[0]
 assert "un elemento por cada servicio cloud, licencia, formación o soporte" in costes and "sin dejarte ninguno" in costes
-assert "su importe en euros (solo el número) y su periodicidad: mensual, anual o unico" in costes
+assert "su precio unitario en euros (solo el número)" in costes and "periodicidad: mensual, anual o unico" in costes
 assert "NO lo incluyas como componente" in costes and "no lo añadas como componente" in costes
 assert "sku" not in costes and "coste_sin_equipo" not in costes
 print("OK 8: la tarea pide un importe por componente, sin el equipo ni la contingencia como componentes")

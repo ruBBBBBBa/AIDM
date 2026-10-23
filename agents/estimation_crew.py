@@ -1,6 +1,6 @@
 import csv
 import logging
-import math
+
 import os
 import re
 import shutil
@@ -132,17 +132,27 @@ def _opcion(valor: Any, opciones: tuple[str, ...]) -> Any:
 
 
 class ComponenteCoste(BaseModel):
+    # Fallo 41 (C15): el modelo da el precio unitario y las unidades; el importe lo multiplica Python, para que no vuelva a salir «6.000 €/año» con un detalle que suma 13.200 €
     componente: str = Field(
-        description="Componente de la propuesta que se valora: un servicio cloud, una licencia, una formación o el soporte")
+        description="Componente de la propuesta que se valora: un servicio cloud, una licencia, una formación o el "
+                    "soporte. Si tiene partes con precios distintos (cómputo y almacenamiento, por ejemplo), un "
+                    "elemento por parte")
     categoria: Categoria
-    importe_eur: float = Field(ge=0, description="Importe en euros: solo el número, sin símbolo ni texto")
+    precio_unitario_eur: float = Field(ge=0, description="Precio de una unidad en euros: solo el número")
+    unidades: float = Field(ge=0, description="Cuántas unidades se pagan en cada periodo: horas, GB, licencias, talleres…")
+    unidad: str = Field(description="Qué es una unidad, en singular: hora, GB, licencia, taller…")
     periodicidad: Periodicidad = Field(
-        description="mensual o anual si se paga cada mes o cada año; unico si se paga una sola vez")
-    calculo: str = Field(description="De dónde sale el importe: precio unitario × unidades, o la referencia usada")
+        description="mensual o anual si esas unidades se pagan cada mes o cada año; unico si se pagan una sola vez")
+    referencia: str = Field(description="De dónde sale el precio unitario: precio público, Infracost, tarifa de mercado…")
 
-    @field_validator("importe_eur", mode="before")
+    @property
+    def importe_eur(self) -> float:
+        """Lo que se paga en cada periodo."""
+        return self.precio_unitario_eur * self.unidades
+
+    @field_validator("precio_unitario_eur", "unidades", mode="before")
     @classmethod
-    def _importe_numerico(cls, valor: Any) -> Any:
+    def _numerico(cls, valor: Any) -> Any:
         return _a_numero(valor)
 
     @field_validator("categoria", mode="before")
@@ -289,18 +299,21 @@ _UNIDAD = {"mensual": "€/mes", "anual": "€/año", "unico": "€, pago único
 
 
 def _cifra(valor: float) -> str:
-    """1250 -> '1.250'; los importes pequeños con céntimos conservan dos decimales: 32.5 -> '32,50'."""
-    if valor < 100 and valor != int(valor):
-        return f"{valor:.2f}".replace(".", ",")
-    return f"{valor:,.0f}".replace(",", ".")
+    """1250 -> '1.250'; 32.5 -> '32,50'; los precios de céntimos conservan sus decimales: 0.025 -> '0,025'."""
+    if valor == int(valor) or valor >= 100:
+        return f"{valor:,.0f}".replace(",", ".")
+    if valor < 1:
+        return f"{valor:.4f}".rstrip("0").replace(".", ",")
+    return f"{valor:.2f}".replace(".", ",")
 
 
 def _coste_en_proyecto(c: ComponenteCoste, meses: int) -> float:
-    """Lo que cuesta un componente en `meses` meses: lo mensual, cada mes; lo anual, por año empezado; lo único, una vez."""
+    """Lo que cuesta un componente en `meses` meses: lo mensual, cada mes; lo anual, la parte proporcional de esos
+    meses; lo único, una vez."""
     if c.periodicidad == "mensual":
         return c.importe_eur * meses
     if c.periodicidad == "anual":
-        return c.importe_eur * math.ceil(meses / 12)
+        return c.importe_eur * meses / 12
     return c.importe_eur
 
 def _sin_valorar_presupuesto(texto: str) -> str:
@@ -398,13 +411,17 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     for c in report.componentes:
         categoria, color = CATEGORIAS[c.categoria]
         en_proyecto = _rango(_coste_en_proyecto(c, meses_min), _coste_en_proyecto(c, meses_max))
+        if c.periodicidad == "anual":
+            en_proyecto += " (parte proporcional)"
         cards_html += (
             f'<div style="background:var(--surface);border:1px solid var(--border);border-top:3px solid {color};'
             f'border-radius:9px;padding:0.75rem;min-width:150px;flex:1;box-shadow:var(--shadow);">'
             f'<div style="font-size:0.75rem;color:var(--muted);margin-bottom:3px;">{escape(c.componente)}</div>'
             f'<div style="font-size:1rem;font-weight:700;color:var(--text);">{_cifra(c.importe_eur)} {_UNIDAD[c.periodicidad]}</div>'
+            f'<div style="font-size:0.72rem;color:var(--muted);margin-top:2px;">'
+            f'{_cifra(c.precio_unitario_eur)} €/{escape(c.unidad)} × {_cifra(c.unidades)}</div>'
             f'<div style="font-size:0.75rem;color:var(--text);margin-top:3px;">En {meses_txt}: {en_proyecto}</div>'
-            f'<div style="font-size:0.7rem;color:var(--muted);margin-top:3px;opacity:0.75;">{escape(c.calculo)}</div>'
+            f'<div style="font-size:0.7rem;color:var(--muted);margin-top:3px;opacity:0.75;">{escape(c.referencia)}</div>'
             f'<div style="font-size:0.7rem;color:var(--muted);opacity:0.5;">{categoria}</div>'
             f'</div>'
         )
@@ -667,9 +684,12 @@ def run_estimation_crew(
             "A partir de la propuesta de solución y los precios indicados, valora el coste de cada componente de la propuesta. "
             f"{pricing_note}\n"
             "En componentes pon un elemento por cada servicio cloud, licencia, formación o soporte que aparezca en la "
-            "propuesta, sin dejarte ninguno, cada uno con su categoría, su importe en euros (solo el número) y su "
-            "periodicidad: mensual, anual o unico (si se paga una sola vez). Si no tienes el precio exacto, da tu mejor "
-            "estimación y explica en calculo de dónde sale. "
+            "propuesta, sin dejarte ninguno, cada uno con su categoría, su precio unitario en euros (solo el número), "
+            "las unidades que se pagan en cada periodo, qué es una unidad y la periodicidad: mensual, anual o unico "
+            "(si se paga una sola vez). No multipliques: el importe lo calcula el programa. Lo que se paga por uso "
+            "(horas, GB, ejecuciones) va como mensual, con las unidades de un mes. Si un componente tiene partes con "
+            "precios distintos, pon un elemento por parte. Si no tienes el precio exacto, da tu mejor estimación y di "
+            "en referencia de dónde sale. "
             "El coste del equipo (desarrollo e implantación) se calcula aparte con las tarifas de la empresa: NO lo "
             "incluyas como componente. Los totales, el horizonte y el encaje con el presupuesto se calculan después a "
             "partir de tus importes. En meses_proyecto pon los meses del alcance que se presupuesta (el piloto, si lo "

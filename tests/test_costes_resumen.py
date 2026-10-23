@@ -34,7 +34,8 @@ def informe(minimo: int, maximo: int, justificacion: str = TEXTO_REAL) -> CostEs
     """Sin el equipo, `minimo` en el escenario bajo y `maximo` en el alto (la diferencia es la contingencia)."""
     return CostEstimationReport(
         componentes=[{"componente": "Infraestructura Azure", "categoria": "infraestructura",
-                      "importe_eur": minimo, "periodicidad": "unico", "calculo": "Referencia de Azure"}],
+                      "precio_unitario_eur": minimo, "unidades": 1, "unidad": "proyecto",
+                      "periodicidad": "unico", "referencia": "Referencia de Azure"}],
         resumen_ejecutivo={
             "meses_proyecto": 4, "presupuesto_cliente_max_eur": 90_000,
             "contingencia_pct": round((maximo - minimo) * 100 / minimo), "justificacion": justificacion,
