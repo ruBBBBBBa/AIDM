@@ -205,13 +205,24 @@ class PerfilEquipo(BaseModel):
         json_schema_extra={"enum": PERFILES_CON_TARIFA} if PERFILES_CON_TARIFA else None,
     )
     nivel: Literal["Junior", "Middle", "Senior"]
-    horas_mes: int = Field(description="Horas de dedicación al mes en este proyecto (160 = jornada completa; menos si es parcial)")
+    horas_mes: int = Field(description="Horas al mes en el desarrollo (160 = jornada completa; menos si es parcial; "
+                                       "0 si solo participa en la implantación)")
+    # Fallo 43: el desarrollo y la implantación se presupuestan por separado
+    horas_mes_implantacion: int = Field(
+        default=0, description="Horas al mes en la implantación (puesta en producción y acompañamiento); 0 si no participa")
 
 
 class EquipoEstimado(BaseModel):
     perfiles: list[PerfilEquipo]
-    meses_min: int = Field(description="Meses de trabajo del equipo según el plazo del cliente (escenario corto)")
-    meses_max: int = Field(description="Meses de trabajo del equipo según el plazo del cliente (escenario largo)")
+
+    meses_min: int = Field(description="Meses de trabajo del equipo según el plazo del cliente, implantación incluida "
+                                       "(escenario corto)")
+    meses_max: int = Field(description="Meses de trabajo del equipo según el plazo del cliente, implantación incluida "
+                                       "(escenario largo)")
+    meses_implantacion: int = Field(
+        default=0, description="Cuántos de esos meses, al final del plazo, son de implantación: puesta en producción y "
+                               "acompañamiento hasta que el cliente use la solución. El resto son de desarrollo")
+    
     funciones_sin_tarifa: list[str] = Field(
         default_factory=list,
         description="Funciones que hacen falta y no encajan en ningún perfil de la tabla de tarifas (por ejemplo, "
@@ -225,6 +236,11 @@ def _eur(valor: float) -> str:
 def _rango(minimo: float, maximo: float) -> str:
     """'75.000 € – 90.000 €', o un solo valor si los dos coinciden ('214.400 €')."""
     return _eur(minimo) if _eur(minimo) == _eur(maximo) else f"{_eur(minimo)} – {_eur(maximo)}"
+
+def _meses_txt(minimo: int, maximo: int) -> str:
+    """(1, 1) -> '1 mes'; (2, 3) -> '2–3 meses'."""
+    cuantos = f"{minimo}" if minimo == maximo else f"{minimo}–{maximo}"
+    return f"{cuantos} {'mes' if maximo == 1 else 'meses'}"
 
 def _cargar_tarifas() -> dict[tuple[str, str], float]:
     """Tarifas de bd/costes_perfil.csv como {(perfil, nivel) en minúsculas: €/hora}."""
@@ -242,38 +258,88 @@ def _cargar_tarifas() -> dict[tuple[str, str], float]:
 
 
 def _calcular_equipo(equipo: EquipoEstimado, tarifas: dict[tuple[str, str], float]) -> dict:
-    """Coste del equipo calculado en Python (horas × tarifa del CSV), nunca por el LLM."""
-    filas, mensual, no_sumados = [], 0.0, []
+    """Coste del equipo calculado en Python (horas × tarifa del CSV), nunca por el LLM.
+
+    Fallo 43: si el equipo trae fase de implantación (sus meses y horas de algún perfil), el desarrollo y la
+    implantación se calculan por separado. La implantación son los últimos meses del plazo; el desarrollo, el
+    resto, y es el que cambia entre el escenario corto y el largo. Sin implantación, todo es como antes.
+    """
+    meses_min, meses_max = sorted((max(equipo.meses_min, 1), max(equipo.meses_max, 1)))
+    meses_impl = min(max(equipo.meses_implantacion, 0), meses_min)
+    con_fases = meses_impl > 0 and any(p.horas_mes_implantacion > 0 for p in equipo.perfiles)
+    if meses_impl and not con_fases:
+        logger.warning("El equipo trae %d mes(es) de implantación pero ningún perfil con horas en ella: "
+                       "se cuenta todo como desarrollo", meses_impl)
+    if not con_fases:
+        meses_impl = 0
+    dev_min, dev_max = meses_min - meses_impl, meses_max - meses_impl
+
+    filas, no_sumados = [], []
+    mensual_dev = mensual_impl = 0.0
+    falta_dev = falta_impl = 0  # horas al mes sin tarifa, por fase
     for p in equipo.perfiles:
         nombre = p.perfil.strip().replace("|", "/")  # una barra rompería la tabla
         tarifa = tarifas.get((_clave_perfil(p.perfil), p.nivel.lower()))
+        h_impl = max(p.horas_mes_implantacion, 0) if con_fases else 0
         if tarifa is None:
             logger.warning("Perfil sin tarifa en costes_perfil.csv: '%s' (%s); no se suma", p.perfil, p.nivel)
-            filas.append(f"| {nombre} | {p.nivel} | {p.horas_mes} | sin tarifa | no se suma |")
-            no_sumados.append(f"{nombre} ({p.nivel}, {p.horas_mes} h/mes)")
+            filas.append(f"| {nombre} | {p.nivel} | sin tarifa | {p.horas_mes} | {h_impl} |" if con_fases
+                         else f"| {nombre} | {p.nivel} | {p.horas_mes} | sin tarifa | no se suma |")
+            no_sumados.append(f"{nombre} ({p.nivel}, {p.horas_mes} h/mes"
+                              + (f" y {h_impl} h/mes en implantación)" if h_impl else ")"))
+            falta_dev += max(p.horas_mes, 0)
+            falta_impl += h_impl
             continue
-        coste = p.horas_mes * tarifa
-        mensual += coste
-        filas.append(f"| {nombre} | {p.nivel} | {p.horas_mes} | {_eur(tarifa)}/h | {_eur(coste)} |")
+        mensual_dev += p.horas_mes * tarifa
+        mensual_impl += h_impl * tarifa
+        filas.append(f"| {nombre} | {p.nivel} | {_eur(tarifa)}/h | {p.horas_mes} | {h_impl} |" if con_fases
+                     else f"| {nombre} | {p.nivel} | {p.horas_mes} | {_eur(tarifa)}/h | {_eur(p.horas_mes * tarifa)} |")
 
-    meses_min, meses_max = sorted((max(equipo.meses_min, 1), max(equipo.meses_max, 1)))
-    total_min, total_max = mensual * meses_min, mensual * meses_max
-    meses = f"{meses_min}" if meses_min == meses_max else f"{meses_min}–{meses_max}"
-    total = _eur(total_min) if meses_min == meses_max else f"{_eur(total_min)} – {_eur(total_max)}"
-    lineas = [
-        "| Perfil | Nivel | Horas/mes | Tarifa | Coste mensual |",
-        "| --- | --- | ---: | ---: | ---: |",
-        *filas,
-        f"| **Total mensual** | | | | **{_eur(mensual)}** |",
-        "",
-        f"**Coste del equipo en {meses} meses: {total}**",
-    ]
+    desarrollo_min, desarrollo_max = mensual_dev * dev_min, mensual_dev * dev_max
+    implantacion = mensual_impl * meses_impl
+    total_min, total_max = desarrollo_min + implantacion, desarrollo_max + implantacion
+    if con_fases:
+        lineas = [
+            "| Perfil | Nivel | Tarifa | Desarrollo (h/mes) | Implantación (h/mes) |",
+            "| --- | --- | ---: | ---: | ---: |",
+            *filas,
+            f"| **Coste mensual** | | | **{_eur(mensual_dev)}** | **{_eur(mensual_impl)}** |",
+            "",
+            f"**Desarrollo en {_meses_txt(dev_min, dev_max)}: {_rango(desarrollo_min, desarrollo_max)}**",
+            "",
+            f"**Implantación en {_meses_txt(meses_impl, meses_impl)}: {_eur(implantacion)}**",
+            "",
+            f"**Coste del equipo en {_meses_txt(meses_min, meses_max)}: {_rango(total_min, total_max)}**",
+        ]
+    else:
+        meses = f"{meses_min}" if meses_min == meses_max else f"{meses_min}–{meses_max}"
+        lineas = [
+            "| Perfil | Nivel | Horas/mes | Tarifa | Coste mensual |",
+            "| --- | --- | ---: | ---: | ---: |",
+            *filas,
+            f"| **Total mensual** | | | | **{_eur(mensual_dev)}** |",
+            "",
+            f"**Coste del equipo en {meses} meses: {_rango(total_min, total_max)}**",
+        ]
     # Funciones que el agente no pudo asignar a un perfil con tarifa: tampoco se suman
-    no_sumados += [f.strip().replace("|", "/") for f in equipo.funciones_sin_tarifa if f.strip()]
+    falta_funciones = 0
+    for f in equipo.funciones_sin_tarifa:
+        nombre = f.funcion.strip().replace("|", "/")
+        if nombre:
+            no_sumados.append(f"{nombre} ({f.horas_mes} h/mes)" if f.horas_mes > 0 else nombre)
+            falta_funciones += max(f.horas_mes, 0)
     if no_sumados:
         lineas += ["", f"Sin presupuestar, porque no tienen tarifa en la tabla: {'; '.join(no_sumados)}."]
-    return {"mensual": mensual, "total_min": total_min, "total_max": total_max,
+    # Fallo 42 (C16): para el encaje, un mínimo por lo que falta, a la tarifa más baja de la tabla
+    tarifa_minima = min(tarifas.values(), default=0.0)
+    falta_min = tarifa_minima * (falta_dev * dev_min + falta_impl * meses_impl + falta_funciones * meses_min)
+    falta_max = tarifa_minima * (falta_dev * dev_max + falta_impl * meses_impl + falta_funciones * meses_max)
+    return {"mensual": mensual_dev, "total_min": total_min, "total_max": total_max,
             "meses_min": meses_min, "meses_max": meses_max, "no_sumados": no_sumados,
+            "meses_implantacion": meses_impl, "desarrollo_min": desarrollo_min, "desarrollo_max": desarrollo_max,
+            "implantacion": implantacion,
+            "horas_sin_tarifa": falta_dev + falta_funciones, "tarifa_minima": tarifa_minima,
+            "falta_min": falta_min, "falta_max": falta_max,
             "texto": "\n".join(lineas)}
 
 
@@ -336,8 +402,17 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     justificacion = _sin_valorar_presupuesto(r.justificacion)
 
     # Fallo 32: el LLM da el importe de cada componente y si es mensual, anual o único; las sumas se hacen aquí, con los mismos meses que el equipo para que todo cubra el mismo periodo
-    if equipo and "meses_min" in equipo:
-        meses_min, meses_max = equipo["meses_min"], equipo["meses_max"]
+    if equipo and equipo.get("meses_implantacion"):
+        # Fallo 43: el desarrollo y la implantación, cada uno con sus meses
+        impl = equipo["meses_implantacion"]
+        meses_dev = _meses_txt(equipo["meses_min"] - impl, equipo["meses_max"] - impl)
+        filas.append((f"Desarrollo · {meses_dev}", f"Equipo: {_rango(equipo['desarrollo_min'], equipo['desarrollo_max'])}",
+                      equipo["desarrollo_max"], "#0f766e"))  # teal
+        filas.append((f"Implantación · {_meses_txt(impl, impl)}", f"Equipo: {_eur(equipo['implantacion'])}",
+                      equipo["implantacion"], "#15803d"))  # green
+    elif equipo:
+        filas.append(("Desarrollo e implantación", f"Equipo: {_rango(equipo_min, equipo_max)}", equipo_max,
+                      "#0f766e"))  # teal
     else:
         meses_min = meses_max = max(r.meses_proyecto, 1)
     meses = f"{meses_min}" if meses_min == meses_max else f"{meses_min}–{meses_max}"
@@ -723,6 +798,8 @@ def run_estimation_crew(
             "para implementar lo que pide el cliente en el plazo que indica (el piloto, si lo hay), no la solución completa a largo plazo. "
             "Incluye solo los perfiles imprescindibles para ese alcance y, para cada uno, sus responsabilidades clave, las "
             "habilidades requeridas y si su dedicación es completa o parcial. "
+            "Distingue su dedicación en el desarrollo (construir la solución) y en la implantación (ponerla en "
+            "producción y acompañar al cliente hasta que la use); un perfil puede estar solo en una de las dos. "
             f"{catalogo_perfiles}"
             "Ten en cuenta el tipo de servicio que pide el cliente: si quiere que Inetum lo implemente, los perfiles son del "
             "equipo de Inetum, y el equipo interno del cliente participa y se forma; dilo así. Ten en cuenta también el "
@@ -742,9 +819,11 @@ def run_estimation_crew(
             "los mismos perfiles, sin añadir otros. "
             "Las funciones que la tarea anterior dejó sin perfil en la tabla de tarifas van en funciones_sin_tarifa, no en perfiles. "
             "Para cada perfil indica: su nombre exacto en la tabla de tarifas (primera columna), "
-            "el nivel (Junior/Middle/Senior) y las horas al mes. 160 horas al mes es jornada completa: úsala solo para "
+            "el nivel (Junior/Middle/Senior) y las horas al mes en el desarrollo (horas_mes) y en la implantación "
+            "(horas_mes_implantacion), con 0 en la fase en la que no participe. 160 horas al mes es jornada completa: úsala solo para "
             "quien trabaje a tiempo completo en este alcance, y a los perfiles con dedicación parcial ponles las horas que les correspondan. "
-            "Indica también cuántos meses trabajará el equipo según el plazo del cliente (meses_min y meses_max). "
+            "Indica también cuántos meses trabajará el equipo según el plazo del cliente (meses_min y meses_max) y "
+            "cuántos de ellos, al final, son de implantación (meses_implantacion). "
             "No calcules costes: se calculan aparte con la tabla.\n\n"
             f"{datos_cliente}"
             f"Tarifas de referencia (€/hora):\n{team_costs_table}"
