@@ -829,28 +829,60 @@ def _plantilla_json(modelo: type[BaseModel]) -> str:
     return json.dumps(valor(modelo), ensure_ascii=False)
 
 
+def _desenvolver(objeto: Any, modelo: type[BaseModel]) -> dict | None:
+    """El primer dict, mirando nivel a nivel, que tenga algún campo de la raíz de `modelo` (fallo 47). Así vale el JSON
+    aunque venga envuelto ({"estimacion": {...}}, {"properties": {...}}) o como llamada a función, con los argumentos
+    en un texto ({"name": …, "arguments": "{…}"})."""
+    campos = set(modelo.model_fields)
+    pendientes = [objeto]
+    while pendientes:
+        actual = pendientes.pop(0)
+        if isinstance(actual, str) and actual.lstrip().startswith("{"):
+            try:
+                actual = json.loads(actual)
+            except ValueError:
+                continue
+        if isinstance(actual, dict):
+            if campos & set(actual):
+                return actual
+            pendientes.extend(actual.values())
+        elif isinstance(actual, list):
+            pendientes.extend(actual)
+    return None
+
+
 def _leer_json(texto: str, modelo: type[BaseModel]) -> BaseModel:
-    """El primer objeto JSON del texto que encaje en `modelo`, aunque venga entre ```json o con texto antes o después.
-    Si no hay ninguno, ValueError con el motivo, que el guardrail le pasa al modelo."""
+    """El primer objeto JSON del texto que encaje en `modelo`, aunque venga entre ```json, con texto antes o después o
+    envuelto en otra clave. Si no hay ninguno, ValueError con el motivo, que el guardrail le pasa al modelo."""
     decoder = json.JSONDecoder()
-    primer_error = None
-    for inicio in (m.start() for m in re.finditer(r"\{", texto)):
+    campos = ", ".join(modelo.model_fields)
+    primer_error, primeras_claves, cortado = None, None, False
+    for n, inicio in enumerate(m.start() for m in re.finditer(r"\{", texto)):
         try:
             objeto, _ = decoder.raw_decode(texto, inicio)
         except json.JSONDecodeError:
+            # Fallo 47: si el primer objeto abre más llaves de las que cierra, la respuesta llegó cortada
+            resto = texto[inicio:]
+            cortado = cortado or (n == 0 and resto.count("{") > resto.count("}"))
             continue
-        candidatos = [objeto] if isinstance(objeto, dict) else []
-        if len(objeto) == 1 and isinstance(next(iter(objeto.values())), dict):
-            candidatos.append(next(iter(objeto.values())))  # {"CostEstimationReport": {...}}
-        for candidato in candidatos:
-            try:
-                return modelo.model_validate(candidato)
-            except ValidationError as error:
-                primer_error = primer_error or error
-    if primer_error is None:
-        raise ValueError("no hay ningún objeto JSON en la respuesta")
-    detalle = "; ".join(f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" for e in primer_error.errors()[:5])
-    raise ValueError(f"el JSON no tiene la forma pedida ({detalle})")
+        if not isinstance(objeto, dict):
+            continue
+        primeras_claves = primeras_claves or sorted(objeto)[:10]
+        candidato = _desenvolver(objeto, modelo)
+        if candidato is None:
+            continue
+        try:
+            return modelo.model_validate(candidato)
+        except ValidationError as error:
+            primer_error = primer_error or error
+    if cortado:
+        raise ValueError(f"el JSON llegó cortado: la respuesta ({len(texto)} caracteres) se acaba antes de cerrarlo")
+    if primer_error is not None:
+        detalle = "; ".join(f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" for e in primer_error.errors()[:5])
+        raise ValueError(f"el JSON no tiene la forma pedida ({detalle})")
+    if primeras_claves is not None:
+        raise ValueError(f"ningún objeto JSON tiene los campos de la raíz ({campos}); el primero traía {primeras_claves}")
+    raise ValueError("no hay ningún objeto JSON en la respuesta")
 
 
 def _guardrail_json(modelo: type[BaseModel], tarea: str, reintentos: int = 1):
@@ -868,14 +900,19 @@ def _guardrail_json(modelo: type[BaseModel], tarea: str, reintentos: int = 1):
             return True, _leer_json(texto, modelo).model_dump_json()
         except ValueError as error:
             motivo = str(error)
+        # Fallo 47: el log dice qué llegó, para saber si vino envuelto, cortado o con otra forma
+        muestra = f"{len(texto)} caracteres; empieza {texto[:200]!r}; acaba {texto[-120:]!r}"
         if repetidas >= reintentos:
-            logger.error("Tarea de %s: sigue sin un JSON válido después de repetirla (%s); se sigue sin ella",
-                         tarea, motivo[:300])
+            logger.error("Tarea de %s: sigue sin un JSON válido después de repetirla (%s); se sigue sin ella. "
+                         "Respuesta: %s", tarea, motivo[:300], muestra)
             return True, SIN_JSON
         repetidas += 1
-        logger.warning("Tarea de %s: la respuesta no trae un JSON válido (%s); se repite", tarea, motivo[:300])
-        return False, (f"La respuesta no es válida: {motivo[:600]}. Responde solo con el objeto JSON, sin texto antes "
-                       f"ni después, con esta forma: {plantilla}")
+        logger.warning("Tarea de %s: la respuesta no trae un JSON válido (%s); se repite. Respuesta: %s",
+                       tarea, motivo[:300], muestra)
+        breve = (" Sé más breve: referencias y textos de pocas palabras." if "cortado" in motivo else "")
+        return False, (f"La respuesta no es válida: {motivo[:600]}.{breve} Responde solo con el objeto JSON, sin texto "
+                       f"antes ni después. La raíz del JSON tiene que tener estos campos: {', '.join(modelo.model_fields)}. "
+                       f"Esta es su forma: {plantilla}")
 
     return comprobar
 
