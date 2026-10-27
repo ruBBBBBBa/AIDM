@@ -33,6 +33,21 @@ if "messages" not in st.session_state:
 if "solution_completed" not in st.session_state:
     st.session_state.solution_completed = False
 
+def guardar_informe(response: dict) -> None:
+    """Guarda el informe en la sesión y da la fase de solución por hecha.
+
+    Fallo 48: se llama nada más volver run_graph, antes de cualquier otra llamada a Streamlit. Si el usuario
+    escribe mientras se genera el informe, Streamlit corta el script en la siguiente llamada (al cerrar el
+    spinner) y lo vuelve a lanzar con el mensaje nuevo; sin la marca, ese mensaje generaba el informe otra vez.
+    """
+    # webbrowser.open() lo abría en el ordenador donde corre Streamlit, no en el del usuario.
+    # Se guarda una copia en la sesión para que siga visible aunque otra ejecución sobrescriba el archivo.
+    cliente = response.get("problem_case", {}).get("nombre_del_cliente", {}).get("value", "")
+    cliente = re.sub(r"[^\w-]+", "_", cliente).strip("_") or "cliente"
+    st.session_state.report_html = REPORT_PATH.read_text(encoding="utf-8") if REPORT_PATH.exists() else ""
+    st.session_state.report_filename = f"informe_aidm_{cliente}_{datetime.now():%Y%m%d_%H%M}.html"
+    st.session_state.solution_completed = True
+
 def mostrar_informe() -> None:
     """Muestra el informe guardado en la sesión: botón de descarga y vista previa."""
     report_html = st.session_state.get("report_html", "")
@@ -65,7 +80,7 @@ for message in st.session_state.messages:
 if st.session_state.solution_completed:
     st.success("✅ Discovery completado. Aquí tienes la propuesta de solución.")
     mostrar_informe()
-    st.info("Inicia una nueva sesión para comenzar un nuevo discovery.")
+    st.info("Inicia una nueva sesión para comenzar un nuevo discovery. Los mensajes que escribas aquí no vuelven a generar el informe.")
     st.stop()
 
 # ── User input ─────────────────────────────────────────────────────────────────
@@ -93,6 +108,8 @@ with st.spinner("Procesando..."):
         raw_response = run_graph(prompt, chat_history=st.session_state.messages)
         response = raw_response if isinstance(raw_response, dict) else {"assistant_response": str(raw_response)}
         assistant_response = response.get("assistant_response", "")
+        if response.get("completion_reached", False):
+            guardar_informe(response)  # fallo 48: antes de salir del spinner
     except Exception as e:
         assistant_response = (
             "⚠️ No se pudo ejecutar el agente. "
