@@ -4,7 +4,7 @@ from pathlib import Path
 from crewai import Agent, Crew, Process, Task
 from dotenv import load_dotenv
 
-from utils import _make_agent, contexto_cliente, load_agents_config, load_problem_case, parse_html, md_to_html
+from utils import _make_agent, contexto_cliente, load_agents_config, load_problem_case, parse_html, md_to_html, sin_importes
 
 load_dotenv(".env")
 
@@ -361,6 +361,8 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
         raise
 
     print(f"\n\n[roadmap_builder] SEGUNDA CREW completada. Outputs capturados: {len(captured_outputs)}\n")
+    # Fallo 44: los importes salen solo en la sección de costes, donde se suman en Python
+    captured_outputs[:] = [sin_importes(texto, problem_case, f"roadmap {n}") for n, texto in enumerate(captured_outputs, 1)]
 
     if len(captured_outputs) == 7:
         inject_roadmap_into_html(*captured_outputs)

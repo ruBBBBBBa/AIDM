@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from agents.estimation_crew import run_estimation_crew
 from agents.proposal_crew import run_proposal_crew
-from utils import md_to_html, parse_html
+from utils import md_to_html, parse_html, sin_importes
 
 load_dotenv(".env")
 
@@ -89,6 +89,12 @@ def propose_solution(
         estimation = run_estimation_crew(proposal.as_combined_context(), model_name, problem_case=problem_case)
     except RuntimeError as e:
         return str(e)
+
+    # Fallo 44: los importes salen solo en la sección de costes, donde se suman en Python
+    proposal = proposal.model_copy(update={
+        campo: sin_importes(getattr(proposal, campo), problem_case, campo)
+        for campo in ("architecture", "governance", "data_ai_strategy", "bi_visualization")
+    })
 
     _inject_into_html(
         proposal.architecture,

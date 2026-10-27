@@ -228,6 +228,98 @@ def contexto_cliente(problem_case: dict, con_costes: bool = False) -> str:
     reglas = REGLAS_DATOS_CLIENTE if con_costes else REGLAS_DATOS_CLIENTE + REGLA_PRESUPUESTO
     return "\n\n".join(partes) + "\n\n" + reglas
 
+# Fallo 44: los importes salen solo en la sección de costes, donde se suman en Python. Arquitectura, BI y el
+# roadmap los ponían igualmente («~500 €/mes», «6.000 €/año») aunque REGLA_PRESUPUESTO se lo prohíbe
+_CANTIDAD = r"\d(?:[\d.,]*\d)?(?:\s*(?:mil(?:lones)?(?:\s+de)?|[km])(?![a-záéíóúñ]))?"
+_CANTIDAD_RE = re.compile(_CANTIDAD, re.IGNORECASE)
+_IMPORTE = re.compile(
+    rf"(?:~\s*)?(?:(?:€|\$|\beur\b|\busd\b)\s*{_CANTIDAD}"
+    rf"|{_CANTIDAD}(?:(?:\s*[–-]\s*|\s+a\s+){_CANTIDAD})?\s*(?:€|\$|eur(?:os)?\b|usd\b|d[óo]lares\b))"
+    rf"(?:\s*/\s*[a-záéíóúñ]+)*",
+    re.IGNORECASE,
+)
+NOTA_IMPORTES = "*Los importes de la solución están en la sección de costes.*"
+
+
+def _valor_cantidad(texto: str) -> float | None:
+    """'8.000' -> 8000; '1,5 millones' -> 1500000; '20K' -> 20000; '9,40' -> 9.4."""
+    m = re.match(r"(\d(?:[\d.,]*\d)?)\s*(mil(?:lones)?|[km])?", texto.strip(), re.IGNORECASE)
+    if not m:
+        return None
+    numero = m.group(1)
+    if "." in numero and "," in numero:  # el último separador es el decimal
+        decimal = "," if numero.rfind(",") > numero.rfind(".") else "."
+        numero = numero.replace("." if decimal == "," else ",", "").replace(decimal, ".")
+    else:
+        sep = "." if "." in numero else ","
+        grupos = numero.split(sep)
+        numero = "".join(grupos) if all(len(g) == 3 for g in grupos[1:]) else numero.replace(sep, ".")
+    try:
+        valor = float(numero)
+    except ValueError:
+        return None
+    return valor * {"k": 1e3, "mil": 1e3, "m": 1e6, "millones": 1e6}.get((m.group(2) or "").lower(), 1)
+
+
+def _importes_del_cliente(problem_case: dict) -> set[float]:
+    """Las cifras que dio el cliente, que sí se pueden citar: las del presupuesto y los importes de sus respuestas."""
+    permitidos: set[float] = set()
+    for campo, datos in (problem_case or {}).items():
+        if not isinstance(datos, dict):
+            continue
+        valores = datos.get("value")
+        for valor in valores if isinstance(valores, list) else [valores]:
+            if not isinstance(valor, str):
+                continue
+            # En el presupuesto vale cualquier número («90.000»); en el resto, solo los que llevan moneda
+            trozos = [valor] if campo == "restriccion_presupuestaria" else [m.group(0) for m in _IMPORTE.finditer(valor)]
+            for trozo in trozos:
+                permitidos.update(v for q in _CANTIDAD_RE.findall(trozo) if (v := _valor_cantidad(q)))
+    return permitidos
+
+
+def sin_importes(texto: str, problem_case: dict | None = None, seccion: str = "") -> str:
+    """Quita los importes de una sección que no es la de costes (fallo 44), salvo los que dio el cliente.
+
+    En una tabla, el importe se cambia por «—». En el texto, se quita el paréntesis que lo lleva o, si no
+    está entre paréntesis, la frase. Los bloques de código no se tocan.
+    """
+    if not texto:
+        return texto
+    permitidos = _importes_del_cliente(problem_case or {})
+
+    def ajeno(importe: str) -> bool:
+        valores = [_valor_cantidad(q) for q in _CANTIDAD_RE.findall(importe)]
+        return not all(v and any(abs(v - p) < 0.5 for p in permitidos) for v in valores)
+
+    def con_importe(trozo: str) -> bool:
+        return any(ajeno(m.group(0)) for m in _IMPORTE.finditer(trozo))
+
+    lineas, tocadas, en_codigo = [], 0, False
+    for linea in texto.splitlines():
+        if linea.lstrip().startswith("```"):
+            en_codigo = not en_codigo
+            lineas.append(linea)
+            continue
+        if en_codigo or not con_importe(linea):
+            lineas.append(linea)
+            continue
+        tocadas += 1
+        linea = re.sub(r"\s*\([^()]*\)", lambda m: "" if con_importe(m.group(0)) else m.group(0), linea)
+        if linea.lstrip().startswith("|"):  # fila de tabla: la celda se queda con «—»
+            linea = _IMPORTE.sub(lambda m: "—" if ajeno(m.group(0)) else m.group(0), linea)
+            lineas.append(re.sub(r"—(?:\s*[–-]\s*—)+", "—", linea))
+            continue
+        prefijo = re.match(r"\s*(?:[-*+]\s+|\d+[.)]\s+|>\s*|#+\s+)?", linea).group(0)
+        frases = re.split(r"(?:(?<=[.!?])|(?<=[.!?]\*\*)|(?<=[.!?][\"»”]))\s+", linea[len(prefijo):])
+        cuerpo = " ".join(f for f in frases if not con_importe(f)).strip()
+        if cuerpo:
+            lineas.append(prefijo + cuerpo)
+    if not tocadas:
+        return texto
+    logger.warning("Sección %s: se quitan los importes de %d línea(s); van en la de costes", seccion or "?", tocadas)
+    return "\n".join(lineas).rstrip() + "\n\n" + NOTA_IMPORTES
+
 #MODIFICADO: _normalize_update_value y _apply_field_update para que no se guarden valores de relleno
 def _normalize_update_value(field_key: str, value: str | List[str], operation: str) -> str | List[str]:
     if field_key in TEXT_FIELDS:
