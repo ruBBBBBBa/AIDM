@@ -84,6 +84,9 @@ def propose_solution(
     if not model_name:
         return "No hay modelo configurado en .env (variable BIG_MODEL)."
 
+    # Refuerzo del 44: la estructura llega como contexto a los agentes de la propuesta; sin sus importes, no los copian
+    structure_proposal = sin_importes(structure_proposal, problem_case, "estructura")
+
     try:
         proposal = run_proposal_crew(structure_proposal, problem_case, chat_history, model_name)
          # Fallo 46: la tarea de costes solo necesita los componentes y sus volúmenes, que están en la arquitectura
