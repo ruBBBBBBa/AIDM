@@ -80,9 +80,9 @@ prompts: list[str] = []
 def kickoff_simulado(self, *args, **kwargs):
     for task in self.tasks:
         prompts.append(task.description)
-        if task.output_pydantic is CostEstimationReport:
+        if task.name == "costes":
             task.output = SimpleNamespace(pydantic=informe_simulado, raw="")
-        elif task.output_pydantic is EquipoEstimado:
+        elif task.name == "equipo":
             task.output = SimpleNamespace(pydantic=equipo, raw="")
         else:
             task.output = SimpleNamespace(pydantic=None, raw="## Perfiles\n\nData Engineer y Data Architect.")

@@ -8,11 +8,12 @@ import subprocess
 import tempfile
 from html import escape
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Any, Literal, get_args, get_origin
+import json
 
 import litellm
 from crewai import Agent, Crew, Process, Task
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ValidationError
 
 from utils import _make_agent, _normalize_text, build_llm, contexto_cliente, load_agents_config
 
@@ -402,6 +403,20 @@ def _coste_en_proyecto(c: ComponenteCoste, meses: int) -> float:
         return c.importe_eur * meses / 12
     return c.importe_eur
 
+# Fallo 46: un componente que cada mes se lleva más de esta parte del presupuesto suele tener mal la unidad. En el log
+# del 26 oct (Iberdrola, 600.000 €), IoT Hub salía a 0,008 €/mensaje × 10 millones = 80.000 €/mes, y en otro intento a
+# 8 €/mensaje × 2 millones = 16 M€/mes. Se marca y se avisa, pero se sigue sumando
+PARTE_MAXIMA_AL_MES = 0.10
+
+
+def _coste_al_mes(c: ComponenteCoste, meses: int) -> float:
+    """Lo mensual, tal cual; lo anual, entre 12; lo que se paga una vez, repartido entre los meses del proyecto."""
+    if c.periodicidad == "mensual":
+        return c.importe_eur
+    if c.periodicidad == "anual":
+        return c.importe_eur / 12
+    return c.importe_eur / max(meses, 1)
+
 # Fallo 45 (C6): un componente a 0 € solo cuadra si el cliente ya lo tiene; lo demás se avisa
 _YA_LO_TIENE = ("ya lo tiene", "ya la tiene", "ya los tiene", "ya las tiene", "ya adquirid", "ya dispone",
                 "ya cuenta con", "ya contratad", "ya pagad", "existente")
@@ -484,6 +499,17 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         nombres = a_cero[0] if len(a_cero) == 1 else f"{', '.join(a_cero[:-1])} y {a_cero[-1]}"
         avisos.append(f"Ojo: {escape(nombres)} {'va' if len(a_cero) == 1 else 'van'} a 0 €, así que no suman nada al "
                       f"total. Si se pagan por uso (cómputo, ejecuciones, un endpoint…), el coste real será mayor.")
+
+    revisar = [c for c in report.componentes
+               if presupuesto > 0 and _coste_al_mes(c, meses_max) > PARTE_MAXIMA_AL_MES * presupuesto]
+    if revisar:
+        lista = [f"{c.componente} ({_cifra(_coste_al_mes(c, meses_max))} €/mes)" for c in revisar]
+        nombres = lista[0] if len(lista) == 1 else f"{', '.join(lista[:-1])} y {lista[-1]}"
+        uno = len(revisar) == 1
+        avisos.append(f"Ojo: revisa la unidad de {escape(nombres)}: {'cuesta' if uno else 'cada uno cuesta'} al mes más "
+                      f"de un {PARTE_MAXIMA_AL_MES * 100:.0f} % del presupuesto del cliente ({_eur(presupuesto)}). Puede que el "
+                      f"precio sea por un paquete (por millón de mensajes, por ejemplo) y no por unidad. "
+                      f"{'Va sumado' if uno else 'Van sumados'} en el total, que puede estar inflado.")
     
     if not report.componentes:
         avisos.append("Ojo: el total no incluye infraestructura, licencias, formación ni soporte, porque el modelo "
@@ -540,9 +566,12 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         if c.periodicidad == "anual":
             en_proyecto += " (parte proporcional)"
         importe = f"{_cifra(c.importe_eur)} {_UNIDAD[c.periodicidad]}"
+        #Un componente a 0 € solo cuadra si el cliente ya lo tiene; lo demás se avisa
         if not c.importe_eur:
             importe = ("0 € (ya lo tiene el cliente)" if _ya_lo_tiene(c)
                        else '<span style="color:#b45309;">0 € (por revisar)</span>')
+        elif any(c is x for x in revisar):
+            importe += ' <span style="color:#b45309;">(revisar unidad)</span>'
         cards_html += (
             f'<div style="background:var(--surface);border:1px solid var(--border);border-top:3px solid {color};'
             f'border-radius:9px;padding:0.75rem;min-width:150px;flex:1;box-shadow:var(--shadow);">'
@@ -776,19 +805,123 @@ def _guardrail_perfiles(reintentos: int = 1):
 
     return comprobar
 
+
+
+# Fallo 46: las tareas de costes y de equipo ya no usan output_pydantic. Con él, CrewAI pide la respuesta como
+# llamada a herramienta (instructor en modo TOOLS); ministral devolvía el JSON como texto, «No tool calls or function
+# call found» tres veces, y el informe se quedaba colgado. Ahora el JSON se pide en el prompt y se valida aquí.
+SIN_JSON = "[sin JSON válido]"  # lo que deja el guardrail cuando se rinde
+
+
+def _plantilla_json(modelo: type[BaseModel]) -> str:
+    """La forma del JSON, sacada del modelo para que no se desfase: 0 en los números, «texto» y las opciones con «|»."""
+    def valor(tipo: Any, campo: Any = None) -> Any:
+        extra = getattr(campo, "json_schema_extra", None)
+        if isinstance(extra, dict) and extra.get("enum"):
+            return "|".join(extra["enum"])
+        if get_origin(tipo) is Literal:
+            return "|".join(get_args(tipo))
+        if get_origin(tipo) is list:
+            return [valor(get_args(tipo)[0])]
+        if isinstance(tipo, type) and issubclass(tipo, BaseModel):
+            return {nombre: valor(f.annotation, f) for nombre, f in tipo.model_fields.items()}
+        return 0 if tipo in (int, float) else "texto"
+    return json.dumps(valor(modelo), ensure_ascii=False)
+
+
+def _leer_json(texto: str, modelo: type[BaseModel]) -> BaseModel:
+    """El primer objeto JSON del texto que encaje en `modelo`, aunque venga entre ```json o con texto antes o después.
+    Si no hay ninguno, ValueError con el motivo, que el guardrail le pasa al modelo."""
+    decoder = json.JSONDecoder()
+    primer_error = None
+    for inicio in (m.start() for m in re.finditer(r"\{", texto)):
+        try:
+            objeto, _ = decoder.raw_decode(texto, inicio)
+        except json.JSONDecodeError:
+            continue
+        candidatos = [objeto] if isinstance(objeto, dict) else []
+        if len(objeto) == 1 and isinstance(next(iter(objeto.values())), dict):
+            candidatos.append(next(iter(objeto.values())))  # {"CostEstimationReport": {...}}
+        for candidato in candidatos:
+            try:
+                return modelo.model_validate(candidato)
+            except ValidationError as error:
+                primer_error = primer_error or error
+    if primer_error is None:
+        raise ValueError("no hay ningún objeto JSON en la respuesta")
+    detalle = "; ".join(f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" for e in primer_error.errors()[:5])
+    raise ValueError(f"el JSON no tiene la forma pedida ({detalle})")
+
+
+def _guardrail_json(modelo: type[BaseModel], tarea: str, reintentos: int = 1):
+    """Guardrail de las tareas con salida estructurada (fallo 46). Si la respuesta no trae un JSON válido, CrewAI
+    repite la tarea con el motivo. Tras `reintentos` repeticiones devuelve True con SIN_JSON: si el guardrail
+    fallara otra vez, CrewAI lanzaría una excepción y se perdería el informe entero (como en _guardrail_perfiles)."""
+    repetidas = 0
+    plantilla = _plantilla_json(modelo)
+    
+
+    def comprobar(salida):
+        nonlocal repetidas
+        texto = getattr(salida, "raw", "") or ""
+        try:
+            return True, _leer_json(texto, modelo).model_dump_json()
+        except ValueError as error:
+            motivo = str(error)
+        if repetidas >= reintentos:
+            logger.error("Tarea de %s: sigue sin un JSON válido después de repetirla (%s); se sigue sin ella",
+                         tarea, motivo[:300])
+            return True, SIN_JSON
+        repetidas += 1
+        logger.warning("Tarea de %s: la respuesta no trae un JSON válido (%s); se repite", tarea, motivo[:300])
+        return False, (f"La respuesta no es válida: {motivo[:600]}. Responde solo con el objeto JSON, sin texto antes "
+                       f"ni después, con esta forma: {plantilla}")
+
+    return comprobar
+
+
+def _leer_salida(tarea: Task | None, modelo: type[BaseModel]) -> BaseModel | None:
+    """El resultado de una tarea con salida estructurada, o None si no lo hay (la crew falló o el guardrail se rindió)."""
+    salida = getattr(tarea, "output", None)
+    ya_leido = getattr(salida, "pydantic", None)
+    if isinstance(ya_leido, modelo):
+        return ya_leido
+    texto = getattr(salida, "raw", "") or ""
+    if not texto or texto == SIN_JSON:
+        return None
+    try:
+        return _leer_json(texto, modelo)
+    except ValueError:
+        return None
+
+
+def _aviso_sin_costes(model_name: str) -> str:
+    """Lo que sale en la sección de costes si el modelo no devolvió los importes: el resto del informe sigue."""
+    return ('<div style="background:var(--surface-alt);border:1px solid var(--border);border-radius:12px;padding:1.5rem;">'
+            '<p style="color:#b45309;font-size:0.95rem;font-weight:600;margin:0 0 0.5rem;">Ojo: no se han podido '
+            'estimar los costes.</p><p style="font-size:0.875rem;color:var(--text);margin:0;">El modelo '
+            f'({escape(model_name)}) no devolvió los importes en el formato esperado, ni siquiera al repetir la '
+            'tarea. El resto del informe sí está completo. Vuelve a generar la estimación o prueba con otro '
+            'modelo.</p></div>')
+
+
+
 def run_estimation_crew(
     proposal_context: str,
     model_name: str,
     tools: list | None = None,
     problem_case: dict | None = None,
+    componentes: str | None = None,
 ) -> EstimationResult:
     """
     Ejecuta la crew de estimación de costos y perfiles de equipo.
 
     Pre-fase (Python puro): genera Terraform desde la propuesta → infracost breakdown → precios reales.
-    Fase CrewAI: report_writer_agent (sin tools, output_pydantic) genera CostEstimationReport.
+    Fase CrewAI: report_writer_agent (sin tools) devuelve el JSON de CostEstimationReport, que valida un guardrail.
 
-    `proposal_context` es el output serializado de ProposalResult.as_combined_context().
+    `proposal_context` es el output serializado de ProposalResult.as_combined_context(); lo usan los perfiles.
+    `componentes` es la parte de la propuesta con los componentes y sus volúmenes (la arquitectura); la tarea de
+    costes solo recibe esto y los datos del cliente (fallo 46). Si no se pasa, se usa la propuesta entera.
     """
     agents_config = load_agents_config()
     print(f"[estimation_crew] Modelo: {model_name}")  # para saber con qué modelo salió cada informe
@@ -799,7 +932,7 @@ def run_estimation_crew(
     infracost_prices: str | None = None
 
     if api_key and binary:
-        terraform_hcl = _generate_terraform_from_proposal(proposal_context, model_name)
+        terraform_hcl = _generate_terraform_from_proposal(componentes or proposal_context, model_name)
         if terraform_hcl.strip():
             infracost_prices = _run_infracost_breakdown(terraform_hcl, binary, api_key)
             if infracost_prices:
@@ -840,7 +973,7 @@ def run_estimation_crew(
             "A partir de la propuesta de solución y los precios indicados, valora el coste de cada componente de la propuesta. "
             f"{pricing_note}\n"
             "En componentes pon un elemento por cada servicio cloud, licencia, formación o soporte que aparezca en la "
-            "propuesta, sin dejarte ninguno, cada uno con su categoría, su precio unitario en euros (solo el número), "
+            "arquitectura, sin dejarte ninguno, cada uno con su categoría, su precio unitario en euros (solo el número), "
             "las unidades que se pagan en cada periodo, qué es una unidad y la periodicidad: mensual, anual o unico "
             "(si se paga una sola vez). No multipliques: el importe lo calcula el programa. Lo que se paga por uso "
             "(horas, GB, ejecuciones) va como mensual, con las unidades de un mes. Si un componente tiene partes con "
@@ -860,18 +993,22 @@ def run_estimation_crew(
             "el presupuesto del cliente, porque el total con el equipo se calcula después.\n"
             "Para los supuestos: si te falta información, indícalo como "
             "'Por determinar, requiere [dato X]' o 'Se asume [dato X]' — nunca inventes datos críticos.\n"
-            # C9: el idioma lo marca el cliente; las opciones son claves fijas y el modelo copiaba su forma sin tilde
-            "Escribe los textos en el idioma de los datos del cliente, con su ortografía completa (en español, con "
-            "tildes). Las opciones de categoria y periodicidad son claves fijas: van tal cual, sin tilde (formacion, "
-            "unico), sea cual sea el idioma.\n"
-            #FALTA CAMBIO 46
+            # C9: el esquema trae las opciones sin tilde («formacion», «unico») y el modelo las copiaba en todo
+            "Escribe los textos en español, con sus tildes (formación, estimación, implantación). Las opciones de "
+            "categoria y periodicidad son claves y van sin tilde (formacion, unico); el resto de campos, no.\n"
+            "Responde solo con un objeto JSON, sin texto antes ni después, con esta forma: "
+            f"{_plantilla_json(CostEstimationReport)}\n\n"
             f"{datos_cliente}"
-            "Propuesta de solución:\n"
-            f"{proposal_context}"
+            "Arquitectura propuesta (componentes y volúmenes):\n"
+            f"{componentes or proposal_context}"
         ),
-        expected_output="Un elemento por componente de la propuesta, con su importe en euros y su periodicidad, más el resumen y los supuestos.",
-        output_pydantic=CostEstimationReport,
+        expected_output="Un objeto JSON con un elemento por componente de la arquitectura (su precio unitario en euros, "
+                        "sus unidades y su periodicidad), el resumen y los supuestos.",
+        name="costes",
         agent=report_writer_agent,
+        # Fallo 46: sin output_pydantic, para no depender de las llamadas a herramienta; el JSON se valida aquí
+        guardrail=_guardrail_json(CostEstimationReport, "costes"),
+        guardrail_max_retries=1,
     )
 
     # Fallo 37: los perfiles se nombran como en la tabla de tarifas desde el principio, para que el texto y el coste coincidan
@@ -903,6 +1040,7 @@ def run_estimation_crew(
             f"{proposal_context}"
         ),
         expected_output="Los perfiles necesarios para el alcance pedido, con las responsabilidades, las habilidades y la dedicación (completa o parcial) de cada uno.",
+        name="perfiles",
         agent=team_builder,
         # Fallo 40 (C14): si la descripción llega cortada, se repite una vez antes de pasar a la tarea del coste
         guardrail=_guardrail_perfiles() if PERFILES_CON_TARIFA else None,
@@ -921,14 +1059,20 @@ def run_estimation_crew(
             "quien trabaje a tiempo completo en este alcance, y a los perfiles con dedicación parcial ponles las horas que les correspondan. "
             "Indica también cuántos meses trabajará el equipo según el plazo del cliente (meses_min y meses_max) y "
             "cuántos de ellos, al final, son de implantación (meses_implantacion). "
-            "No calcules costes: se calculan aparte con la tabla.\n\n"
+            "No calcules costes: se calculan aparte con la tabla.\n"
+            "Responde solo con un objeto JSON, sin texto antes ni después, con esta forma: "
+            f"{_plantilla_json(EquipoEstimado)}\n\n"
             f"{datos_cliente}"
             f"Tarifas de referencia (€/hora):\n{team_costs_table}"
         ),
-        expected_output="Perfiles del equipo con su nivel y horas al mes, y duración del trabajo en meses (mínima y máxima).",
-        output_pydantic=EquipoEstimado,
+        expected_output="Un objeto JSON con los perfiles del equipo (nivel y horas al mes) y la duración del trabajo en "
+                        "meses (mínima y máxima).",
+        name="equipo",
         context=[team_building_task],
         agent=team_builder,
+        # Fallo 46: igual que la de costes, sin output_pydantic y con el JSON validado aquí
+        guardrail=_guardrail_json(EquipoEstimado, "equipo"),
+        guardrail_max_retries=1,
     ) if team_costs_table else None
 
     crew_tasks: list[Task] = [cost_report_task, team_building_task]
@@ -941,24 +1085,31 @@ def run_estimation_crew(
         process=Process.sequential,
         cache=False,
     )
-    result = crew.kickoff()
+    
+    # Fallo 46: un fallo de la crew de costes no para el informe; lo que no llegue se avisa en su sección
+    try:
+        crew.kickoff()
+    except Exception as exc:
+        logger.error("[estimation_crew] La crew de costes falló con el modelo %s: %s", model_name, exc)
 
     # Coste del equipo: el LLM elige perfiles, nivel, horas y meses; las cuentas se hacen aquí
-    equipo_pydantic = getattr(getattr(team_cost_task, "output", None), "pydantic", None) if team_cost_task else None
-    equipo = _calcular_equipo(equipo_pydantic, tarifas) if isinstance(equipo_pydantic, EquipoEstimado) else None
+    equipo_pydantic = _leer_salida(team_cost_task, EquipoEstimado) if team_cost_task else None
+    equipo = _calcular_equipo(equipo_pydantic, tarifas) if equipo_pydantic else None
     if team_cost_task and equipo is None:
         logger.warning("No se pudo leer el equipo estimado: el coste total no incluirá el equipo.")
 
-    # Extraer output de costos: preferir pydantic validado, fallback a raw
-    report_pydantic = getattr(getattr(cost_report_task, "output", None), "pydantic", None)
-    if isinstance(report_pydantic, CostEstimationReport):
-        cost_estimation = _format_cost_report(report_pydantic, infracost_prices or "", equipo)
+    # Costes: el JSON ya validado por el guardrail; si no llegó, la sección lo avisa y el informe sigue
+    report = _leer_salida(cost_report_task, CostEstimationReport)
+    if report:
+        cost_estimation = _format_cost_report(report, infracost_prices or "", equipo)
     else:
-        raw_obj = getattr(cost_report_task, "output", None)
-        cost_estimation = getattr(raw_obj, "raw", "") or str(raw_obj or "")
+        logger.error("[estimation_crew] Sin costes: el modelo %s no devolvió un JSON válido", model_name)
+        cost_estimation = _aviso_sin_costes(model_name)
 
-    team_obj = getattr(team_building_task, "output", None)
-    team_profiles = getattr(team_obj, "raw", "") or str(team_obj or "")
+    team_profiles = getattr(getattr(team_building_task, "output", None), "raw", "") or ""
+    if not team_profiles:
+        team_profiles = ("**Ojo:** no se han podido describir los perfiles del equipo: el modelo no respondió. "
+                         "Vuelve a generar la estimación o prueba con otro modelo.")
 
 
     # Fallo 40 (C14): si la descripción no nombra algún perfil presupuestado, se avisa en vez de dejarla cortada sin más
@@ -975,8 +1126,6 @@ def run_estimation_crew(
     if equipo:
         team_profiles = team_profiles + "\n\n---\n\n## Estimación de Coste del Equipo\n\n" + equipo["texto"]
 
-    if not (cost_estimation and team_profiles):
-        raise RuntimeError(getattr(result, "raw", "Error: estimation crew produjo outputs incompletos."))
 
     return EstimationResult(
         cost_estimation=cost_estimation,

@@ -86,7 +86,9 @@ def propose_solution(
 
     try:
         proposal = run_proposal_crew(structure_proposal, problem_case, chat_history, model_name)
-        estimation = run_estimation_crew(proposal.as_combined_context(), model_name, problem_case=problem_case)
+         # Fallo 46: la tarea de costes solo necesita los componentes y sus volúmenes, que están en la arquitectura
+        estimation = run_estimation_crew(proposal.as_combined_context(), model_name, problem_case=problem_case,
+                                         componentes=proposal.architecture)
     except RuntimeError as e:
         return str(e)
 

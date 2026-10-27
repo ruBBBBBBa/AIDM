@@ -98,9 +98,9 @@ def kickoff_simulado(self, *args, **kwargs):
     for task in self.tasks:
         prompts.append(task.description)
         tareas.append(task)
-        if task.output_pydantic is CostEstimationReport:
+        if task.name == "costes":
             task.output = SimpleNamespace(pydantic=None, raw="COSTES")
-        elif task.output_pydantic is EquipoEstimado:
+        elif task.name == "equipo":
             task.output = SimpleNamespace(pydantic=EQUIPO_22OCT, raw="")
         else:
             task.output = SimpleNamespace(pydantic=None, raw=texto_perfiles)
