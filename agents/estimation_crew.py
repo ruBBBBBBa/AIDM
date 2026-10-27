@@ -394,6 +394,15 @@ def _coste_en_proyecto(c: ComponenteCoste, meses: int) -> float:
         return c.importe_eur * meses / 12
     return c.importe_eur
 
+# Fallo 45 (C6): un componente a 0 € solo cuadra si el cliente ya lo tiene; lo demás se avisa
+_YA_LO_TIENE = ("ya lo tiene", "ya la tiene", "ya los tiene", "ya las tiene", "ya adquirid", "ya dispone",
+                "ya cuenta con", "ya contratad", "ya pagad", "existente")
+
+
+def _ya_lo_tiene(c: ComponenteCoste) -> bool:
+    texto = _normalize_text(f"{c.componente} {c.referencia}")
+    return any(frase in texto for frase in _YA_LO_TIENE)
+
 def _sin_valorar_presupuesto(texto: str) -> str:
     """Quita de la justificación las frases que hablan del presupuesto. El encaje se calcula en Python con el
     equipo incluido, que el LLM no conoce; ministral lo valoraba igualmente aunque el prompt se lo prohíbe."""
@@ -461,6 +470,13 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     if no_sumados:
         avisos.append(f"Ojo: el total y el encaje no incluyen {escape('; '.join(no_sumados))}, porque no tienen "
                       f"tarifa en la tabla de la empresa. El coste real será mayor.")
+
+    a_cero = [c.componente for c in report.componentes if not c.importe_eur and not _ya_lo_tiene(c)]
+    if a_cero:
+        nombres = a_cero[0] if len(a_cero) == 1 else f"{', '.join(a_cero[:-1])} y {a_cero[-1]}"
+        avisos.append(f"Ojo: {escape(nombres)} {'va' if len(a_cero) == 1 else 'van'} a 0 €, así que no suman nada al "
+                      f"total. Si se pagan por uso (cómputo, ejecuciones, un endpoint…), el coste real será mayor.")
+    
     if not report.componentes:
         avisos.append("Ojo: el total no incluye infraestructura, licencias, formación ni soporte, porque el modelo "
                       "no ha valorado ningún componente de la propuesta.")
@@ -515,11 +531,15 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         en_proyecto = _rango(_coste_en_proyecto(c, meses_min), _coste_en_proyecto(c, meses_max))
         if c.periodicidad == "anual":
             en_proyecto += " (parte proporcional)"
+        importe = f"{_cifra(c.importe_eur)} {_UNIDAD[c.periodicidad]}"
+        if not c.importe_eur:
+            importe = ("0 € (ya lo tiene el cliente)" if _ya_lo_tiene(c)
+                       else '<span style="color:#b45309;">0 € (por revisar)</span>')
         cards_html += (
             f'<div style="background:var(--surface);border:1px solid var(--border);border-top:3px solid {color};'
             f'border-radius:9px;padding:0.75rem;min-width:150px;flex:1;box-shadow:var(--shadow);">'
             f'<div style="font-size:0.75rem;color:var(--muted);margin-bottom:3px;">{escape(c.componente)}</div>'
-            f'<div style="font-size:1rem;font-weight:700;color:var(--text);">{_cifra(c.importe_eur)} {_UNIDAD[c.periodicidad]}</div>'
+            f'<div style="font-size:1rem;font-weight:700;color:var(--text);">{importe}</div>'
             f'<div style="font-size:0.72rem;color:var(--muted);margin-top:2px;">'
             f'{_cifra(c.precio_unitario_eur)} €/{escape(c.unidad)} × {_cifra(c.unidades)}</div>'
             f'<div style="font-size:0.75rem;color:var(--text);margin-top:3px;">En {meses_txt}: {en_proyecto}</div>'
@@ -685,7 +705,8 @@ def _run_infracost_breakdown(terraform_hcl: str, binary: str, api_key: str) -> s
         with open(tf_path, "w", encoding="utf-8") as f:
             f.write(terraform_hcl)
 
-        env = {**os.environ, "INFRACOST_API_KEY": api_key}
+        # Fallo 45 (C6): precios en euros. INFRACOST_CURRENCY es la del CLI 0.10; INFRACOST_CLI_CURRENCY, la del nuevo
+        env = {**os.environ, "INFRACOST_API_KEY": api_key, "INFRACOST_CURRENCY": "EUR", "INFRACOST_CLI_CURRENCY": "EUR"}
         try:
             result = subprocess.run(
                 [binary, "breakdown", "--path", tmpdir, "--no-color"],
@@ -801,7 +822,7 @@ def run_estimation_crew(
     team_builder = _make_agent("team_profiles_advisor", agents_config, model_name)
 
     pricing_note = (
-        f"Resumen de costos reales obtenido de Infracost (basado en infraestructura generada desde la propuesta):\n{infracost_prices}"
+        f"Resumen de costos reales obtenido de Infracost, en euros (basado en infraestructura generada desde la propuesta):\n{infracost_prices}"
         if infracost_prices else
         "No hay precios reales disponibles: usa estimaciones razonables a partir de precios públicos, en euros."
     )
@@ -817,6 +838,10 @@ def run_estimation_crew(
             "(horas, GB, ejecuciones) va como mensual, con las unidades de un mes. Si un componente tiene partes con "
             "precios distintos, pon un elemento por parte. Si no tienes el precio exacto, da tu mejor estimación y di "
             "en referencia de dónde sale. "
+            "Pon precio 0 solo si el cliente ya lo tiene pagado (escribe en referencia «Ya lo tiene el cliente») o si "
+            "el uso del piloto cabe en el nivel gratuito del servicio (di en referencia qué límite y qué uso estimas). "
+            "Que un servicio no tenga cuota no lo hace gratis: el cómputo, las ejecuciones o un endpoint se pagan por "
+            "uso, así que estima el uso del piloto. "
             "El coste del equipo (desarrollo e implantación) se calcula aparte con las tarifas de la empresa: NO lo "
             "incluyas como componente. Los totales, el horizonte y el encaje con el presupuesto se calculan después a "
             "partir de tus importes. En meses_proyecto pon los meses del alcance que se presupuesta (el piloto, si lo "

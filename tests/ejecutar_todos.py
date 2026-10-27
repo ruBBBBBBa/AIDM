@@ -34,6 +34,7 @@ TESTS = [
     "test_costes_sin_tarifa.py",    # fallo 42 (C16 y C17)
     "test_costes_fases.py",         # fallo 43
     "test_secciones_sin_importes.py",  # fallo 44 (C2)
+    "test_costes_ceros.py",         # fallo 45 (C6)
 ]
 
 # Los resultados llevan «≥», «€»…: en Windows, sin esto, la salida por tubería usa cp1252 y falla.
