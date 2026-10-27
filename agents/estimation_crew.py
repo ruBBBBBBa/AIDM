@@ -123,12 +123,20 @@ def _a_numero(valor: Any) -> Any:
         return valor
 
 
+# C9: con un cliente que habla inglés, el modelo puede traducir también las opciones; se aceptan igual
+_OPCIONES_EN = {"infrastructure": "infraestructura", "licen": "licencias", "training": "formacion",
+                "maintenance": "mantenimiento", "support": "mantenimiento", "soporte": "mantenimiento",
+                "monthly": "mensual", "annual": "anual", "yearly": "anual", "one": "unico", "once": "unico"}
+
+
 def _opcion(valor: Any, opciones: tuple[str, ...]) -> Any:
-    """'Único' → 'unico', 'Formación y onboarding' → 'formacion': la opción que empieza igual, sin tildes ni mayúsculas."""
+    """'Único' → 'unico', 'Formación y onboarding' → 'formacion', 'Training' → 'formacion': la opción que empieza
+    igual, sin tildes ni mayúsculas, o su equivalente en inglés."""
     if not isinstance(valor, str):
         return valor
     texto = _normalize_text(valor)
-    return next((o for o in opciones if texto.startswith(o[:5])), valor)
+    return next((o for o in opciones if texto.startswith(o[:5])), None) or next(
+        (o for prefijo, o in _OPCIONES_EN.items() if texto.startswith(prefijo) and o in opciones), valor)
 
 
 class ComponenteCoste(BaseModel):
@@ -851,7 +859,12 @@ def run_estimation_crew(
             "En justificacion explica solo de dónde salen los importes y qué los haría variar; no digas si caben en "
             "el presupuesto del cliente, porque el total con el equipo se calcula después.\n"
             "Para los supuestos: si te falta información, indícalo como "
-            "'Por determinar, requiere [dato X]' o 'Se asume [dato X]' — nunca inventes datos críticos.\n\n"
+            "'Por determinar, requiere [dato X]' o 'Se asume [dato X]' — nunca inventes datos críticos.\n"
+            # C9: el idioma lo marca el cliente; las opciones son claves fijas y el modelo copiaba su forma sin tilde
+            "Escribe los textos en el idioma de los datos del cliente, con su ortografía completa (en español, con "
+            "tildes). Las opciones de categoria y periodicidad son claves fijas: van tal cual, sin tilde (formacion, "
+            "unico), sea cual sea el idioma.\n"
+            #FALTA CAMBIO 46
             f"{datos_cliente}"
             "Propuesta de solución:\n"
             f"{proposal_context}"
@@ -883,7 +896,8 @@ def run_estimation_crew(
             "Ten en cuenta el tipo de servicio que pide el cliente: si quiere que Inetum lo implemente, los perfiles son del "
             "equipo de Inetum, y el equipo interno del cliente participa y se forma; dilo así. Ten en cuenta también el "
             "equipo técnico que ya tiene el cliente y lo que sabe hacer. "
-            "No des cifras de coste: el coste del equipo se calcula aparte con las tarifas de la empresa.\n\n"
+            "No des cifras de coste: el coste del equipo se calcula aparte con las tarifas de la empresa. "
+            "Escribe en el idioma de los datos del cliente, con su ortografía completa (en español, con tildes).\n\n"
             f"{datos_cliente}"
             "Esta es la solución propuesta sobre la que debes identificar los perfiles profesionales necesarios:\n"
             f"{proposal_context}"
