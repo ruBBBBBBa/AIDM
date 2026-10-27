@@ -85,15 +85,15 @@ assert calculo["no_sumados"] == [
 assert "Sin presupuestar, porque no tienen tarifa en la tabla: Business Intelligence Developer" in calculo["texto"]
 print("OK 3: equipo del 19 oct = 16.000 €/mes y los 3 perfiles sin tarifa quedan apuntados")
 
-# 4) El aviso sale junto al total y al encaje, antes del motivo. Sin él, 84.000 € daría un encaje
-#    «Alto» con 90.000 € de presupuesto aunque falten tres perfiles
+# 4) El aviso sale junto al total y al encaje, antes del motivo. Con 84.000 € y 90.000 € de presupuesto,
+#    el encaje habría sido «Alto» aunque falten tres perfiles; desde el fallo 42 cuenta un mínimo por ellos
 html = _format_cost_report(informe(), equipo=calculo)
-aviso = "Ojo: el total y el encaje no incluyen Business Intelligence Developer (Middle, 80 h/mes); Project Manager"
+aviso = "Ojo: el total no incluye las horas de Business Intelligence Developer (Middle, 80 h/mes); Project Manager"
 assert aviso in html, "falta el aviso de los perfiles que no se suman"
-assert ">84.000 €</div>" in html and ">Alto<" in html
-assert html.index("Encaje con el presupuesto") < html.index(aviso) < html.index("Incluso el escenario alto")
+assert ">84.000 €</div>" in html and ">Bajo (provisional)<" in html
+assert html.index("Encaje con el presupuesto") < html.index(aviso) < html.index("Contando al menos")
 assert "El coste real será mayor" in html
-print("OK 4: «Ojo: el total y el encaje no incluyen…» aparece debajo del encaje")
+print("OK 4: «Ojo: el total no incluye las horas de…» aparece debajo del encaje")
 
 # 5) Una función sin perfil en la tabla también se avisa
 con_funcion = EquipoEstimado(
@@ -103,12 +103,12 @@ con_funcion = EquipoEstimado(
 )
 calculo = _calcular_equipo(con_funcion, tarifas)
 assert calculo["no_sumados"] == ["Gestión del proyecto"]
-assert "no incluyen Gestión del proyecto" in _format_cost_report(informe(), equipo=calculo)
+assert "no incluye las horas de Gestión del proyecto" in _format_cost_report(informe(), equipo=calculo)
 print("OK 5: las funciones sin perfil en la tabla también se avisan")
 
 # 6) Si todo tiene tarifa, no hay aviso
 calculo = _calcular_equipo(EquipoEstimado(perfiles=con_funcion.perfiles, meses_min=4, meses_max=4), tarifas)
-assert "Ojo: el total y el encaje" not in _format_cost_report(informe(), equipo=calculo)
+assert "Ojo: el total no incluye las horas" not in _format_cost_report(informe(), equipo=calculo)
 assert "Sin presupuestar" not in calculo["texto"]
 print("OK 6: sin perfiles fuera de la tabla, no sale ningún aviso")
 
@@ -136,7 +136,7 @@ assert ", ".join(PERFILES_CON_TARIFA) in perfiles, "la tarea de perfiles debe re
 assert "no una lista que haya que cubrir" in perfiles and "no inventes un perfil" in perfiles
 assert "Considera roles como" not in perfiles, "la lista no debe empujar a equipos grandes (fallo 24)"
 assert "los mismos perfiles, sin añadir otros" in equipo and "funciones_sin_tarifa" in equipo
-assert "Ojo: el total y el encaje no incluyen Business Intelligence Developer" in resultado.cost_estimation
+assert "Ojo: el total no incluye las horas de Business Intelligence Developer" in resultado.cost_estimation
 assert "Sin presupuestar, porque no tienen tarifa" in resultado.team_profiles
 print("OK 7: la tarea de perfiles usa el catálogo de la tabla y el informe completo avisa de lo que no se suma")
 

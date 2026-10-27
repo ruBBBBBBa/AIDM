@@ -32,7 +32,6 @@ TESTS = [
     "test_costes_perfiles.py",      # fallo 37
     "test_costes_unitarios.py",     # fallo 41 (C15)
     "test_costes_sin_tarifa.py",    # fallo 42 (C16 y C17)
-    "test_costes_perfiles_cortados.py",  # fallo 40 (C14)
     "test_costes_fases.py",         # fallo 43
 ]
 

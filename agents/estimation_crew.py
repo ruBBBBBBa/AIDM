@@ -211,6 +211,10 @@ class PerfilEquipo(BaseModel):
     horas_mes_implantacion: int = Field(
         default=0, description="Horas al mes en la implantación (puesta en producción y acompañamiento); 0 si no participa")
 
+class FuncionSinTarifa(BaseModel):
+    funcion: str = Field(description="Trabajo de una persona que no encaja en ningún perfil de la tabla de tarifas "
+                                     "(por ejemplo, la gestión del proyecto)")
+    horas_mes: int = Field(default=0, description="Horas al mes que necesita en este alcance")
 
 class EquipoEstimado(BaseModel):
     perfiles: list[PerfilEquipo]
@@ -223,11 +227,19 @@ class EquipoEstimado(BaseModel):
         default=0, description="Cuántos de esos meses, al final del plazo, son de implantación: puesta en producción y "
                                "acompañamiento hasta que el cliente use la solución. El resto son de desarrollo")
     
-    funciones_sin_tarifa: list[str] = Field(
+    funciones_sin_tarifa: list[FuncionSinTarifa] = Field(
         default_factory=list,
-        description="Funciones que hacen falta y no encajan en ningún perfil de la tabla de tarifas (por ejemplo, "
-                    "la gestión del proyecto). No se presupuestan: se avisa de ellas junto al total")
+        description="Trabajo de personas que hace falta y no encaja en ningún perfil de la tabla de tarifas, con sus "
+                    "horas al mes. No van aquí la formación, las licencias ni los servicios, que se valoran en los "
+                    "costes. No se presupuestan: se avisa de ellas junto al total")
 
+    @field_validator("funciones_sin_tarifa", mode="before")
+    @classmethod
+    def _funciones_sin_horas(cls, valor: Any) -> Any:
+        """Un modelo que mande solo el nombre de la función, como antes del fallo 42, no pierde el equipo entero."""
+        if isinstance(valor, list):
+            return [{"funcion": v, "horas_mes": 0} if isinstance(v, str) else v for v in valor]
+        return valor
 
 def _eur(valor: float) -> str:
     """12345.6 -> '12.346 €'"""
@@ -402,19 +414,10 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     justificacion = _sin_valorar_presupuesto(r.justificacion)
 
     # Fallo 32: el LLM da el importe de cada componente y si es mensual, anual o único; las sumas se hacen aquí, con los mismos meses que el equipo para que todo cubra el mismo periodo
-    if equipo and equipo.get("meses_implantacion"):
-        # Fallo 43: el desarrollo y la implantación, cada uno con sus meses
-        impl = equipo["meses_implantacion"]
-        meses_dev = _meses_txt(equipo["meses_min"] - impl, equipo["meses_max"] - impl)
-        filas.append((f"Desarrollo · {meses_dev}", f"Equipo: {_rango(equipo['desarrollo_min'], equipo['desarrollo_max'])}",
-                      equipo["desarrollo_max"], "#0f766e"))  # teal
-        filas.append((f"Implantación · {_meses_txt(impl, impl)}", f"Equipo: {_eur(equipo['implantacion'])}",
-                      equipo["implantacion"], "#15803d"))  # green
-    elif equipo:
-        filas.append(("Desarrollo e implantación", f"Equipo: {_rango(equipo_min, equipo_max)}", equipo_max,
-                      "#0f766e"))  # teal
+    if equipo and "meses_min" in equipo:
+          meses_min, meses_max = equipo["meses_min"], equipo["meses_max"]
     else:
-        meses_min = meses_max = max(r.meses_proyecto, 1)
+          meses_min = meses_max = max(r.meses_proyecto, 1)
     meses = f"{meses_min}" if meses_min == meses_max else f"{meses_min}–{meses_max}"
     meses_txt = f"{meses} {'mes' if meses_max == 1 else 'meses'}"
 
@@ -433,12 +436,28 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     total_min = sin_equipo_min + equipo_min
     total_max = sin_equipo_max + equipo_max
     nivel, motivo = _encaje_presupuesto(total_min, total_max, r.presupuesto_cliente_max_eur)
+
+        # Fallo 42 (C16): lo que no tiene tarifa no está en el total, pero el encaje cuenta un mínimo por ello
+    # (sus horas a la tarifa más baja de la tabla) y se marca como provisional
+    equipo_dict = equipo or {}
+    no_sumados = equipo_dict.get("no_sumados") or []
+    falta_min, falta_max = equipo_dict.get("falta_min", 0), equipo_dict.get("falta_max", 0)
+    presupuesto = r.presupuesto_cliente_max_eur
+    nivel, motivo = _encaje_presupuesto(total_min + falta_min, total_max + falta_max, presupuesto)
+    if falta_max and presupuesto > 0:
+        motivo = (f"Contando al menos {_rango(falta_min, falta_max)} por lo que no tiene tarifa "
+                  f"({equipo_dict['horas_sin_tarifa']} h/mes a {_cifra(equipo_dict['tarifa_minima'])} €/h, la tarifa "
+                  f"más baja de la tabla), " + motivo[0].lower() + motivo[1:])
+    etiqueta_nivel = nivel.capitalize() + (" (provisional)" if no_sumados else "")
     if not equipo:
         motivo += " Ojo: el total no incluye el equipo, que no se pudo calcular."
 
     # Lo que no está en el total se avisa al lado del total y del encaje
     avisos = []
-    no_sumados = (equipo or {}).get("no_sumados") or []
+    if no_sumados:
+        avisos.append(f"Ojo: el total no incluye las horas de {escape('; '.join(no_sumados))}, porque no tienen "
+                      f"tarifa en la tabla de la empresa. El coste real será mayor, así que el encaje es provisional.")
+    
     if no_sumados:
         avisos.append(f"Ojo: el total y el encaje no incluyen {escape('; '.join(no_sumados))}, porque no tienen "
                       f"tarifa en la tabla de la empresa. El coste real será mayor.")
@@ -463,7 +482,15 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     if contingencia:
         filas.append((f"Contingencia ({r.contingencia_pct} %, solo escenario alto)", _eur(contingencia),
                       contingencia, "#64748b"))  # slate
-    if equipo:
+    if equipo and equipo.get("meses_implantacion"):
+        # Fallo 43: el desarrollo y la implantación, cada uno con sus meses
+        impl = equipo["meses_implantacion"]
+        meses_dev = _meses_txt(equipo["meses_min"] - impl, equipo["meses_max"] - impl)
+        filas.append((f"Desarrollo · {meses_dev}", f"Equipo: {_rango(equipo['desarrollo_min'], equipo['desarrollo_max'])}",
+                      equipo["desarrollo_max"], "#0f766e"))  # teal
+        filas.append((f"Implantación · {_meses_txt(impl, impl)}", f"Equipo: {_eur(equipo['implantacion'])}",
+                      equipo["implantacion"], "#15803d"))  # green
+    elif equipo:
         filas.append(("Desarrollo e implantación", f"Equipo: {_rango(equipo_min, equipo_max)}", equipo_max,
                       "#0f766e"))  # teal
     max_val = max((valor for _, _, valor, _ in filas), default=0) or 1
@@ -562,7 +589,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         f'<div style="margin-bottom:0.875rem;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
         f'<span style="font-size:0.82rem;color:var(--muted);">Encaje con el presupuesto</span>'
-        f'<span style="font-size:0.82rem;font-weight:600;color:{conf_color};">{nivel.capitalize()}</span>'
+        f'<span style="font-size:0.82rem;font-weight:600;color:{conf_color};">{etiqueta_nivel}</span>'
         f'</div>'
         f'<div style="background:var(--border);border-radius:999px;height:9px;overflow:hidden;">'
         f'<div style="background:{conf_color};width:{conf_pct};height:100%;border-radius:999px;"></div>'
@@ -695,6 +722,30 @@ def _load_team_costs_context() -> str:
     lines = csv_path.read_text(encoding="utf-8").strip().splitlines()
     return "\n".join(line.strip() for line in lines if line.strip())
 
+def _perfiles_nombrados(texto: str, perfiles: list[str]) -> list[str]:
+    """Los perfiles de la lista que aparecen en el texto, sin mirar mayúsculas, tildes ni espacios."""
+    normalizado = _clave_perfil(texto)
+    return [p for p in perfiles if _clave_perfil(p) in normalizado]
+
+
+def _guardrail_perfiles(reintentos: int = 1):
+    """Guardrail de la tarea de perfiles (fallo 40). Si la descripción no nombra ningún perfil de la tabla, ha
+    llegado cortada y CrewAI repite la tarea con el motivo. Tras `reintentos` repeticiones se acepta lo que llegue:
+    si el guardrail siguiera fallando, CrewAI lanzaría una excepción y se perdería el informe entero."""
+    repetidas = 0
+
+    def comprobar(salida):
+        nonlocal repetidas
+        texto = getattr(salida, "raw", "") or ""
+        if _perfiles_nombrados(texto, PERFILES_CON_TARIFA) or repetidas >= reintentos:
+            return True, texto
+        repetidas += 1
+        logger.warning("Descripción de perfiles incompleta (%d caracteres, termina en %r): se repite la tarea",
+                       len(texto), texto[-80:])
+        return False, ("La descripción está incompleta: no nombra ningún perfil de la tabla de tarifas. "
+                       "Escríbela entera, con un apartado por perfil y sin tablas.")
+
+    return comprobar
 
 def run_estimation_crew(
     proposal_context: str,
@@ -711,6 +762,7 @@ def run_estimation_crew(
     `proposal_context` es el output serializado de ProposalResult.as_combined_context().
     """
     agents_config = load_agents_config()
+    print(f"[estimation_crew] Modelo: {model_name}")  # para saber con qué modelo salió cada informe
 
     # --- Pre-fase: obtener precios reales via Infracost subprocess ---
     api_key = os.getenv("INFRACOST_API_KEY", "")
@@ -788,8 +840,9 @@ def run_estimation_crew(
     catalogo_perfiles = (
         "Nombra cada perfil con uno de estos, tal cual, porque son los que tienen tarifa en la empresa: "
         f"{', '.join(PERFILES_CON_TARIFA)}. Es un catálogo para elegir, no una lista que haya que cubrir. "
-        "Si hace falta una función que no encaja en ninguno (por ejemplo, la gestión del proyecto), dilo aparte "
-        "como función sin perfil en la tabla de tarifas; no inventes un perfil para ella. "
+        "Si hace falta trabajo de una persona que no encaja en ninguno (por ejemplo, la gestión del proyecto), dilo "
+        "aparte como función sin perfil en la tabla de tarifas, con sus horas al mes; no inventes un perfil para ella. "
+        "La formación, las licencias y los servicios no son funciones del equipo: se valoran en los costes. "
     ) if PERFILES_CON_TARIFA else ""
 
     team_building_task = Task(
@@ -798,6 +851,7 @@ def run_estimation_crew(
             "para implementar lo que pide el cliente en el plazo que indica (el piloto, si lo hay), no la solución completa a largo plazo. "
             "Incluye solo los perfiles imprescindibles para ese alcance y, para cada uno, sus responsabilidades clave, las "
             "habilidades requeridas y si su dedicación es completa o parcial. "
+            "Escribe un apartado por perfil, con su nombre como título y una lista debajo; no uses tablas. "
             "Distingue su dedicación en el desarrollo (construir la solución) y en la implantación (ponerla en "
             "producción y acompañar al cliente hasta que la use); un perfil puede estar solo en una de las dos. "
             f"{catalogo_perfiles}"
@@ -811,13 +865,17 @@ def run_estimation_crew(
         ),
         expected_output="Los perfiles necesarios para el alcance pedido, con las responsabilidades, las habilidades y la dedicación (completa o parcial) de cada uno.",
         agent=team_builder,
+        # Fallo 40 (C14): si la descripción llega cortada, se repite una vez antes de pasar a la tarea del coste
+        guardrail=_guardrail_perfiles() if PERFILES_CON_TARIFA else None,
+        guardrail_max_retries=1,
     )
 
     team_cost_task = Task(
         description=(
             "A partir de los perfiles de equipo identificados en la tarea anterior, define el equipo que se va a presupuestar: "
             "los mismos perfiles, sin añadir otros. "
-            "Las funciones que la tarea anterior dejó sin perfil en la tabla de tarifas van en funciones_sin_tarifa, no en perfiles. "
+            "Las funciones que la tarea anterior dejó sin perfil en la tabla de tarifas van en funciones_sin_tarifa, no en perfiles, "
+            "cada una con sus horas al mes; no pongas ahí formación, licencias ni servicios, que se valoran aparte. "
             "Para cada perfil indica: su nombre exacto en la tabla de tarifas (primera columna), "
             "el nivel (Junior/Middle/Senior) y las horas al mes en el desarrollo (horas_mes) y en la implantación "
             "(horas_mes_implantacion), con 0 en la fase en la que no participe. 160 horas al mes es jornada completa: úsala solo para "
@@ -862,6 +920,18 @@ def run_estimation_crew(
 
     team_obj = getattr(team_building_task, "output", None)
     team_profiles = getattr(team_obj, "raw", "") or str(team_obj or "")
+
+
+    # Fallo 40 (C14): si la descripción no nombra algún perfil presupuestado, se avisa en vez de dejarla cortada sin más
+    if isinstance(equipo_pydantic, EquipoEstimado) and team_profiles:
+        presupuestados = [p.perfil.strip().replace("|", "/") for p in equipo_pydantic.perfiles]
+        nombrados = _perfiles_nombrados(team_profiles, presupuestados)
+        faltan = [p for p in presupuestados if p not in nombrados]
+        if faltan:
+            logger.warning("La descripción de perfiles no menciona a %s (%d caracteres, termina en %r)",
+                           faltan, len(team_profiles), team_profiles[-80:])
+            team_profiles += (f"\n\n**Ojo:** la descripción de arriba no menciona a {', '.join(faltan)}; puede haber "
+                              "llegado cortada. La tabla de coste de abajo sí está completa.")
 
     if equipo:
         team_profiles = team_profiles + "\n\n---\n\n## Estimación de Coste del Equipo\n\n" + equipo["texto"]
