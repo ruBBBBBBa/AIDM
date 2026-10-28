@@ -40,6 +40,7 @@ TESTS = [
     "test_interfaz_sin_relanzar.py",  # fallo 48
     "test_estructura_sin_importes.py",  # refuerzo del 44
     "test_costes_json_reparado.py", # fallo 50
+    "test_costes_justificacion.py", # fallo 51
 ]
 
 # Los resultados llevan «≥», «€»…: en Windows, sin esto, la salida por tubería usa cp1252 y falla.

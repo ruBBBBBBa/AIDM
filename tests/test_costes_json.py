@@ -163,10 +163,10 @@ assert "DATOS DEL CLIENTE" in prompts["costes"] and "600.000 €" in prompts["co
 assert "PROPUESTA ENTERA" in prompts["perfiles"], "los perfiles siguen viendo la propuesta entera"
 print("OK 6: costes y equipo ya no usan output_pydantic; costes recibe solo la arquitectura y los datos del cliente")
 
-# 7) Un componente que cada mes se lleva más del 10 % del presupuesto se marca «revisar unidad»
+# 7) Un componente que cada mes se lleva más del 5 % del presupuesto (fallo 51; antes, 10 %) se marca «revisar unidad»
 html = _format_cost_report(CostEstimationReport.model_validate_json(JSON_26OCT))
 aviso = ("Ojo: revisa la unidad de Azure IoT Hub para ingestión de telemetría MQTT (80.000 €/mes) y "
-         "Azure Event Hubs para buffer de mensajes (1.000.000 €/mes): cada uno cuesta al mes más de un 10 % del "
+         "Azure Event Hubs para buffer de mensajes (1.000.000 €/mes): cada uno cuesta al mes más de un 5 % del "
          "presupuesto del cliente (600.000 €).")
 assert aviso in html, "falta el aviso de «revisar unidad»"
 assert html.count("(revisar unidad)") == 2, "ADLS Gen2 (400 €/mes) no debe marcarse"

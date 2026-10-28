@@ -10,12 +10,13 @@ from html import escape
 from pathlib import Path
 from typing import Any, Literal, get_args, get_origin
 import json
+import textwrap
 
 import litellm
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field, field_validator, ValidationError
 
-from utils import _make_agent, _normalize_text, build_llm, contexto_cliente, load_agents_config
+from utils import _make_agent, _normalize_text, build_llm, contexto_cliente, load_agents_config, md_to_html
 
 logger = logging.getLogger("aidm")
 
@@ -389,8 +390,8 @@ def _cifra(valor: float) -> str:
     """1250 -> '1.250'; 32.5 -> '32,50'; los precios de céntimos conservan sus decimales: 0.025 -> '0,025'."""
     if valor == int(valor) or valor >= 100:
         return f"{valor:,.0f}".replace(",", ".")
-    if valor < 1:
-        return f"{valor:.4f}".rstrip("0").replace(".", ",")
+    if valor < 1:  # fallo 51: 0,00001 salía como «0,»
+        return f"{valor:.8f}".rstrip("0").replace(".", ",")
     return f"{valor:.2f}".replace(".", ",")
 
 
@@ -406,7 +407,10 @@ def _coste_en_proyecto(c: ComponenteCoste, meses: int) -> float:
 # Fallo 46: un componente que cada mes se lleva más de esta parte del presupuesto suele tener mal la unidad. En el log
 # del 26 oct (Iberdrola, 600.000 €), IoT Hub salía a 0,008 €/mensaje × 10 millones = 80.000 €/mes, y en otro intento a
 # 8 €/mensaje × 2 millones = 16 M€/mes. Se marca y se avisa, pero se sigue sumando
-PARTE_MAXIMA_AL_MES = 0.10
+'''PARTE_MAXIMA_AL_MES = 0.10'''
+# Fallo 51: del 10 % al 5 %. El 28 oct, Event Hubs salía a 45.000 €/mes (0,0001 €/mensaje × 450 millones: el precio es
+# por millón), el 7,5 % del presupuesto cada mes, y no se marcaba
+PARTE_MAXIMA_AL_MES = 0.05
 
 
 def _coste_al_mes(c: ComponenteCoste, meses: int) -> float:
@@ -443,7 +447,10 @@ def _sin_valorar_presupuesto(texto: str) -> str:
 def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", equipo: dict | None = None) -> str:
     r = report.resumen_ejecutivo
 
-    justificacion = _sin_valorar_presupuesto(r.justificacion)
+    # Fallo 51 (C12): el modelo la escribe en markdown y con sangría; se quita la sangría y se convierte a HTML
+    justificacion = _sin_valorar_presupuesto(textwrap.dedent(r.justificacion).strip())
+    justificacion_html = (f'<div style="color:var(--muted);font-size:0.875rem;">{md_to_html(justificacion)}</div>'
+                          if justificacion else "")
 
     # Fallo 32: el LLM da el importe de cada componente y si es mensual, anual o único; las sumas se hacen aquí, con los mismos meses que el equipo para que todo cubra el mismo periodo
     if equipo and "meses_min" in equipo:
@@ -656,7 +663,8 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         # La justificación la escribe el LLM sin conocer el equipo: se dice a qué cifras se refiere
         f'<p style="color:var(--muted);font-size:0.875rem;margin:0;font-style:italic;">'
         f'Infraestructura, licencias, formación y soporte ({_rango(sin_equipo_min, sin_equipo_max)}, '
-        f'sin el equipo){": " + justificacion if justificacion else "."}</p>'
+        f'sin el equipo){":" if justificacion else "."}</p>'
+        f'{justificacion_html}'
         f'</div>'
 
         # ── Supuestos ──
