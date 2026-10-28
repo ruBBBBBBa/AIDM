@@ -126,13 +126,5 @@ if not completion_reached:
     st.session_state.messages.append({"role": "assistant", "content": assistant_response})
     st.stop()
 
-# ── Fase de solución: guardar el informe en la sesión y mostrarlo en la página ─
-# webbrowser.open() lo abría en el ordenador donde corre Streamlit, no en el del usuario.
-# Se guarda una copia en la sesión para que siga visible aunque otra ejecución sobrescriba el archivo.
-cliente = response.get("problem_case", {}).get("nombre_del_cliente", {}).get("value", "")
-cliente = re.sub(r"[^\w-]+", "_", cliente).strip("_") or "cliente"
-
-st.session_state.report_html = REPORT_PATH.read_text(encoding="utf-8") if REPORT_PATH.exists() else ""
-st.session_state.report_filename = f"informe_aidm_{cliente}_{datetime.now():%Y%m%d_%H%M}.html"
-st.session_state.solution_completed = True
+# ── Fase de solución: el informe ya está guardado en la sesión (guardar_informe); se muestra en la página ─
 st.rerun()  # vuelve a pintar la página, ya en el estado "completado", que muestra el informe

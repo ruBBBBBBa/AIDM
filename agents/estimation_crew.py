@@ -850,21 +850,58 @@ def _desenvolver(objeto: Any, modelo: type[BaseModel]) -> dict | None:
             pendientes.extend(actual)
     return None
 
+# Fallo 50: «"unidades": 2000 * 30» no es JSON; se escribe el resultado antes de leerlo (json_repair se quedaría con 2000)
+_OPERACION = re.compile(r"(:\s*)(\d+(?:\.\d+)?(?:\s*[*×]\s*\d+(?:\.\d+)?)+)(?=\s*[,}\]\n])")
+
+
+def _calcular_operaciones(texto: str) -> str:
+    def producto(m: re.Match) -> str:
+        valor = 1.0
+        for factor in re.split(r"\s*[*×]\s*", m.group(2)):
+            valor *= float(factor)
+        return m.group(1) + (str(int(valor)) if valor == int(valor) else str(valor))
+    return _OPERACION.sub(producto, texto)
+
+
+def _reparar_json(texto: str, inicio: int) -> dict | None:
+    """Fallo 50: el JSON desde `inicio` hasta la última llave, arreglado con json_repair (comas al final, comentarios,
+    comillas sin escapar…). json_repair viene con CrewAI. None si no se puede."""
+    try:
+        from json_repair import loads as reparar
+    except ImportError:
+        return None
+    fin = texto.rfind("}")
+    if fin <= inicio:
+        return None
+    try:
+        objeto = reparar(texto[inicio:fin + 1])
+    except Exception:
+        return None
+    return objeto if isinstance(objeto, dict) else None
 
 def _leer_json(texto: str, modelo: type[BaseModel]) -> BaseModel:
     """El primer objeto JSON del texto que encaje en `modelo`, aunque venga entre ```json, con texto antes o después o
     envuelto en otra clave. Si no hay ninguno, ValueError con el motivo, que el guardrail le pasa al modelo."""
     decoder = json.JSONDecoder()
+    texto = _calcular_operaciones(texto)
     campos = ", ".join(modelo.model_fields)
-    primer_error, primeras_claves, cortado = None, None, False
+    primer_error, primeras_claves, cortado, invalido = None, None, False, ""
     for n, inicio in enumerate(m.start() for m in re.finditer(r"\{", texto)):
         try:
             objeto, _ = decoder.raw_decode(texto, inicio)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as error:
+            if n:
+                continue
             # Fallo 47: si el primer objeto abre más llaves de las que cierra, la respuesta llegó cortada
             resto = texto[inicio:]
-            cortado = cortado or (n == 0 and resto.count("{") > resto.count("}"))
-            continue
+            cortado = resto.count("{") > resto.count("}")
+            # Fallo 50: si no está cortado, es que tiene un error de sintaxis; se dice dónde y se intenta reparar
+            trozo = texto[max(error.pos - 60, 0):error.pos + 40]
+            invalido = f"el JSON no es válido cerca del carácter {error.pos} ({error.msg}): …{trozo}…"
+            objeto = None if cortado else _reparar_json(texto, inicio)
+            if objeto is None:
+                continue
+            logger.warning("JSON reparado con json_repair; %s", invalido)
         if not isinstance(objeto, dict):
             continue
         primeras_claves = primeras_claves or sorted(objeto)[:10]
@@ -879,7 +916,9 @@ def _leer_json(texto: str, modelo: type[BaseModel]) -> BaseModel:
         raise ValueError(f"el JSON llegó cortado: la respuesta ({len(texto)} caracteres) se acaba antes de cerrarlo")
     if primer_error is not None:
         detalle = "; ".join(f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" for e in primer_error.errors()[:5])
-        raise ValueError(f"el JSON no tiene la forma pedida ({detalle})")
+        raise ValueError(f"el JSON no tiene la forma pedida ({detalle})" + (f"; antes, {invalido}" if invalido else ""))
+    if invalido:
+        raise ValueError(invalido)
     if primeras_claves is not None:
         raise ValueError(f"ningún objeto JSON tiene los campos de la raíz ({campos}); el primero traía {primeras_claves}")
     raise ValueError("no hay ningún objeto JSON en la respuesta")
@@ -909,7 +948,9 @@ def _guardrail_json(modelo: type[BaseModel], tarea: str, reintentos: int = 1):
         repetidas += 1
         logger.warning("Tarea de %s: la respuesta no trae un JSON válido (%s); se repite. Respuesta: %s",
                        tarea, motivo[:300], muestra)
-        breve = (" Sé más breve: referencias y textos de pocas palabras." if "cortado" in motivo else "")
+        breve = (" Sé más breve: referencias y textos de pocas palabras." if "cortado" in motivo else
+                 " Revisa la sintaxis: comillas dobles, sin comas antes de ] o }, sin comentarios y cada número ya "
+                 "calculado, sin operaciones." if "no es válido" in motivo else "")
         return False, (f"La respuesta no es válida: {motivo[:600]}.{breve} Responde solo con el objeto JSON, sin texto "
                        f"antes ni después. La raíz del JSON tiene que tener estos campos: {', '.join(modelo.model_fields)}. "
                        f"Esta es su forma: {plantilla}")
