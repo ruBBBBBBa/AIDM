@@ -474,9 +474,8 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     equipo_max = equipo["total_max"] if equipo else 0
     total_min = sin_equipo_min + equipo_min
     total_max = sin_equipo_max + equipo_max
-    nivel, motivo = _encaje_presupuesto(total_min, total_max, r.presupuesto_cliente_max_eur)
 
-        # Fallo 42 (C16): lo que no tiene tarifa no está en el total, pero el encaje cuenta un mínimo por ello
+    # Fallo 42 (C16): lo que no tiene tarifa no está en el total, pero el encaje cuenta un mínimo por ello
     # (sus horas a la tarifa más baja de la tabla) y se marca como provisional
     equipo_dict = equipo or {}
     no_sumados = equipo_dict.get("no_sumados") or []
@@ -493,9 +492,6 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
 
     # Lo que no está en el total se avisa al lado del total y del encaje
     avisos = []
-    if no_sumados:
-        avisos.append(f"Ojo: el total no incluye las horas de {escape('; '.join(no_sumados))}, porque no tienen "
-                      f"tarifa en la tabla de la empresa. El coste real será mayor, así que el encaje es provisional.")
     
     if no_sumados:
         avisos.append(f"Ojo: el total y el encaje no incluyen {escape('; '.join(no_sumados))}, porque no tienen "
@@ -1079,9 +1075,10 @@ def run_estimation_crew(
             "el presupuesto del cliente, porque el total con el equipo se calcula después.\n"
             "Para los supuestos: si te falta información, indícalo como "
             "'Por determinar, requiere [dato X]' o 'Se asume [dato X]' — nunca inventes datos críticos.\n"
-            # C9: el esquema trae las opciones sin tilde («formacion», «unico») y el modelo las copiaba en todo
-            "Escribe los textos en español, con sus tildes (formación, estimación, implantación). Las opciones de "
-            "categoria y periodicidad son claves y van sin tilde (formacion, unico); el resto de campos, no.\n"
+            # C9 (lo había deshecho el 46): el idioma lo marca el cliente; las opciones son claves fijas
+            "Escribe los textos en el idioma de los datos del cliente, con su ortografía completa (en español, con "
+            "tildes). Las opciones de categoria y periodicidad son claves fijas: van tal cual, sin tilde (formacion, "
+            "unico), sea cual sea el idioma. Los importes, siempre en euros.\n"
             "Responde solo con un objeto JSON, sin texto antes ni después, con esta forma: "
             f"{_plantilla_json(CostEstimationReport)}\n\n"
             f"{datos_cliente}"

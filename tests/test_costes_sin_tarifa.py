@@ -85,6 +85,8 @@ print("OK 5: una función sin horas no suma mínimo, pero el encaje queda como p
 html = informe_con([{"funcion": "Gestión del proyecto", "horas_mes": 32}])
 assert "Ojo: el total no incluye las horas de Gestión del proyecto (32 h/mes)" in html
 assert "así que el encaje es provisional" in html
+# Limpieza del 28 oct: el aviso del 37 («el total y el encaje no incluyen…») repetía este
+assert html.count("Gestión del proyecto (32 h/mes)") == 1 and "el total y el encaje no incluyen" not in html
 
 os.environ.pop("INFRACOST_API_KEY", None)
 ec._resolve_infracost_binary = lambda: None

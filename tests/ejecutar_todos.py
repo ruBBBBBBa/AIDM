@@ -32,7 +32,9 @@ TESTS = [
     "test_costes_perfiles.py",      # fallo 37
     "test_costes_unitarios.py",     # fallo 41 (C15)
     "test_costes_sin_tarifa.py",    # fallo 42 (C16 y C17)
+    "test_costes_perfiles_cortados.py",  # fallo 40 (C14); se cayó de la lista con el 42 
     "test_costes_fases.py",         # fallo 43
+    "test_costes_tildes.py",        # C9; no estaba en la lista 
     "test_secciones_sin_importes.py",  # fallo 44 (C2)
     "test_costes_ceros.py",         # fallo 45 (C6)
     "test_costes_json.py",          # fallo 46
