@@ -622,18 +622,35 @@ def _ya_lo_tiene(c: ComponenteCoste, tecnologias: list[str] | None = None) -> bo
     nombre = _normalize_text(c.componente)
     return any(t in nombre for t in tecnologias)
 
+# Fallo 57: un importe (450.000 €, 115K€, €500, $20) y las palabras de un total propio
+_IMPORTE = re.compile(r"\d[\d.,]*\s*(?:k|m|mil|millones?)?\s*(?:€|eur\b|euros?\b|\$)|[€$]\s*\d", re.IGNORECASE)
+_TOTAL = re.compile(r"\b(?:total(?:es)?|en conjunto|suman?|asciende[n]?)\b")
+
+
+def _valora_o_suma(frase: str) -> bool:
+    """La frase habla del presupuesto, o da un importe con un total propio o con un «límite» (fallo 57)."""
+    normalizada = _normalize_text(frase)
+    if "presupuesto" in normalizada:
+        return True
+    return bool(_IMPORTE.search(frase)) and (bool(_TOTAL.search(normalizada)) or "limite" in normalizada)
+
+
 def _sin_valorar_presupuesto(texto: str) -> str:
     """Quita de la justificación las frases que hablan del presupuesto. El encaje se calcula en Python con el
-    equipo incluido, que el LLM no conoce; ministral lo valoraba igualmente aunque el prompt se lo prohíbe."""
+    equipo incluido, que el LLM no conoce; ministral lo valoraba igualmente aunque el prompt se lo prohíbe.
+    Fallo 57: también las que dan un total propio o valoran un «límite». El 29 oct, ministral escribió «El coste total
+    estimado (sin equipo) es de ~450.000€ para 6 meses (incluyendo contingencia), dentro del límite de 600.000€» con
+    41.000–45.000 € en las tarjetas; el 28 oct, «El total estimado para infraestructura es de ~115.000€/año»."""
     lineas, quitadas = [], 0
     for linea in texto.splitlines():
         frases = re.split(r"(?<=[.!?])\s+", linea)
-        quedan = [f for f in frases if "presupuesto" not in _normalize_text(f)]
+        quedan = [f for f in frases if not _valora_o_suma(f)]
         quitadas += len(frases) - len(quedan)
         if quedan or not linea.strip():
             lineas.append(" ".join(quedan))
     if quitadas:
-        logger.warning("Justificación de costes: se quitan %d frase(s) que valoran el presupuesto", quitadas)
+        logger.warning("Justificación de costes: se quitan %d frase(s) que valoran el presupuesto o dan un total propio",
+                       quitadas)
     return "\n".join(lineas).strip()
 
 def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", equipo: dict | None = None,
@@ -1320,8 +1337,10 @@ def run_estimation_crew(
             "hay) según el plazo del cliente. En presupuesto_cliente_max_eur pon el máximo del presupuesto que "
             "indica el caso del cliente, o 0 si no lo indica. Si incluyes una contingencia, usa un único porcentaje, "
             "el mismo en todo el informe: ponlo en contingencia_pct (0 si no hay) y no lo añadas como componente. "
-            "En justificacion explica solo de dónde salen los importes y qué los haría variar; no digas si caben en "
-            "el presupuesto del cliente, porque el total con el equipo se calcula después.\n"
+            # Fallo 57: sin totales propios, que no cuadraban con las tarjetas
+            "En justificacion explica solo de dónde salen los importes y qué los haría variar; no des totales ni sumas, "
+            "que los calcula el programa, y no digas si caben en el presupuesto del cliente, porque el total con el "
+            "equipo se calcula después.\n"
             "Para los supuestos: si te falta información, indícalo como "
             "'Por determinar, requiere [dato X]' o 'Se asume [dato X]' — nunca inventes datos críticos.\n"
             # C9 (lo había deshecho el 46): el idioma lo marca el cliente; las opciones son claves fijas
