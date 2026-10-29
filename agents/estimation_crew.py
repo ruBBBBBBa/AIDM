@@ -235,7 +235,23 @@ class PerfilEquipo(BaseModel):
 class FuncionSinTarifa(BaseModel):
     funcion: str = Field(description="Trabajo de una persona que no encaja en ningún perfil de la tabla de tarifas "
                                      "(por ejemplo, la gestión del proyecto)")
-    horas_mes: int = Field(default=0, description="Horas al mes que necesita en este alcance")
+    horas_mes: int = Field(default=0, description="Horas al mes que necesita en el desarrollo")
+    # Fallo 55: como los perfiles, con las horas de la implantación aparte; antes el modelo partía la función en dos
+    horas_mes_implantacion: int = Field(default=0, description="Horas al mes en la implantación; 0 si no participa")
+
+
+def _funcion_y_fase(nombre: str) -> tuple[str, str | None]:
+    """Fallo 55: 'Gestión del Proyecto (fase implantación)' → ('Gestión del Proyecto', 'implantacion'). Sin fase en el
+    nombre, (nombre, None)."""
+    m = re.search(r"\s*(?:\(([^)]*)\)|\s[-–—:]\s*([^-–—:()]+))\s*$", nombre)
+    if m:
+        fase = _normalize_text(m.group(1) or m.group(2) or "")
+        if any(p in fase for p in ("implant", "puesta en produccion", "deploy", "rollout", "go-live")):
+            return nombre[:m.start()].strip(), "implantacion"
+        if any(p in fase for p in ("desarroll", "construccion", "build", "development")):
+            return nombre[:m.start()].strip(), "desarrollo"
+    return nombre.strip(), None
+
 
 class EquipoEstimado(BaseModel):
     perfiles: list[PerfilEquipo]
@@ -261,6 +277,24 @@ class EquipoEstimado(BaseModel):
         if isinstance(valor, list):
             return [{"funcion": v, "horas_mes": 0} if isinstance(v, str) else v for v in valor]
         return valor
+    
+    @field_validator("funciones_sin_tarifa", mode="after")
+    @classmethod
+    def _unir_fases(cls, funciones: list[FuncionSinTarifa]) -> list[FuncionSinTarifa]:
+        """Fallo 55: «Gestión del Proyecto» (160 h/mes) y «Gestión del Proyecto (fase implantación)» (80 h/mes) son una
+        sola función con 160 h/mes en el desarrollo y 80 en la implantación. Antes se sumaban las dos todos los meses."""
+        unidas: dict[str, FuncionSinTarifa] = {}
+        for f in funciones:
+            nombre, fase = _funcion_y_fase(f.funcion)
+            union = unidas.setdefault(_normalize_text(nombre), FuncionSinTarifa(funcion=nombre))
+            if fase == "implantacion":
+                horas_dev, horas_impl = 0, max(f.horas_mes, f.horas_mes_implantacion)
+            else:
+                horas_dev, horas_impl = f.horas_mes, f.horas_mes_implantacion
+            # Si una fase sale dos veces, se queda la cifra mayor: sumarlas contaría la misma persona dos veces
+            union.horas_mes = max(union.horas_mes, horas_dev)
+            union.horas_mes_implantacion = max(union.horas_mes_implantacion, horas_impl)
+        return list(unidas.values())
 
 def _eur(valor: float) -> str:
     """12345.6 -> '12.346 €'"""
@@ -359,23 +393,33 @@ def _calcular_equipo(equipo: EquipoEstimado, tarifas: dict[tuple[str, str], floa
             f"**Coste del equipo en {meses} meses: {_rango(total_min, total_max)}**",
         ]
     # Funciones que el agente no pudo asignar a un perfil con tarifa: tampoco se suman
-    falta_funciones = 0
+    # Fallo 55: cada una con sus horas en el desarrollo y en la implantación, como los perfiles
     for f in equipo.funciones_sin_tarifa:
         nombre = f.funcion.strip().replace("|", "/")
-        if nombre:
-            no_sumados.append(f"{nombre} ({f.horas_mes} h/mes)" if f.horas_mes > 0 else nombre)
-            falta_funciones += max(f.horas_mes, 0)
+        if not nombre:
+            continue
+        h_dev, h_impl = max(f.horas_mes, 0), max(f.horas_mes_implantacion, 0)
+        if not con_fases:  # sin fase de implantación, todos los meses son de desarrollo
+            h_dev, h_impl = h_dev or h_impl, 0
+        if h_dev and h_impl:
+            no_sumados.append(f"{nombre} ({h_dev} h/mes y {h_impl} h/mes en implantación)")
+        elif h_dev or h_impl:
+            no_sumados.append(f"{nombre} ({h_dev} h/mes)" if h_dev else f"{nombre} ({h_impl} h/mes en implantación)")
+        else:
+            no_sumados.append(nombre)
+        falta_dev += h_dev
+        falta_impl += h_impl
     if no_sumados:
         lineas += ["", f"Sin presupuestar, porque no tienen tarifa en la tabla: {'; '.join(no_sumados)}."]
     # Fallo 42 (C16): para el encaje, un mínimo por lo que falta, a la tarifa más baja de la tabla
     tarifa_minima = min(tarifas.values(), default=0.0)
-    falta_min = tarifa_minima * (falta_dev * dev_min + falta_impl * meses_impl + falta_funciones * meses_min)
-    falta_max = tarifa_minima * (falta_dev * dev_max + falta_impl * meses_impl + falta_funciones * meses_max)
+    falta_min = tarifa_minima * (falta_dev * dev_min + falta_impl * meses_impl)
+    falta_max = tarifa_minima * (falta_dev * dev_max + falta_impl * meses_impl)
     return {"mensual": mensual_dev, "total_min": total_min, "total_max": total_max,
             "meses_min": meses_min, "meses_max": meses_max, "no_sumados": no_sumados,
             "meses_implantacion": meses_impl, "desarrollo_min": desarrollo_min, "desarrollo_max": desarrollo_max,
             "implantacion": implantacion,
-            "horas_sin_tarifa": falta_dev + falta_funciones, "tarifa_minima": tarifa_minima,
+            "horas_sin_tarifa": falta_dev, "horas_sin_tarifa_impl": falta_impl, "tarifa_minima": tarifa_minima,
             "falta_min": falta_min, "falta_max": falta_max,
             "texto": "\n".join(lineas)}
 
@@ -623,8 +667,12 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     presupuesto = r.presupuesto_cliente_max_eur
     nivel, motivo = _encaje_presupuesto(total_min + falta_min, total_max + falta_max, presupuesto)
     if falta_max and presupuesto > 0:
+        # Fallo 55: con horas en la implantación, se dicen las de cada fase
+        horas_dev, horas_impl = equipo_dict.get("horas_sin_tarifa", 0), equipo_dict.get("horas_sin_tarifa_impl", 0)
+        horas = (f"{horas_dev} h/mes en el desarrollo y {horas_impl} h/mes en la implantación," if horas_dev and horas_impl
+                 else f"{horas_impl} h/mes en la implantación," if horas_impl else f"{horas_dev} h/mes")
         motivo = (f"Contando al menos {_rango(falta_min, falta_max)} por lo que no tiene tarifa "
-                  f"({equipo_dict['horas_sin_tarifa']} h/mes a {_cifra(equipo_dict['tarifa_minima'])} €/h, la tarifa "
+                  f"({horas} a {_cifra(equipo_dict['tarifa_minima'])} €/h, la tarifa "
                   f"más baja de la tabla), " + motivo[0].lower() + motivo[1:])
     etiqueta_nivel = nivel.capitalize() + (" (provisional)" if no_sumados else "")
     if not equipo:

@@ -49,7 +49,7 @@ def informe_con(funciones) -> str:
 
 # 1) Las funciones sin tarifa llevan horas; un modelo que mande solo el nombre sigue valiendo
 esquema = EquipoEstimado.model_json_schema()["$defs"]["FuncionSinTarifa"]["properties"]
-assert set(esquema) == {"funcion", "horas_mes"}
+assert set(esquema) == {"funcion", "horas_mes", "horas_mes_implantacion"}
 viejo = EquipoEstimado(perfiles=[], meses_min=4, meses_max=4, funciones_sin_tarifa=["Gestión del proyecto"])
 assert viejo.funciones_sin_tarifa[0].funcion == "Gestión del proyecto" and viejo.funciones_sin_tarifa[0].horas_mes == 0
 assert min(tarifas.values()) == 20, "la tarifa más baja de la tabla es la de Data Analyst/BI Junior"
