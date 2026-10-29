@@ -493,9 +493,10 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     # Lo que no está en el total se avisa al lado del total y del encaje
     avisos = []
     
+    # El aviso del 42 (con horas); el del 37 lo repetía y se quitó el 28 oct
     if no_sumados:
-        avisos.append(f"Ojo: el total y el encaje no incluyen {escape('; '.join(no_sumados))}, porque no tienen "
-                      f"tarifa en la tabla de la empresa. El coste real será mayor.")
+        avisos.append(f"Ojo: el total no incluye las horas de {escape('; '.join(no_sumados))}, porque no tienen "
+                      f"tarifa en la tabla de la empresa. El coste real será mayor, así que el encaje es provisional.")
 
     a_cero = [c.componente for c in report.componentes if not c.importe_eur and not _ya_lo_tiene(c)]
     if a_cero:
