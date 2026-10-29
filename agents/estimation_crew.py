@@ -584,6 +584,25 @@ def _con_precio_de_tabla(c: ComponenteCoste) -> ComponenteCoste:
     nuevo._cantidad = cantidad
     return nuevo
 
+# Fallo 58: la unidad de una cuota mensual o anual que en realidad es el propio periodo («mes», «año»)
+_UNIDAD_PERIODO = {"mensual": ("mes", "meses", "mensualidad", "mensualidades", "month", "months"),
+                   "anual": ("ano", "anos", "anualidad", "anualidades", "year", "years")}
+
+
+def _sin_periodos_repetidos(c: ComponenteCoste) -> ComponenteCoste:
+    """Fallo 58: «1.000 €/mes × 6», con la unidad «mes» y pago mensual, son los 6 meses del proyecto puestos como
+    unidades, y el programa los volvía a multiplicar por los meses: 6.000 €/mes y 36.000 € en 6 meses (soporte de
+    Azure, 29 oct). Una cuota mensual o anual cuya unidad es el propio periodo se cuenta una vez por periodo."""
+    palabras = _normalize_text(c.unidad).split()
+    if c.tarifa or c.unidades <= 1 or not palabras or palabras[0] not in _UNIDAD_PERIODO.get(c.periodicidad, ()):
+        return c
+    logger.warning("%s: %s unidades de «%s» con pago %s; se cuenta 1 por periodo (el programa ya multiplica por los "
+                   "meses)", c.componente, _cifra(c.unidades), c.unidad, c.periodicidad)
+    return c.model_copy(update={
+        "unidades": 1,
+        "referencia": f"{c.referencia.rstrip('. ')}. Se cuenta 1 {c.unidad} por periodo: el modelo había puesto "
+                      f"{_cifra(c.unidades)}, los del proyecto, que ya se multiplican aparte."})
+
 # Fallo 45 (C6): un componente a 0 € solo cuadra si el cliente ya lo tiene; lo demás se avisa
 _YA_LO_TIENE = ("ya lo tiene", "ya la tiene", "ya los tiene", "ya las tiene", "ya adquirid", "ya dispone",
                 "ya cuenta con", "ya contratad", "ya pagad", "existente")
@@ -658,6 +677,8 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     r = report.resumen_ejecutivo
     # Fallo 53: los componentes que están en la tabla de precios llevan su precio; el resto, el del modelo
     componentes = [_con_precio_de_tabla(c) for c in report.componentes]
+    # Fallo 58: una cuota mensual o anual con los meses del proyecto como unidades se cuenta una vez por periodo
+    componentes = [_sin_periodos_repetidos(c) for c in componentes]
     # Fallo 54: lo que el cliente ya usa, para comprobar los «ya lo tiene»
     tecnologias = _tecnologias_cliente(problem_case)
 
@@ -1321,7 +1342,10 @@ def run_estimation_crew(
             "arquitectura, sin dejarte ninguno, cada uno con su categoría, su precio unitario en euros (solo el número), "
             "las unidades que se pagan en cada periodo, qué es una unidad y la periodicidad: mensual, anual o unico "
             "(si se paga una sola vez). No multipliques: el importe lo calcula el programa. Lo que se paga por uso "
-            "(horas, GB, ejecuciones) va como mensual, con las unidades de un mes. Si un componente tiene partes con "
+            "(horas, GB, ejecuciones) va como mensual, con las unidades de un mes. "
+            # Fallo 58: los meses del proyecto los pone el programa
+            "Una cuota que se paga cada mes (soporte, una suscripción) va como mensual con las unidades que se pagan "
+            "en un mes, no con los meses del proyecto: el programa ya multiplica por los meses. Si un componente tiene partes con "
             "precios distintos, pon un elemento por parte. Si no tienes el precio exacto, da tu mejor estimación y di "
             "en referencia de dónde sale. "
             # Fallo 54: el 0 € por «ya lo tiene» se comprueba con sus datos; lo gratuito lo descuenta la tabla
