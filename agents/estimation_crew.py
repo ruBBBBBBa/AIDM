@@ -531,10 +531,39 @@ def _con_precio_de_tabla(c: ComponenteCoste) -> ComponenteCoste:
 _YA_LO_TIENE = ("ya lo tiene", "ya la tiene", "ya los tiene", "ya las tiene", "ya adquirid", "ya dispone",
                 "ya cuenta con", "ya contratad", "ya pagad", "existente")
 
+# Fallo 54: dónde dicen los datos del cliente lo que ya usa
+_CAMPOS_TECNOLOGIA = ("stack_tecnologico_actual", "madurez_analitica_actual", "herramienta_de_visualizacion")
+# Nombres de nube que no bastan para decir que el cliente ya tiene un servicio concreto («Azure Event Hubs» no lo
+# tiene por usar Azure)
+_SOLO_NUBE = {"azure", "microsoft azure", "microsoft", "aws", "amazon web services", "google cloud", "gcp", "oracle",
+              "oracle cloud", "ibm", "ibm cloud", "cloud", "nube", "cloud publica"}
+# Trozos de los datos del cliente que no son el nombre de un producto
+_GENERICOS = {"herramientas", "licencias", "datos", "informes", "proveedores", "proveedores externos", "bases de datos",
+              "a nivel corporativo", "excel"}
 
-def _ya_lo_tiene(c: ComponenteCoste) -> bool:
+
+def _tecnologias_cliente(problem_case: dict | None) -> list[str] | None:
+    """Fallo 54: los nombres de lo que el cliente ya usa, sacados de sus datos. 'Azure (Data Lake Storage, Databricks),
+    Power BI Premium' → ['data lake storage', 'databricks', 'power bi premium']; el nombre de la nube sola no cuenta.
+    None si el caso no trae esos datos: entonces no se puede comprobar."""
+    textos = [_valor_caso(problem_case, campo) for campo in _CAMPOS_TECNOLOGIA]
+    if not any(textos):
+        return None
+    trozos = {t.strip() for t in re.split(r"[,;:()\[\]·]|\s+(?:y|e|and|como|con)\s+", _normalize_text(" , ".join(textos)))}
+    # Un nombre de producto tiene pocas palabras: las frases largas («madurez baja en alumbrado público») no cuentan
+    return sorted(t for t in trozos if len(t) >= 4 and len(t.split()) <= 4 and t not in _SOLO_NUBE | _GENERICOS)
+
+def _ya_lo_tiene(c: ComponenteCoste, tecnologias: list[str] | None = None) -> bool:
+    """Fallo 45: la referencia dice que el cliente ya lo tiene. Fallo 54: y, si hay datos del cliente, su nombre está
+    entre lo que ya usa. El 28 oct, el modelo escribió «Ya lo tiene el cliente» en Event Hubs, Purview y Azure Monitor
+    para justificar un nivel gratuito, y ninguno estaba en el stack de Iberdrola."""
     texto = _normalize_text(f"{c.componente} {c.referencia}")
-    return any(frase in texto for frase in _YA_LO_TIENE)
+    if not any(frase in texto for frase in _YA_LO_TIENE):
+        return False
+    if tecnologias is None:  # sin datos del cliente no se puede comprobar: vale lo que dice el modelo
+        return True
+    nombre = _normalize_text(c.componente)
+    return any(t in nombre for t in tecnologias)
 
 def _sin_valorar_presupuesto(texto: str) -> str:
     """Quita de la justificación las frases que hablan del presupuesto. El encaje se calcula en Python con el
@@ -550,11 +579,13 @@ def _sin_valorar_presupuesto(texto: str) -> str:
         logger.warning("Justificación de costes: se quitan %d frase(s) que valoran el presupuesto", quitadas)
     return "\n".join(lineas).strip()
 
-def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", equipo: dict | None = None) -> str:
+def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", equipo: dict | None = None,
+                        problem_case: dict | None = None) -> str:
     r = report.resumen_ejecutivo
-
     # Fallo 53: los componentes que están en la tabla de precios llevan su precio; el resto, el del modelo
     componentes = [_con_precio_de_tabla(c) for c in report.componentes]
+    # Fallo 54: lo que el cliente ya usa, para comprobar los «ya lo tiene»
+    tecnologias = _tecnologias_cliente(problem_case)
 
     # Fallo 51 (C12): el modelo la escribe en markdown y con sangría; se quita la sangría y se convierte a HTML
     justificacion = _sin_valorar_presupuesto(textwrap.dedent(r.justificacion).strip())
@@ -611,13 +642,19 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         """Fallo 53: a 0 € porque el uso cabe en lo gratuito de su fila de la tabla."""
         return bool(c.tarifa) and (c._cantidad or 0) > 0
 
-    # Fallo 53: un 0 € de la tabla solo vale si el uso cabe en lo gratuito de su fila
+    # Fallo 54: un 0 € vale si cabe en lo gratuito de la tabla o si el cliente lo tiene de verdad (está en sus datos)
     a_cero = [c for c in componentes if not c.importe_eur and not _en_gratuito(c)
-              and (c.tarifa or not _ya_lo_tiene(c))]
+              and (c.tarifa or not _ya_lo_tiene(c, tecnologias))]
     if a_cero:
         nombres = _lista([c.componente for c in a_cero])
         avisos.append(f"Ojo: {escape(nombres)} {'va' if len(a_cero) == 1 else 'van'} a 0 €, así que no suman nada al "
                       f"total. Si se pagan por uso (cómputo, ejecuciones, un endpoint…), el coste real será mayor.")
+        no_consta = [c.componente for c in a_cero if not c.tarifa and _ya_lo_tiene(c)]
+        if no_consta:
+            uno = len(no_consta) == 1
+            quienes = "" if len(no_consta) == len(a_cero) else f" ({escape(_lista(no_consta))})"
+            avisos[-1] += (f" El modelo dice que el cliente ya {'lo tiene' if uno else 'los tiene'}{quienes}, pero "
+                           f"{'no está' if uno else 'no están'} entre lo que usa según sus datos.")
 
     revisar = [c for c in componentes
                if presupuesto > 0 and _coste_al_mes(c, meses_max) > PARTE_MAXIMA_AL_MES * presupuesto]
@@ -694,7 +731,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         #Un componente a 0 € solo cuadra si el cliente ya lo tiene; lo demás se avisa
         if not c.importe_eur:
             importe = ("0 € (cabe en el nivel gratuito)" if _en_gratuito(c)
-                       else "0 € (ya lo tiene el cliente)" if not c.tarifa and _ya_lo_tiene(c)
+                       else "0 € (ya lo tiene el cliente)" if not c.tarifa and _ya_lo_tiene(c, tecnologias)
                        else '<span style="color:#b45309;">0 € (por revisar)</span>')
         elif any(c is x for x in revisar):
             importe += (f' <span style="color:#b45309;">'
@@ -1209,8 +1246,11 @@ def run_estimation_crew(
             "(horas, GB, ejecuciones) va como mensual, con las unidades de un mes. Si un componente tiene partes con "
             "precios distintos, pon un elemento por parte. Si no tienes el precio exacto, da tu mejor estimación y di "
             "en referencia de dónde sale. "
-            "Pon precio 0 solo si el cliente ya lo tiene pagado (escribe en referencia «Ya lo tiene el cliente») o si "
-            "el uso del piloto cabe en el nivel gratuito del servicio (di en referencia qué límite y qué uso estimas). "
+            # Fallo 54: el 0 € por «ya lo tiene» se comprueba con sus datos; lo gratuito lo descuenta la tabla
+            "Pon precio 0 solo si el cliente ya lo tiene pagado: tiene que estar entre las tecnologías que ya usa según "
+            "sus datos (escribe en referencia «Ya lo tiene el cliente»). No pongas 0 por el nivel gratuito: con tarifa, "
+            "lo gratuito lo descuenta el programa; sin tarifa, pon el precio normal y di en referencia qué nivel "
+            "gratuito podría aplicarse. "
             "Que un servicio no tenga cuota no lo hace gratis: el cómputo, las ejecuciones o un endpoint se pagan por "
             "uso, así que estima el uso del piloto. "
             "El coste del equipo (desarrollo e implantación) se calcula aparte con las tarifas de la empresa: NO lo "
@@ -1332,7 +1372,7 @@ def run_estimation_crew(
     # Costes: el JSON ya validado por el guardrail; si no llegó, la sección lo avisa y el informe sigue
     report = _leer_salida(cost_report_task, CostEstimationReport)
     if report:
-        cost_estimation = _format_cost_report(report, infracost_prices or "", equipo)
+        cost_estimation = _format_cost_report(report, infracost_prices or "", equipo, problem_case)
     else:
         logger.error("[estimation_crew] Sin costes: el modelo %s no devolvió un JSON válido", model_name)
         cost_estimation = _aviso_sin_costes(model_name)
