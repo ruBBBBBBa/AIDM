@@ -14,9 +14,10 @@ import textwrap
 
 import litellm
 from crewai import Agent, Crew, Process, Task
-from pydantic import BaseModel, Field, field_validator, ValidationError
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, ValidationError
 
-from utils import _make_agent, _normalize_text, build_llm, contexto_cliente, load_agents_config, md_to_html
+from utils import (_make_agent, _normalize_text, build_llm, contexto_cliente, es_valor_de_relleno,
+                   load_agents_config, md_to_html)
 
 logger = logging.getLogger("aidm")
 
@@ -147,13 +148,23 @@ class ComponenteCoste(BaseModel):
         description="Componente de la propuesta que se valora: un servicio cloud, una licencia, una formación o el "
                     "soporte. Si tiene partes con precios distintos (cómputo y almacenamiento, por ejemplo), un "
                     "elemento por parte")
+    # Fallo 53: si el componente está en la tabla de precios, el precio, la unidad de cobro y lo gratuito salen de ella
+    tarifa: str = Field(
+        default="", description="id de la fila de la tabla de precios que corresponde a este componente, copiado tal "
+                                "cual; vacío si ninguna fila le corresponde")
     categoria: Categoria
-    precio_unitario_eur: float = Field(ge=0, description="Precio de una unidad en euros: solo el número")
-    unidades: float = Field(ge=0, description="Cuántas unidades se pagan en cada periodo: horas, GB, licencias, talleres…")
-    unidad: str = Field(description="Qué es una unidad, en singular: hora, GB, licencia, taller…")
+    precio_unitario_eur: float = Field(ge=0, description="Precio de una unidad en euros: solo el número. Con tarifa, 0: "
+                                                         "lo pone el programa")
+    unidades: float = Field(ge=0, description="Cuántas unidades se pagan en cada periodo: horas, GB, licencias, talleres… "
+                                              "Con tarifa, la cantidad de un mes en la unidad de su fila, sin dividir "
+                                              "por el paquete (144 millones de eventos son 144000000)")
+    unidad: str = Field(description="Qué es una unidad, en singular: hora, GB, licencia, taller… Con tarifa, la de su fila")
     periodicidad: Periodicidad = Field(
-        description="mensual o anual si esas unidades se pagan cada mes o cada año; unico si se pagan una sola vez")
-    referencia: str = Field(description="De dónde sale el precio unitario: precio público, Infracost, tarifa de mercado…")
+        description="mensual o anual si esas unidades se pagan cada mes o cada año; unico si se pagan una sola vez. "
+                    "Con tarifa, mensual")
+    referencia: str = Field(description="De dónde salen las unidades (el uso que estimas) y, sin tarifa, el precio "
+                                        "unitario: precio público, tarifa de mercado…")
+    _cantidad: float | None = PrivateAttr(default=None)  # fallo 53: el uso que dio el modelo, antes de pasarlo a paquetes
 
     @property
     def importe_eur(self) -> float:
@@ -258,6 +269,10 @@ def _eur(valor: float) -> str:
 def _rango(minimo: float, maximo: float) -> str:
     """'75.000 € – 90.000 €', o un solo valor si los dos coinciden ('214.400 €')."""
     return _eur(minimo) if _eur(minimo) == _eur(maximo) else f"{_eur(minimo)} – {_eur(maximo)}"
+
+def _lista(nombres: list[str]) -> str:
+    """['A'] -> 'A'; ['A', 'B', 'C'] -> 'A, B y C'."""
+    return nombres[0] if len(nombres) == 1 else f"{', '.join(nombres[:-1])} y {nombres[-1]}"
 
 def _meses_txt(minimo: int, maximo: int) -> str:
     """(1, 1) -> '1 mes'; (2, 3) -> '2–3 meses'."""
@@ -421,6 +436,97 @@ def _coste_al_mes(c: ComponenteCoste, meses: int) -> float:
         return c.importe_eur / 12
     return c.importe_eur / max(meses, 1)
 
+# Fallo 53: tabla de precios de los servicios cloud. El modelo elige la fila y da la cantidad de un mes en la unidad de
+# la fila (eventos, horas, GB…); el precio, el paquete en que se cobra («millón de eventos») y lo gratuito salen de
+# aquí. El 28 oct, Event Hubs salió a 0,3 €/mensaje × 720 millones = 216 M€/mes porque el precio era por millón.
+# Los precios se actualizan con bd/actualizar_precios.py (Azure Retail Prices API, en euros y sin clave).
+CSV_PRECIOS = Path(__file__).parent.parent / "bd" / "precios_cloud.csv"
+
+
+def _cargar_precios() -> dict[str, dict]:
+    """Filas de bd/precios_cloud.csv por id. Una fila sin números válidos se salta y se avisa en el log."""
+    precios: dict[str, dict] = {}
+    if not CSV_PRECIOS.exists():
+        return precios
+    with open(CSV_PRECIOS, encoding="utf-8-sig", newline="") as f:
+        for fila in csv.DictReader(f, delimiter=";"):
+            fila = {k.strip(): (v or "").strip() for k, v in fila.items() if k}
+            try:
+                fila.update(por_cada=float(fila["por_cada"]), precio_eur=float(fila["precio_eur"]),
+                            gratis_al_mes=float(fila.get("gratis_al_mes") or 0))
+            except (KeyError, ValueError):
+                logger.warning("Fila de precios_cloud.csv sin números válidos: %s", fila.get("id"))
+                continue
+            if fila.get("id") and fila["por_cada"] > 0:
+                precios[fila["id"].lower()] = fila
+    return precios
+
+
+PRECIOS_CLOUD = _cargar_precios()
+
+# La nube de cada fila de la tabla y la del cliente, con un mismo nombre
+_PROVEEDORES = {"azure": "azure", "microsoft": "azure", "aws": "aws", "amazon": "aws", "google": "gcp", "gcp": "gcp",
+                "oracle": "oracle", "ibm": "ibm"}
+
+
+def _valor_caso(problem_case: dict | None, campo: str) -> str:
+    """El valor de un campo del caso como texto; vacío si no hay dato real."""
+    valor = (problem_case or {}).get(campo)
+    valor = valor.get("value") if isinstance(valor, dict) else valor
+    if isinstance(valor, list):
+        valor = ", ".join(str(v) for v in valor)
+    return "" if not isinstance(valor, str) or es_valor_de_relleno(valor) else valor
+
+
+def _tabla_precios(problem_case: dict | None, arquitectura: str) -> str:
+    """Fallo 53: las filas de la tabla que puede usar el modelo, en texto: las de los servicios que nombra la
+    arquitectura (columna «buscar») y, si se sabe la nube del cliente, solo las de esa nube. Así el prompt no empuja
+    servicios que la propuesta no trae (fallo 34). Vacío si no queda ninguna."""
+    nube = _normalize_text(_valor_caso(problem_case, "cloud_provider"))
+    del_cliente = {p for clave, p in _PROVEEDORES.items() if clave in nube}
+    texto = _normalize_text(arquitectura or "")
+    filas = [f for f in PRECIOS_CLOUD.values()
+             if (not del_cliente or _PROVEEDORES.get(_normalize_text(f.get("proveedor", ""))) in del_cliente)
+             and any(b and _normalize_text(b) in texto for b in f.get("buscar", "").split("|"))]
+    if not filas:
+        return ""
+    lineas = ["id | servicio | concepto | unidades en | gratis al mes"]
+    lineas += [f"{f['id']} | {f['servicio']} | {f['concepto']} | {f['unidad']} | "
+               f"{_cifra(f['gratis_al_mes']) if f['gratis_al_mes'] else '—'}" for f in filas]
+    return "\n".join(lineas)
+
+
+def _fecha(texto: str) -> str:
+    """'2026-10-29' -> '29/10/2026'; lo demás, tal cual."""
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", texto or "")
+    return f"{m.group(3)}/{m.group(2)}/{m.group(1)}" if m else (texto or "")
+
+
+def _con_precio_de_tabla(c: ComponenteCoste) -> ComponenteCoste:
+    """Fallo 53: si el componente trae una fila de la tabla, su precio es el de la tabla. El modelo da la cantidad de
+    un mes en la unidad de la fila (144.000.000 eventos); aquí se quita lo gratuito y se pasa al paquete en que se
+    cobra (144 millones de eventos a 0,0246 €). Sin fila, o con un id que no está en la tabla, se queda como lo dio
+    el modelo, con `tarifa` vacía."""
+    if not c.tarifa:
+        return c
+    fila = PRECIOS_CLOUD.get(c.tarifa.strip().lower())
+    if fila is None:
+        logger.warning("Tarifa desconocida en costes: '%s' (%s); se usa el precio del modelo", c.tarifa, c.componente)
+        return c.model_copy(update={"tarifa": ""})
+    cantidad = c.unidades
+    gratis = fila["gratis_al_mes"]
+    uso = f"Uso estimado al mes: {_cifra(cantidad)} (unidad: {fila['unidad']})" + (
+        f", de los que {_cifra(gratis)} son gratis" if gratis else "")
+    referencia = (f"{c.referencia.rstrip('. ')}. {uso}. Precio de la tabla: {_cifra(fila['precio_eur'])} € por "
+                  f"{fila['cobro'] or fila['unidad']} ({fila.get('fuente') or 'tabla de precios'}, "
+                  f"{_fecha(fila.get('fecha', ''))}).")
+    nuevo = c.model_copy(update={
+        "tarifa": fila["id"], "precio_unitario_eur": fila["precio_eur"],
+        "unidades": max(cantidad - gratis, 0) / fila["por_cada"], "unidad": fila["cobro"] or fila["unidad"],
+        "periodicidad": "mensual", "referencia": referencia})
+    nuevo._cantidad = cantidad
+    return nuevo
+
 # Fallo 45 (C6): un componente a 0 € solo cuadra si el cliente ya lo tiene; lo demás se avisa
 _YA_LO_TIENE = ("ya lo tiene", "ya la tiene", "ya los tiene", "ya las tiene", "ya adquirid", "ya dispone",
                 "ya cuenta con", "ya contratad", "ya pagad", "existente")
@@ -447,6 +553,9 @@ def _sin_valorar_presupuesto(texto: str) -> str:
 def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", equipo: dict | None = None) -> str:
     r = report.resumen_ejecutivo
 
+    # Fallo 53: los componentes que están en la tabla de precios llevan su precio; el resto, el del modelo
+    componentes = [_con_precio_de_tabla(c) for c in report.componentes]
+
     # Fallo 51 (C12): el modelo la escribe en markdown y con sangría; se quita la sangría y se convierte a HTML
     justificacion = _sin_valorar_presupuesto(textwrap.dedent(r.justificacion).strip())
     justificacion_html = (f'<div style="color:var(--muted);font-size:0.875rem;">{md_to_html(justificacion)}</div>'
@@ -461,7 +570,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     meses_txt = f"{meses} {'mes' if meses_max == 1 else 'meses'}"
 
     por_categoria = {cat: [0.0, 0.0] for cat in CATEGORIAS}
-    for c in report.componentes:
+    for c in componentes:
         por_categoria[c.categoria][0] += _coste_en_proyecto(c, meses_min)
         por_categoria[c.categoria][1] += _coste_en_proyecto(c, meses_max)
     base_min = sum(v[0] for v in por_categoria.values())
@@ -492,30 +601,42 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
 
     # Lo que no está en el total se avisa al lado del total y del encaje
     avisos = []
-    
+
     # El aviso del 42 (con horas); el del 37 lo repetía y se quitó el 28 oct
     if no_sumados:
         avisos.append(f"Ojo: el total no incluye las horas de {escape('; '.join(no_sumados))}, porque no tienen "
                       f"tarifa en la tabla de la empresa. El coste real será mayor, así que el encaje es provisional.")
 
-    a_cero = [c.componente for c in report.componentes if not c.importe_eur and not _ya_lo_tiene(c)]
+    def _en_gratuito(c: ComponenteCoste) -> bool:
+        """Fallo 53: a 0 € porque el uso cabe en lo gratuito de su fila de la tabla."""
+        return bool(c.tarifa) and (c._cantidad or 0) > 0
+
+    # Fallo 53: un 0 € de la tabla solo vale si el uso cabe en lo gratuito de su fila
+    a_cero = [c for c in componentes if not c.importe_eur and not _en_gratuito(c)
+              and (c.tarifa or not _ya_lo_tiene(c))]
     if a_cero:
-        nombres = a_cero[0] if len(a_cero) == 1 else f"{', '.join(a_cero[:-1])} y {a_cero[-1]}"
+        nombres = _lista([c.componente for c in a_cero])
         avisos.append(f"Ojo: {escape(nombres)} {'va' if len(a_cero) == 1 else 'van'} a 0 €, así que no suman nada al "
                       f"total. Si se pagan por uso (cómputo, ejecuciones, un endpoint…), el coste real será mayor.")
 
-    revisar = [c for c in report.componentes
+    revisar = [c for c in componentes
                if presupuesto > 0 and _coste_al_mes(c, meses_max) > PARTE_MAXIMA_AL_MES * presupuesto]
-    if revisar:
-        lista = [f"{c.componente} ({_cifra(_coste_al_mes(c, meses_max))} €/mes)" for c in revisar]
-        nombres = lista[0] if len(lista) == 1 else f"{', '.join(lista[:-1])} y {lista[-1]}"
-        uno = len(revisar) == 1
-        avisos.append(f"Ojo: revisa la unidad de {escape(nombres)}: {'cuesta' if uno else 'cada uno cuesta'} al mes más "
-                      f"de un {PARTE_MAXIMA_AL_MES * 100:.0f} % del presupuesto del cliente ({_eur(presupuesto)}). Puede que el "
-                      f"precio sea por un paquete (por millón de mensajes, por ejemplo) y no por unidad. "
+    # Fallo 53: si el precio es de la tabla, lo que puede estar mal es la cantidad; si es del modelo, la unidad
+    for de_tabla in (False, True):
+        grupo = [c for c in revisar if bool(c.tarifa) == de_tabla]
+        if not grupo:
+            continue
+        nombres = _lista([f"{c.componente} ({_cifra(_coste_al_mes(c, meses_max))} €/mes)" for c in grupo])
+        uno = len(grupo) == 1
+        motivo_revisar = (f"El precio es el de la tabla, así que puede que la cantidad de uso esté mal. " if de_tabla else
+                          f"Puede que el precio sea por un paquete (por millón de mensajes, por ejemplo) y no por "
+                          f"unidad. ")
+        avisos.append(f"Ojo: revisa {'la cantidad' if de_tabla else 'la unidad'} de {escape(nombres)}: "
+                      f"{'cuesta' if uno else 'cada uno cuesta'} al mes más de un {PARTE_MAXIMA_AL_MES * 100:.0f} % del "
+                      f"presupuesto del cliente ({_eur(presupuesto)}). {motivo_revisar}"
                       f"{'Va sumado' if uno else 'Van sumados'} en el total, que puede estar inflado.")
-    
-    if not report.componentes:
+
+    if not componentes:
         avisos.append("Ojo: el total no incluye infraestructura, licencias, formación ni soporte, porque el modelo "
                       "no ha valorado ningún componente de la propuesta.")
     aviso_html = "".join(
@@ -564,7 +685,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         bars_html = '<div style="font-size:0.78rem;color:var(--muted);">Sin importes que desglosar.</div>'
 
     cards_html = ""
-    for c in report.componentes:
+    for c in componentes:
         categoria, color = CATEGORIAS[c.categoria]
         en_proyecto = _rango(_coste_en_proyecto(c, meses_min), _coste_en_proyecto(c, meses_max))
         if c.periodicidad == "anual":
@@ -572,17 +693,21 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         importe = f"{_cifra(c.importe_eur)} {_UNIDAD[c.periodicidad]}"
         #Un componente a 0 € solo cuadra si el cliente ya lo tiene; lo demás se avisa
         if not c.importe_eur:
-            importe = ("0 € (ya lo tiene el cliente)" if _ya_lo_tiene(c)
+            importe = ("0 € (cabe en el nivel gratuito)" if _en_gratuito(c)
+                       else "0 € (ya lo tiene el cliente)" if not c.tarifa and _ya_lo_tiene(c)
                        else '<span style="color:#b45309;">0 € (por revisar)</span>')
         elif any(c is x for x in revisar):
-            importe += ' <span style="color:#b45309;">(revisar unidad)</span>'
+            importe += (f' <span style="color:#b45309;">'
+                        f'({"revisar cantidad" if c.tarifa else "revisar unidad"})</span>')
+        # Fallo 53: se ve de dónde sale el precio
+        origen = "precio de la tabla" if c.tarifa else "precio estimado por el modelo"
         cards_html += (
             f'<div style="background:var(--surface);border:1px solid var(--border);border-top:3px solid {color};'
             f'border-radius:9px;padding:0.75rem;min-width:150px;flex:1;box-shadow:var(--shadow);">'
             f'<div style="font-size:0.75rem;color:var(--muted);margin-bottom:3px;">{escape(c.componente)}</div>'
             f'<div style="font-size:1rem;font-weight:700;color:var(--text);">{importe}</div>'
             f'<div style="font-size:0.72rem;color:var(--muted);margin-top:2px;">'
-            f'{_cifra(c.precio_unitario_eur)} €/{escape(c.unidad)} × {_cifra(c.unidades)}</div>'
+            f'{_cifra(c.precio_unitario_eur)} €/{escape(c.unidad)} × {_cifra(c.unidades)} · {origen}</div>'
             f'<div style="font-size:0.75rem;color:var(--text);margin-top:3px;">En {meses_txt}: {en_proyecto}</div>'
             f'<div style="font-size:0.7rem;color:var(--muted);margin-top:3px;opacity:0.75;">{escape(c.referencia)}</div>'
             f'<div style="font-size:0.7rem;color:var(--muted);opacity:0.5;">{categoria}</div>'
@@ -591,9 +716,16 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     if not cards_html:
         cards_html = ('<p style="font-size:0.85rem;color:var(--muted);margin:0;">La propuesta no trae componentes '
                       'valorados: no hay importes de infraestructura, licencias, formación ni soporte.</p>')
+    # Fallo 53: con la tabla de precios, la nota dice qué parte sale de ella
+    de_tabla = sum(1 for c in componentes if c.tarifa)
     nota_precios = "" if infracost_raw else (
         '<p style="font-size:0.75rem;color:var(--muted);margin:0 0 0.5rem;">'
-        'Importes estimados por el modelo, sin contrastar con Infracost.</p>'
+        + ("Importes estimados por el modelo, sin contrastar con Infracost." if not de_tabla else
+           "Precios de la tabla de precios de la empresa; las cantidades de uso las estima el modelo."
+           if de_tabla == len(componentes) else
+           f"{de_tabla} de {len(componentes)} componentes llevan el precio de la tabla de precios de la empresa; el "
+           f"resto, el que estima el modelo. Las cantidades de uso las estima el modelo.")
+        + '</p>'
     )
 
     supuestos_html = ""
@@ -1051,6 +1183,21 @@ def run_estimation_crew(
         "No hay precios reales disponibles: usa estimaciones razonables a partir de precios públicos, en euros."
     )
 
+    # Fallo 53: la tabla de precios de la empresa, con las filas de la nube del cliente
+    tabla_precios = _tabla_precios(problem_case, componentes or proposal_context)
+    if tabla_precios:
+        pricing_note += (
+            "\nTabla de precios: para cada componente que sea uno de estos servicios, pon el id de su fila en tarifa y, "
+            "en unidades, la cantidad de un mes en la unidad de la fila, entera y sin dividir por el paquete (144 "
+            "millones de eventos son 144000000; un servicio encendido todo el mes son 730 horas). Con tarifa, el "
+            "precio, el paquete en que se cobra y lo gratuito los pone el programa: pon precio_unitario_eur 0, la "
+            "unidad de la fila y periodicidad mensual. Si un servicio se cobra por varias cosas (eventos y unidades "
+            "de throughput, cómputo y almacenamiento), pon un elemento por fila. Usa una fila solo si es el mismo "
+            "servicio y el mismo nivel; si ninguna corresponde, deja tarifa vacía y da tú el precio unitario, la "
+            "unidad y la periodicidad.\n"
+            f"{tabla_precios}\n"
+        )
+
     cost_report_task = Task(
         description=(
             "A partir de la propuesta de solución y los precios indicados, valora el coste de cada componente de la propuesta. "
@@ -1086,8 +1233,8 @@ def run_estimation_crew(
             "Arquitectura propuesta (componentes y volúmenes):\n"
             f"{componentes or proposal_context}"
         ),
-        expected_output="Un objeto JSON con un elemento por componente de la arquitectura (su precio unitario en euros, "
-                        "sus unidades y su periodicidad), el resumen y los supuestos.",
+        expected_output="Un objeto JSON con un elemento por componente de la arquitectura (su fila de la tabla de precios "
+                        "o su precio unitario en euros, sus unidades y su periodicidad), el resumen y los supuestos.",
         name="costes",
         agent=report_writer_agent,
         # Fallo 46: sin output_pydantic, para no depender de las llamadas a herramienta; el JSON se valida aquí
