@@ -82,9 +82,10 @@ print("OK 4: sin horas de implantación, la tabla y la barra «Desarrollo e impl
 
 # 5) La implantación no puede durar más que el plazo corto
 largo = EquipoEstimado(perfiles=CON_FASES.perfiles, meses_min=2, meses_max=3, meses_implantacion=5)
-calculo = _calcular_equipo(largo, tarifas)
-assert calculo["meses_implantacion"] == 2 and "**Implantación en 2 meses: 12.960 €**" in calculo["texto"]
-print("OK 5: 5 meses de implantación en un plazo de 2–3 se quedan en 2")
+# Fallo 49: y deja al menos un mes de desarrollo (antes se quedaban en 2, con 0 meses de desarrollo)
+assert calculo["meses_implantacion"] == 1 and "**Implantación en 1 mes: 6.480 €**" in calculo["texto"]
+assert "**Desarrollo en 1–2 meses: 9.280 € – 18.560 €**" in calculo["texto"]
+print("OK 5: 5 meses de implantación en un plazo de 2–3 se quedan en 1, con 1–2 meses de desarrollo")
 
 # 6) Un perfil sin tarifa con horas en las dos fases: se avisa de ambas y cuenta en el mínimo del encaje
 sin_tarifa = EquipoEstimado(

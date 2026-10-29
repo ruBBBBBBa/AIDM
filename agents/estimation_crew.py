@@ -343,6 +343,19 @@ def _calcular_equipo(equipo: EquipoEstimado, tarifas: dict[tuple[str, str], floa
                        "se cuenta todo como desarrollo", meses_impl)
     if not con_fases:
         meses_impl = 0
+
+    # Fallo 49: el desarrollo dura al menos un mes. El 27 oct (Iberdrola), el equipo salió con 6–18 meses y 6 de
+    # implantación, porque mezcló el piloto y el despliegue completo, y la tabla decía «Desarrollo en 0–12 meses: 0 €»
+    if con_fases and meses_impl >= meses_min:
+        if meses_min > 1:
+            logger.warning("La implantación (%d meses) ocupa todo el plazo corto (%d meses): se deja en %d para que "
+                           "el desarrollo dure al menos un mes", meses_impl, meses_min, meses_min - 1)
+            meses_impl = meses_min - 1
+        else:
+            logger.warning("Un plazo de 1 mes no da para separar desarrollo e implantación: se cuenta todo como "
+                           "desarrollo")
+            con_fases, meses_impl = False, 0
+
     dev_min, dev_max = meses_min - meses_impl, meses_max - meses_impl
 
     filas, no_sumados = [], []
@@ -1371,13 +1384,19 @@ def run_estimation_crew(
             "A partir de los perfiles de equipo identificados en la tarea anterior, define el equipo que se va a presupuestar: "
             "los mismos perfiles, sin añadir otros. "
             "Las funciones que la tarea anterior dejó sin perfil en la tabla de tarifas van en funciones_sin_tarifa, no en perfiles, "
-            "cada una con sus horas al mes; no pongas ahí formación, licencias ni servicios, que se valoran aparte. "
+            # Fallo 55: una vez cada función, con sus horas de cada fase, como los perfiles
+            "cada una una sola vez, con sus horas al mes en el desarrollo (horas_mes) y en la implantación "
+            "(horas_mes_implantacion), como los perfiles; no pongas ahí formación, licencias ni servicios, que se "
+            "valoran aparte. "
             "Para cada perfil indica: su nombre exacto en la tabla de tarifas (primera columna), "
             "el nivel (Junior/Middle/Senior) y las horas al mes en el desarrollo (horas_mes) y en la implantación "
             "(horas_mes_implantacion), con 0 en la fase en la que no participe. 160 horas al mes es jornada completa: úsala solo para "
             "quien trabaje a tiempo completo en este alcance, y a los perfiles con dedicación parcial ponles las horas que les correspondan. "
-            "Indica también cuántos meses trabajará el equipo según el plazo del cliente (meses_min y meses_max) y "
-            "cuántos de ellos, al final, son de implantación (meses_implantacion). "
+            # Fallo 49: los meses del piloto, y una implantación más corta que el plazo
+            "Indica también cuántos meses trabajará el equipo en el alcance que se presupuesta (meses_min y meses_max): "
+            "si el cliente pide un piloto, los meses del piloto, no los del despliegue completo. En meses_implantacion "
+            "pon cuántos de esos meses, al final, son de implantación; antes tiene que quedar al menos un mes de "
+            "desarrollo. "
             "No calcules costes: se calculan aparte con la tabla.\n"
             "Responde solo con un objeto JSON, sin texto antes ni después, con esta forma: "
             f"{_plantilla_json(EquipoEstimado)}\n\n"

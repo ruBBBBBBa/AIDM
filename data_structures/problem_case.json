@@ -1,111 +1,87 @@
 {
   "nombre_del_cliente": {
     "description": "Nombre del cliente o empresa",
-    "value": "Iberdrola"
+    "value": ""
   },
-  "tamaño_empresa": {
-    "description": "Tamaño de la empresa (startup, pyme, enterprise) o número aproximado de empleados",
-    "value": "Más de 10000 empleados"
+   "tamaño_empresa": {
+  "description": "Tamaño de la empresa (startup, pyme, enterprise) o número aproximado de empleados",
+  "value": ""
   },
   "sector": {
-    "description": "Sector de actividad de la empresa (retail, pharma, logística, finanzas...)",
-    "value": "Energía (soluciones energéticas B2B y B2C)"
+  "description": "Sector de actividad de la empresa (retail, pharma, logística, finanzas...)",
+  "value": ""
   },
   "tiene_equipo_datos": {
-    "description": "Si la empresa tiene equipo de datos propio (cuántas personas y qué saben hacer) o no lo tiene, y si trabaja con proveedores externos. Un «no tenemos» también es una respuesta",
-    "value": "Tienen equipo de datos propio y trabajan con proveedores externos"
+  "description": "Si la empresa tiene equipo de datos propio (cuántas personas y qué saben hacer) o no lo tiene, y si trabaja con proveedores externos. Un «no tenemos» también es una respuesta",
+  "value": ""
   },
   "tipo_de_servicio": {
     "description": "Qué servicio pide el cliente a Inetum: implementación completa, consultoría o diseño, formación, soporte o mantenimiento, o una combinación (por ejemplo, «que lo implementéis y luego forméis a nuestro equipo»)",
-    "value": "Inetum actuará como desarrollador e integrador del proyecto en su totalidad"
+    "value": ""
   },
   "objetivo_del_proyecto": {
     "description": "Objetivos principales del proyecto o caso de uso identificado",
-    "value": "Analizar el rendimiento de dispositivos lumínicos en Bizkaia y predecir su comportamiento para evitar caídas de tensión y optimizar recursos energéticos"
+    "value": ""
   },
   "modelo_de_despliegue": {
     "description": "Modelo de despliegue preferido por el cliente (donde vivira la solución) (on-premises, cloud, híbrido...)",
-    "value": "Cloud"
+    "value": ""
   },
   "cloud_provider": {
     "description": "Proveedor de nube detectado preferido por el cliente (Azure, AWS, GCP...)",
-    "value": "Azure"
+    "value": ""
   },
   "tipo_de_arquitectura": {
     "description": "Una simplificación de la forma de solución. Estilo de arquitectura preferido por el cliente",
-    "value": "Arquitectura orientada a eventos con lakehouse"
+    "value": ""
   },
   "herramienta_de_visualizacion": {
     "description": "Herramienta de visualización preferida por el cliente si se ha detectado alguna (Power BI, Tableau, Looker...) y las licencias que ya tiene (tipo y número)",
-    "value": "No tienen preferencia ni herramientas de visualización definidas"
+    "value": ""
   },
   "enfoque_ai": {
     "description": "Qué papel juega la IA. Enfoque de inteligencia artificial preferido por el cliente para su proyecto",
-    "value": "Predicción de comportamiento de dispositivos lumínicos y optimización energética mediante modelos de IA (no especificado tipo concreto de modelo)"
+    "value": ""
   },
   "integration_scope": {
     "description": "Ámbito de integración de datos, qué nivel de integración parece requerir",
-    "value": "Integración de múltiples fuentes: telemetría MQTT (2000 concentradores), SCADA, GIS, SAP y datos meteorológicos de AEMET"
+    "value": ""
   },
   "volumen_de_datos": {
     "description": "Volumen aproximado de datos a gestionar (GB, TB, PB), frecuencia de generación y principales fuentes de datos",
-    "value": "Más de 1000000 aparatos telemétricos"
+    "value": ""
   },
   "madurez_analitica_actual": {
     "description": "Nivel actual de madurez analítica del cliente: ¿tienen DWH, BI, solo Excel o ninguna herramienta? ¿Qué usan hoy?",
-    "value": "Madurez baja en alumbrado público (datos en SCADA y informes manuales en Excel); a nivel corporativo: data lake (Azure Data Lake Storage), BI (Power BI Premium) y herramientas como Databricks"
+    "value": ""
   },
   "tamano_equipo_tecnico": {
     "description": "Tamaño del equipo técnico del cliente que operará y mantendrá la solución una vez entregada, y qué conocimientos tiene (por ejemplo, cuántos saben SQL)",
-    "value": "6 personas: 3 ingenieros de datos (Python, Spark, SQL), 2 científicos de datos y 1 arquitecto cloud; todos saben SQL"
+    "value": ""
   },
   "stack_tecnologico_actual": {
     "description": "Tecnologías, plataformas y herramientas que el cliente ya tiene en uso (ERP, CRM, cloud, bases de datos, licencias...), aunque las use poco",
-    "value": "Azure (Data Lake Storage, Databricks), SAP S/4HANA, ArcGIS, Power BI Premium, SCADA (mantenido por proveedores externos)"
+    "value": ""
   },
   "restriccion_presupuestaria": {
     "description": "Rango o restricción presupuestaria orientativa para el proyecto",
-    "value": "600.000 € primer año; 150.000 € anuales de operación"
+    "value": ""
   },
   "plazo_objetivo": {
     "description": "Plazo objetivo para tener la solución operativa o un primer MVP entregado",
-    "value": "Piloto en 6 meses (50.000 dispositivos); despliegue completo en 18 meses"
+    "value": ""
   },
   "regulacion_y_compliance": {
     "description": "Normativas, regulaciones o requisitos de compliance que aplican al proyecto (GDPR, HIPAA, ISO 27001...)",
-    "value": "NIS2 (sector energético), ISO 27001, ENS (servicio para ayuntamientos)"
+    "value": ""
   },
   "kpis_de_exito": {
     "description": "Métricas o KPIs concretos con los que el cliente medirá el éxito del proyecto",
-    "value": "30 % menos caídas de tensión, 15 % menos consumo alumbrado, 80 % fallos detectados antes de ocurrir"
+    "value": ""
   },
   "evidencias": {
     "description": "Evidencias detectadas durante la conversación que respaldan la información extraída y el análisis realizado, incluyendo información adicional útil",
-    "value": [
-      "Proyecto enfocado en infraestructura de datos para dispositivos IoT (telemétricos)",
-      "Caso de uso específico en Bizkaia",
-      "Objetivo incluye predicción de comportamiento y optimización energética",
-      "Inetum actuará como desarrollador e integrador del proyecto en su totalidad",
-      "Proyecto requiere integración total de infraestructura de datos para dispositivos IoT (telemétricos)",
-      "Modelo de despliegue preferido: Cloud",
-      "Proveedor de nube preferido: Azure",
-      "No tienen preferencia ni herramientas de visualización definidas",
-      "No tienen equipo de datos propio mencionado hasta ahora",
-      "Tienen equipo de datos propio y trabajan con proveedores externos",
-      "Arquitectura preferida: orientada a eventos con lakehouse por procesamiento casi en tiempo real",
-      "Frecuencia de datos: lecturas cada 15 minutos por dispositivo",
-      "Fuentes clave: MQTT (luminarias), SCADA, GIS, SAP, datos meteorológicos de AEMET",
-      "Volumen actualizado: 20 GB/día y 20 TB de histórico",
-      "IA aplicada a predicción de rendimiento y optimización energética (sin especificar modelo concreto)",
-      "Equipo técnico dedicado al proyecto: 6 personas con habilidades en Python, Spark, ciencia de datos y arquitectura cloud",
-      "Madurez analítica baja en alumbrado público (Excel y SCADA), pero alta a nivel corporativo (data lake, BI, Databricks)",
-      "Uso de Azure en otras áreas del negocio",
-      "Presupuesto: 600.000 € primer año; 150.000 € anuales de operación",
-      "Plazos: piloto en 6 meses (50.000 dispositivos), despliegue completo en 18 meses",
-      "Regulaciones aplicables: NIS2, ISO 27001, ENS",
-      "KPIs de éxito: reducción de caídas de tensión, ahorro energético y detección proactiva de fallos",
-      "Datos personales casi inexistentes en el proyecto"
-    ]
+    "value": []
   },
-  "status": "completed"
+  "status": "pending_fields"
 }
