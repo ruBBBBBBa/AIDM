@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 import logging
 from pydantic import ValidationError
+import gateway
 
 from utils import (
     FieldUpdate,
@@ -217,7 +218,7 @@ def _build_assistant_reply(
 
 def _propose_plan_with_agent(user_prompt: str, chat_history: list[dict[str, str]] | None) -> dict[str, Any]:
     allowed_fields = set(TEXT_FIELDS) | set(LIST_FIELDS)
-    model_name = os.getenv("BIG_MODEL", "").strip()
+    model_name = gateway.modelo("discovery")
     if not model_name:
         return {"updates": [], "assistant_reply": "", "update_status": None}
 
@@ -276,7 +277,7 @@ def _propose_plan_with_agent(user_prompt: str, chat_history: list[dict[str, str]
             {"role": "user", "content": user_message},
         ],
         temperature=0.1,
-        num_retries=3,
+        **gateway.parametros(model_name, num_retries=3),  # el tope y la reserva del modelo, si los tiene
     )
 
     raw_output = response.choices[0].message.content or ""

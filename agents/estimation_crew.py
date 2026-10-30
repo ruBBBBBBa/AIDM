@@ -15,6 +15,7 @@ import textwrap
 import litellm
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field, PrivateAttr, field_validator, ValidationError
+import gateway
 
 from utils import (_make_agent, _normalize_text, build_llm, contexto_cliente, es_valor_de_relleno,
                    load_agents_config, md_to_html)
@@ -1024,6 +1025,7 @@ def _generate_terraform_from_proposal(proposal_context: str, model_name: str) ->
                 },
             ],
             temperature=0.1,
+            **gateway.parametros(model_name),  # reintentos, y el tope y la reserva del modelo si los tiene
         )
         raw = response.choices[0].message.content or ""
         cleaned = re.sub(r"```(?:hcl|terraform)?\n?", "", raw).replace("```", "").strip()
@@ -1287,7 +1289,7 @@ def _aviso_sin_costes(model_name: str) -> str:
 
 def run_estimation_crew(
     proposal_context: str,
-    model_name: str,
+    model_name: str | None = None,
     tools: list | None = None,
     problem_case: dict | None = None,
     componentes: str | None = None,
@@ -1303,6 +1305,11 @@ def run_estimation_crew(
     costes solo recibe esto y los datos del cliente (fallo 46). Si no se pasa, se usa la propuesta entera.
     """
     agents_config = load_agents_config()
+    # Gateway de modelos: costes, equipo y Terraform piden cada uno el suyo. model_name, si se pasa (lo hacen los
+    # tests), vale para los tres
+    forzado = model_name
+    model_name = forzado or gateway.modelo("costes")
+    modelo_equipo = forzado or gateway.modelo("equipo")
     print(f"[estimation_crew] Modelo: {model_name}")  # para saber con qué modelo salió cada informe
 
     # --- Pre-fase: obtener precios reales via Infracost subprocess ---
@@ -1311,7 +1318,8 @@ def run_estimation_crew(
     infracost_prices: str | None = None
 
     if api_key and binary:
-        terraform_hcl = _generate_terraform_from_proposal(componentes or proposal_context, model_name)
+        terraform_hcl = _generate_terraform_from_proposal(componentes or proposal_context,
+                                                          forzado or gateway.modelo("terraform"))
         if terraform_hcl.strip():
             infracost_prices = _run_infracost_breakdown(terraform_hcl, binary, api_key)
             if infracost_prices:
@@ -1339,7 +1347,7 @@ def run_estimation_crew(
         verbose=False,
         allow_delegation=False,
     )
-    team_builder = _make_agent("team_profiles_advisor", agents_config, model_name)
+    team_builder = _make_agent("team_profiles_advisor", agents_config, modelo_equipo)
 
     pricing_note = (
         f"Resumen de costos reales obtenido de Infracost, en euros (basado en infraestructura generada desde la propuesta):\n{infracost_prices}"

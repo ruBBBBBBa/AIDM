@@ -3,15 +3,17 @@ from pathlib import Path
 
 from crewai import Agent, Crew, Process, Task
 from dotenv import load_dotenv
-
+import gateway
 from utils import _make_agent, contexto_cliente, load_agents_config, load_problem_case, parse_html, md_to_html, sin_importes
 
 load_dotenv(".env")
 
+'''
 MODEL_NAME = os.getenv("BIG_MODEL", "").strip()
 SECOND_MODEL_NAME = os.getenv("REASONING_MODEL", "").strip()
 FIRST_MODEL_NAME = os.getenv("REASONING_RIGOROUS_MODEL", "").strip()
 THIRD_MODEL_NAME = os.getenv("SMALL_REASONING_MODEL", "").strip()
+'''
 
 _ROADMAP_IDS = [
     "roadmap-sources",
@@ -69,7 +71,7 @@ def inject_roadmap_into_html(
     print(f"[roadmap_builder] Roadmap inyectado en {REPORT_PATH}")
 
 def resumir_solucion(propuesta_solucion: str, agents_config: dict) -> str:
-    resumen_agent = _make_agent("resume_agent", agents_config, MODEL_NAME)
+    resumen_agent = _make_agent("resume_agent", agents_config, gateway.modelo("resumen"))
     resumen_task = Task(
         description=(
             f"Propuesta a resumir:\n{propuesta_solucion}"
@@ -107,13 +109,14 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
             print(f"[roadmap_builder] Capturado output #{len(captured_outputs)}: {len(raw)} chars")
         return task_output
 
-    fuentes_de_datos = _make_agent("data_sources_agent", agents_config, FIRST_MODEL_NAME)
-    ingesta_de_datos = _make_agent("ingestion_agent", agents_config, FIRST_MODEL_NAME)
-    data_storage = _make_agent("storage_agent", agents_config, MODEL_NAME)
-    procesamiento_etl = _make_agent("etl_processing_agent", agents_config, FIRST_MODEL_NAME)
-    modelado_y_serving = _make_agent("modeling_serving_agent", agents_config, SECOND_MODEL_NAME)
-    ml_mlops = _make_agent("ml_mlops_agent", agents_config, THIRD_MODEL_NAME)
-    visualizacion = _make_agent("bi_visualization_agent", agents_config, MODEL_NAME)
+    # Gateway de modelos: cada fase pide el suyo (data_structures/modelos.yaml)
+    fuentes_de_datos = _make_agent("data_sources_agent", agents_config, gateway.modelo("roadmap_fuentes"))
+    ingesta_de_datos = _make_agent("ingestion_agent", agents_config, gateway.modelo("roadmap_ingesta"))
+    data_storage = _make_agent("storage_agent", agents_config, gateway.modelo("roadmap_almacenamiento"))
+    procesamiento_etl = _make_agent("etl_processing_agent", agents_config, gateway.modelo("roadmap_etl"))
+    modelado_y_serving = _make_agent("modeling_serving_agent", agents_config, gateway.modelo("roadmap_modelado"))
+    ml_mlops = _make_agent("ml_mlops_agent", agents_config, gateway.modelo("roadmap_ml"))
+    visualizacion = _make_agent("bi_visualization_agent", agents_config, gateway.modelo("roadmap_bi"))
 
     resumen = resumir_solucion(combined_response, agents_config)
     

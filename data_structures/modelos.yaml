@@ -1,0 +1,48 @@
+# Gateway de modelos: qué modelo usa cada tarea de AIDM (lo lee gateway.py).
+#
+# - Un modelo se escribe con su nombre de LiteLLM («proveedor/modelo») o con una variable del .env: ${BIG_MODEL}.
+# - Si el de una tarea queda vacío, se usa el de «por_defecto».
+# - Para probar otro modelo en una tarea sin tocar este archivo, ponlo en el .env como MODELO_<TAREA>, en
+#   mayúsculas: MODELO_COSTES=groq/openai/gpt-oss-120b.
+# - El log dice qué modelo ha usado cada tarea, en las líneas que empiezan por «[gateway]».
+# - Los cambios valen desde la siguiente ejecución, sin reiniciar Streamlit.
+
+por_defecto: ${BIG_MODEL}
+
+tareas:
+  discovery: ${BIG_MODEL}                      # entrevista y relleno del caso
+  estructura: ${BIG_MODEL}                     # propuesta de estructura
+
+  # Propuesta (proposal_crew.py)
+  arquitectura: ${BIG_MODEL}
+  gobernanza: ${BIG_MODEL}
+  estrategia: ${BIG_MODEL}
+  visualizacion: ${BIG_MODEL}
+
+  # Costes (estimation_crew.py)
+  costes: ${BIG_MODEL}                         # componentes, cantidades y justificación
+  equipo: ${BIG_MODEL}                         # perfiles y horas del equipo
+  terraform: ${BIG_MODEL}                      # solo si hay Infracost
+
+  # Roadmap (roadmap_builder.py)
+  resumen: ${BIG_MODEL}                        # resumen de la propuesta que reciben las 7 fases
+  roadmap_fuentes: ${REASONING_RIGOROUS_MODEL}
+  roadmap_ingesta: ${REASONING_RIGOROUS_MODEL}
+  roadmap_almacenamiento: ${BIG_MODEL}
+  roadmap_etl: ${REASONING_RIGOROUS_MODEL}
+  roadmap_modelado: ${REASONING_MODEL}
+  roadmap_ml: ${SMALL_REASONING_MODEL}
+  roadmap_bi: ${BIG_MODEL}
+
+# Reglas de cada modelo, en todas las tareas que lo usen (antes, MODEL_RULES en utils.py).
+# max_tokens es el tope de salida; si el modelo falla, se repite con «reserva» y max_tokens_reserva.
+# Un modelo de Cloudflare sin regla lleva 4096 de tope, porque si no corta a 256.
+modelos:
+  groq/openai/gpt-oss-20b:
+    max_tokens: 4096
+    reserva: cloudflare/@cf/openai/gpt-oss-20b
+    max_tokens_reserva: 6000
+  groq/openai/gpt-oss-120b:
+    max_tokens: 6000
+    reserva: cloudflare/@cf/openai/gpt-oss-120b
+    max_tokens_reserva: 6000

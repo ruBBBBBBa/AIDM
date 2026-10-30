@@ -1,5 +1,6 @@
 from crewai import Crew, Process, Task
 from pydantic import BaseModel
+import gateway
 
 from utils import _make_agent, _recent_chat_transcript, load_agents_config, contexto_cliente
 
@@ -26,16 +27,18 @@ def run_proposal_crew(
     structure_proposal: str,
     problem_case: dict,
     chat_history: list[dict[str, str]] | None,
-    model_name: str,
+    model_name: str | None = None,
 ) -> ProposalResult:
     agents_config = load_agents_config()
     transcript = _recent_chat_transcript(chat_history)
     contexto = contexto_cliente(problem_case)  # los mismos datos, con su estado, para los 4 agentes
 
-    architect = _make_agent("structure_proposal_agent", agents_config, model_name)
-    data_governance = _make_agent("data_governance_agent", agents_config, model_name)
-    data_ai_strategist = _make_agent("data_ai_strategist", agents_config, model_name)
-    bi_visualization_specialist = _make_agent("bi_visualization_specialist", agents_config, model_name)
+    # Gateway de modelos: cada agente pide el suyo. model_name, si se pasa (lo hacen los tests), vale para los 4
+    architect = _make_agent("structure_proposal_agent", agents_config, model_name or gateway.modelo("arquitectura"))
+    data_governance = _make_agent("data_governance_agent", agents_config, model_name or gateway.modelo("gobernanza"))
+    data_ai_strategist = _make_agent("data_ai_strategist", agents_config, model_name or gateway.modelo("estrategia"))
+    bi_visualization_specialist = _make_agent("bi_visualization_specialist", agents_config,
+                                              model_name or gateway.modelo("visualizacion"))
 
     architecture_task = Task(
         description=(

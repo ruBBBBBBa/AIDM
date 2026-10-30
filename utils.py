@@ -10,6 +10,7 @@ from crewai import Agent, LLM
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from pydantic import BaseModel, Field
+from gateway import build_llm # gateway de modelos: el tope y la reserva de cada modelo, en data_structures/modelos.yaml
 
 import logging
 import re
@@ -59,17 +60,22 @@ AGENTS_FILE = Path("data_structures/agents.yaml")
 logger = logging.getLogger("aidm")
 
 #Prueba para fallback por si uno de los modelos no llega a terminar, se puede usar otro modelo de reserva con mas tokens
+'''
+~cambiado, ahora el gateway se encarga de todo esto~
+
 MODEL_RULES = {
     "groq/openai/gpt-oss-20b":  {"max_tokens": 4096, "fallback": "cloudflare/@cf/openai/gpt-oss-20b"},
     "groq/openai/gpt-oss-120b": {"max_tokens": 6000, "fallback": "cloudflare/@cf/openai/gpt-oss-120b"},
 }
 FALLBACK_MAX_TOKENS = 6000
+'''
 
 def load_problem_case() -> dict[str, Any]:
     with open(PROBLEM_CASE_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 
-    
+'''
+~cambiado, ahora el gateway se encarga de todo esto~
 def build_llm(model_name: str):
     """LLM para CrewAI con reintentos, tope de salida explícito y modelo de reserva."""
     if model_name.startswith("gemini/"):
@@ -83,7 +89,8 @@ def build_llm(model_name: str):
     if rules.get("fallback"):
         params["fallbacks"] = [{"model": rules["fallback"], "max_tokens": FALLBACK_MAX_TOKENS}]
     return LLM(model=model_name, **params)
-
+'''
+    
 def _make_agent(key: str, agents_config, model_name) -> Agent:
     data = agents_config.get(key, {})
     return Agent(

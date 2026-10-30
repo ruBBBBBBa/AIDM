@@ -3,6 +3,7 @@ import os
 
 from crewai import Agent, Crew, Process, Task
 from dotenv import load_dotenv
+import gateway
 
 from utils import load_agents_config, _recent_chat_transcript, build_llm, contexto_cliente
 
@@ -13,9 +14,9 @@ os.environ["CREWAI_TELEMETRY_OPT_OUT"] = "true"
 def build_structure_proposal(problem_case, chat_history: list[dict[str, str]] | None):
     transcript = _recent_chat_transcript(chat_history)
     
-    model_name = os.getenv("BIG_MODEL", "").strip()
+    model_name = gateway.modelo("structure_proposal")
     if not model_name:
-        return "No hay modelo configurado en .env (variable MODEL)."
+        return "No hay modelo para la estructura: revisa data_structures/modelos.yaml y BIG_MODEL en el .env."
 
     agents_config = load_agents_config()
 

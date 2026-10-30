@@ -12,22 +12,22 @@ from pathlib import Path
 
 CARPETA = Path(__file__).resolve().parent
 TESTS = [
-    "test_discovery_update.py",     # fallo 1
-    "test_discovery_relleno.py",    # fallo 2
-    "test_interfaz_informe.py",     # fallo 3
-    "test_roadmap_contexto.py",     # fallo 4
-    "test_costes_equipo.py",        # fallo 5
-    "test_md_to_html.py",           # fallo 11
-    "test_discovery_inventos.py",   # fallo 21
-    "test_discovery_formato.py",    # fallo 22
-    "test_md_br.py",                # fallo 30
-    "test_costes_resumen.py",       # fallo 23
-    "test_discovery_respuestas.py", # fallo 33
-    "test_discovery_listas.py",     # fallo 35
-    "test_contexto_cliente.py",     # fallo 25
-    "test_presupuesto_unico.py",    # fallo 24
-    "test_prompts_sesgo.py",        # fallos 34 y 10
-    "test_roadmap_plataforma.py",   # fallo 6
+    #"test_discovery_update.py",     # fallo 1
+    #"test_discovery_relleno.py",    # fallo 2
+    #"test_interfaz_informe.py",     # fallo 3
+    #"test_roadmap_contexto.py",     # fallo 4
+    #"test_costes_equipo.py",        # fallo 5
+    #"test_md_to_html.py",           # fallo 11
+    #"test_discovery_inventos.py",   # fallo 21
+    #"test_discovery_formato.py",    # fallo 22
+    #"test_md_br.py",                # fallo 30
+    #"test_costes_resumen.py",       # fallo 23
+    #"test_discovery_respuestas.py", # fallo 33
+    #"test_discovery_listas.py",     # fallo 35
+    #"test_contexto_cliente.py",     # fallo 25
+    #"test_presupuesto_unico.py",    # fallo 24
+    #"test_prompts_sesgo.py",        # fallos 34 y 10
+    #"test_roadmap_plataforma.py",   # fallo 6
     "test_costes_componentes.py",   # fallo 32
     "test_costes_perfiles.py",      # fallo 37
     "test_costes_unitarios.py",     # fallo 41 (C15)
@@ -44,6 +44,7 @@ TESTS = [
     "test_costes_json_reparado.py", # fallo 50
     "test_costes_justificacion.py", # fallo 51
     "test_costes_fases_minimo.py",  # fallo 49
+    "test_gateway.py",              # gateway de modelos
 ]
 
 # Los resultados llevan «≥», «€»…: en Windows, sin esto, la salida por tubería usa cp1252 y falla.
