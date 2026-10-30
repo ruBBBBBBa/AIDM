@@ -4,6 +4,10 @@ El 27 oct, con Iberdrola (piloto de 6 meses y despliegue completo en 18), el equ
 implantación: mezcló el piloto y el despliegue completo, y la tabla decía «Desarrollo en 0–12 meses: 0 €». Ahora
 _calcular_equipo() deja al menos un mes de desarrollo, y la tarea de equipo pide los meses del piloto.
 
+Fallo 61 (casos 4 y 5): el 29 oct (15:43), los perfiles pusieron la implantación «después» del piloto y el equipo
+llegó con 0 meses de implantación; sus horas se perdían sin avisar. Ahora se cuenta 1 mes y se avisa, y los prompts
+dicen que la implantación va dentro del plazo.
+
 No llama a ningún LLM: se sustituye Crew.kickoff por una versión simulada. Tampoco usa Infracost.
 
 Uso (desde la carpeta del proyecto, con el venv activado):
@@ -59,4 +63,21 @@ assert "si el cliente pide un piloto, los meses del piloto, no los del despliegu
 assert "al menos un mes de desarrollo" in equipo
 print("OK 3: la tarea de equipo pide los meses del piloto y deja al menos un mes de desarrollo")
 
-print("\nTodo bien: el fallo 49 está arreglado (en la parte que se puede comprobar sin el LLM real).")
+# 4) Fallo 61: el caso del 29 oct, 6 meses con horas de implantación y 0 meses para ella → 5 + 1, con aviso
+calculo = _calcular_equipo(EquipoEstimado(perfiles=PERFILES, meses_min=6, meses_max=6, meses_implantacion=0), tarifas)
+assert calculo["meses_implantacion"] == 1
+assert "**Desarrollo en 5 meses: 24.000 €**" in calculo["texto"], calculo["texto"]
+assert "**Implantación en 1 mes: 2.400 €**" in calculo["texto"]
+assert "Ojo: el equipo traía horas de implantación, pero ningún mes para ella." in calculo["texto"]
+sin_impl = [PerfilEquipo(perfil="Data Engineer", nivel="Middle", horas_mes=160)]
+calculo = _calcular_equipo(EquipoEstimado(perfiles=sin_impl, meses_min=6, meses_max=6), tarifas)
+assert calculo["meses_implantacion"] == 0 and "Ojo" not in calculo["texto"] and calculo["total_min"] == 6 * 160 * 30
+print("OK 4: con horas de implantación y 0 meses, se cuenta 1 mes y se avisa; sin horas de implantación, todo igual")
+
+# 5) Fallo 61: los prompts de perfiles y de equipo ponen la implantación dentro del plazo
+perfiles = next(p for p in prompts if "Distingue su dedicación" in p)
+assert "son sus últimos meses, no meses adicionales después" in perfiles
+assert "meses_implantacion no puede ser 0" in equipo
+print("OK 5: los perfiles y el equipo ponen la implantación dentro del plazo, no después")
+
+print("\nTodo bien: los fallos 49 y 61 están arreglados (en la parte que se puede comprobar sin el LLM real).")

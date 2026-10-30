@@ -262,7 +262,8 @@ class EquipoEstimado(BaseModel):
                                        "(escenario largo)")
     meses_implantacion: int = Field(
         default=0, description="Cuántos de esos meses, al final del plazo, son de implantación: puesta en producción y "
-                               "acompañamiento hasta que el cliente use la solución. El resto son de desarrollo")
+                               "acompañamiento hasta que el cliente use la solución. El resto son de desarrollo. "
+                               "Va dentro del plazo, no después: con horas de implantación, no puede ser 0")
     
     funciones_sin_tarifa: list[FuncionSinTarifa] = Field(
         default_factory=list,
@@ -337,6 +338,14 @@ def _calcular_equipo(equipo: EquipoEstimado, tarifas: dict[tuple[str, str], floa
     """
     meses_min, meses_max = sorted((max(equipo.meses_min, 1), max(equipo.meses_max, 1)))
     meses_impl = min(max(equipo.meses_implantacion, 0), meses_min)
+    # Fallo 61: horas de implantación sin ningún mes para ella. El 29 oct (Iberdrola, 15:43), los perfiles pusieron la
+    # implantación «después» del piloto, el equipo llegó con 0 meses de implantación y sus horas se perdían sin
+    # avisar: todo contaba como desarrollo, a jornada de desarrollo. Se cuenta 1 mes, el último del plazo, y se avisa
+    sin_meses = not meses_impl and meses_min > 1 and any(p.horas_mes_implantacion > 0 for p in equipo.perfiles)
+    if sin_meses:
+        logger.warning("El equipo trae horas de implantación pero 0 meses para ella: se cuenta 1 mes, el último "
+                       "del plazo")
+        meses_impl = 1
     con_fases = meses_impl > 0 and any(p.horas_mes_implantacion > 0 for p in equipo.perfiles)
     if meses_impl and not con_fases:
         logger.warning("El equipo trae %d mes(es) de implantación pero ningún perfil con horas en ella: "
@@ -405,6 +414,9 @@ def _calcular_equipo(equipo: EquipoEstimado, tarifas: dict[tuple[str, str], floa
             "",
             f"**Coste del equipo en {meses} meses: {_rango(total_min, total_max)}**",
         ]
+    if sin_meses: #Fallo 61: aviso de que se ha contado 1 mes de implantación aunque el equipo trajera 0 meses para ella
+        lineas += ["", "Ojo: el equipo traía horas de implantación, pero ningún mes para ella. Se ha contado 1 mes, el "
+                       "último del plazo; revisa cuántos hacen falta."]
     # Funciones que el agente no pudo asignar a un perfil con tarifa: tampoco se suman
     # Fallo 55: cada una con sus horas en el desarrollo y en la implantación, como los perfiles
     for f in equipo.funciones_sin_tarifa:
@@ -1422,6 +1434,9 @@ def run_estimation_crew(
             "Escribe un apartado por perfil, con su nombre como título y una lista debajo; no uses tablas. "
             "Distingue su dedicación en el desarrollo (construir la solución) y en la implantación (ponerla en "
             "producción y acompañar al cliente hasta que la use); un perfil puede estar solo en una de las dos. "
+            # Fallo 61: el 29 oct, los perfiles pusieron la implantación en «6 meses adicionales» tras el piloto
+            "La implantación va dentro del plazo que pide el cliente (el del piloto, si lo hay): son sus últimos meses, "
+            "no meses adicionales después. "
             f"{catalogo_perfiles}"
             "Ten en cuenta el tipo de servicio que pide el cliente: si quiere que Inetum lo implemente, los perfiles son del "
             "equipo de Inetum, y el equipo interno del cliente participa y se forma; dilo así. Ten en cuenta también el "
@@ -1458,6 +1473,9 @@ def run_estimation_crew(
             "si el cliente pide un piloto, los meses del piloto, no los del despliegue completo. En meses_implantacion "
             "pon cuántos de esos meses, al final, son de implantación; antes tiene que quedar al menos un mes de "
             "desarrollo. "
+            # Fallo 61: con la implantación «después» del piloto, llegaban 0 meses de implantación con horas en ella
+            "La implantación va dentro de esos meses, no después: si algún perfil tiene horas de implantación, "
+            "meses_implantacion no puede ser 0. "
             "No calcules costes: se calculan aparte con la tabla.\n"
             "Responde solo con un objeto JSON, sin texto antes ni después, con esta forma: "
             f"{_plantilla_json(EquipoEstimado)}\n\n"
@@ -1494,6 +1512,11 @@ def run_estimation_crew(
     # Coste del equipo: el LLM elige perfiles, nivel, horas y meses; las cuentas se hacen aquí
     equipo_pydantic = _leer_salida(team_cost_task, EquipoEstimado) if team_cost_task else None
     equipo = _calcular_equipo(equipo_pydantic, tarifas) if equipo_pydantic else None
+    if equipo_pydantic:  # fallo 61: los meses y las fases tal como los dio el modelo, para revisar cada ejecución
+        con_impl = sum(p.horas_mes_implantacion > 0 for p in equipo_pydantic.perfiles)
+        print(f"[estimation_crew] Equipo: {equipo_pydantic.meses_min}–{equipo_pydantic.meses_max} meses, "
+              f"{equipo_pydantic.meses_implantacion} de implantación; {con_impl} de {len(equipo_pydantic.perfiles)} "
+              f"perfiles con horas de implantación")
     if team_cost_task and equipo is None:
         logger.warning("No se pudo leer el equipo estimado: el coste total no incluirá el equipo.")
 
