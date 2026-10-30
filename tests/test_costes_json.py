@@ -165,12 +165,15 @@ print("OK 6: costes y equipo ya no usan output_pydantic; costes recibe solo la a
 
 # 7) Un componente que cada mes se lleva más del 5 % del presupuesto (fallo 51; antes, 10 %) se marca «revisar unidad»
 html = _format_cost_report(CostEstimationReport.model_validate_json(JSON_26OCT))
-aviso = ("Ojo: revisa la unidad de Azure IoT Hub para ingestión de telemetría MQTT (80.000 €/mes) y "
-         "Azure Event Hubs para buffer de mensajes (1.000.000 €/mes): cada uno cuesta al mes más de un 5 % del "
-         "presupuesto del cliente (600.000 €).")
+aviso = ("Ojo: revisa la unidad de Azure IoT Hub para ingestión de telemetría MQTT (80.000 €/mes): cuesta al mes "
+         "más de un 5 % del presupuesto del cliente (600.000 €).")
 assert aviso in html, "falta el aviso de «revisar unidad»"
-assert html.count("(revisar unidad)") == 2, "ADLS Gen2 (400 €/mes) no debe marcarse"
-assert "Van sumados en el total, que puede estar inflado." in html
+assert html.count("(revisar unidad)") == 1, "ADLS Gen2 (400 €/mes) no debe marcarse"
+assert "Va sumado en el total, que puede estar inflado." in html
+# Fallo 59: Event Hubs (6 M€ en 6 meses) supera por sí solo el presupuesto: no se suma
+assert ("Ojo: no se suma Azure Event Hubs para buffer de mensajes (6.000.000 € en 6 meses): por sí solo supera el "
+        "presupuesto del cliente (600.000 €)") in html
+assert html.count("(no se suma: revisar)") == 1
 sin_presupuesto = json.loads(JSON_26OCT)
 sin_presupuesto["resumen_ejecutivo"]["presupuesto_cliente_max_eur"] = 0
 assert "revisar unidad" not in _format_cost_report(CostEstimationReport.model_validate(sin_presupuesto))

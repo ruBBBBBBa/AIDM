@@ -156,8 +156,8 @@ class ComponenteCoste(BaseModel):
     precio_unitario_eur: float = Field(ge=0, description="Precio de una unidad en euros: solo el número. Con tarifa, 0: "
                                                          "lo pone el programa")
     unidades: float = Field(ge=0, description="Cuántas unidades se pagan en cada periodo: horas, GB, licencias, talleres… "
-                                              "Con tarifa, la cantidad de un mes en la unidad de su fila, sin dividir "
-                                              "por el paquete (144 millones de eventos son 144000000)")
+                                              "Con tarifa, la cantidad de un mes que calculas, en la unidad de su fila: "
+                                              "sin redondearla, sin ajustarla a la tabla y sin dividirla por el paquete")
     unidad: str = Field(description="Qué es una unidad, en singular: hora, GB, licencia, taller… Con tarifa, la de su fila")
     periodicidad: Periodicidad = Field(
         description="mensual o anual si esas unidades se pagan cada mes o cada año; unico si se pagan una sola vez. "
@@ -695,8 +695,15 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     meses = f"{meses_min}" if meses_min == meses_max else f"{meses_min}–{meses_max}"
     meses_txt = f"{meses} {'mes' if meses_max == 1 else 'meses'}"
 
+     # Fallo 59: un componente que por sí solo cuesta más que todo el presupuesto del cliente tiene mal la cantidad o
+    # la unidad; no se suma y se avisa. El 29 oct, Databricks SQL Serverless con 500.000 DBU-hora al mes (el modelo
+    # había calculado 3.000) costaba 2,4 M€ y llevaba el total a 2,8 M€ con un presupuesto de 600.000 €
+    fuera = [c for c in componentes
+             if r.presupuesto_cliente_max_eur > 0 and _coste_en_proyecto(c, meses_max) > r.presupuesto_cliente_max_eur]
+    sumados = [c for c in componentes if not any(c is x for x in fuera)]
+
     por_categoria = {cat: [0.0, 0.0] for cat in CATEGORIAS}
-    for c in componentes:
+    for c in sumados:
         por_categoria[c.categoria][0] += _coste_en_proyecto(c, meses_min)
         por_categoria[c.categoria][1] += _coste_en_proyecto(c, meses_max)
     base_min = sum(v[0] for v in por_categoria.values())
@@ -725,7 +732,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         motivo = (f"Contando al menos {_rango(falta_min, falta_max)} por lo que no tiene tarifa "
                   f"({horas} a {_cifra(equipo_dict['tarifa_minima'])} €/h, la tarifa "
                   f"más baja de la tabla), " + motivo[0].lower() + motivo[1:])
-    etiqueta_nivel = nivel.capitalize() + (" (provisional)" if no_sumados else "")
+    etiqueta_nivel = nivel.capitalize() + (" (provisional)" if no_sumados or fuera else "")  # fallo 59: o algo no se suma
     if not equipo:
         motivo += " Ojo: el total no incluye el equipo, que no se pudo calcular."
 
@@ -755,7 +762,14 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
             avisos[-1] += (f" El modelo dice que el cliente ya {'lo tiene' if uno else 'los tiene'}{quienes}, pero "
                            f"{'no está' if uno else 'no están'} entre lo que usa según sus datos.")
 
-    revisar = [c for c in componentes
+    if fuera:
+        nombres = _lista([f"{c.componente} ({_eur(_coste_en_proyecto(c, meses_max))} en {meses_txt})" for c in fuera])
+        uno = len(fuera) == 1
+        avisos.append(f"Ojo: no se suma {escape(nombres)}: {'por sí solo supera' if uno else 'cada uno supera por sí solo'} "
+                      f"el presupuesto del cliente ({_eur(presupuesto)}), así que la cantidad o la unidad están mal. "
+                      f"Revísalo a mano: el total no lo incluye.")
+
+    revisar = [c for c in sumados
                if presupuesto > 0 and _coste_al_mes(c, meses_max) > PARTE_MAXIMA_AL_MES * presupuesto]
     # Fallo 53: si el precio es de la tabla, lo que puede estar mal es la cantidad; si es del modelo, la unidad
     for de_tabla in (False, True):
@@ -832,6 +846,8 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
             importe = ("0 € (cabe en el nivel gratuito)" if _en_gratuito(c)
                        else "0 € (ya lo tiene el cliente)" if not c.tarifa and _ya_lo_tiene(c, tecnologias)
                        else '<span style="color:#b45309;">0 € (por revisar)</span>')
+        elif any(c is x for x in fuera):  # fallo 59
+            importe += ' <span style="color:#b45309;">(no se suma: revisar)</span>'
         elif any(c is x for x in revisar):
             importe += (f' <span style="color:#b45309;">'
                         f'({"revisar cantidad" if c.tarifa else "revisar unidad"})</span>')
@@ -1324,8 +1340,10 @@ def run_estimation_crew(
     if tabla_precios:
         pricing_note += (
             "\nTabla de precios: para cada componente que sea uno de estos servicios, pon el id de su fila en tarifa y, "
-            "en unidades, la cantidad de un mes en la unidad de la fila, entera y sin dividir por el paquete (144 "
-            "millones de eventos son 144000000; un servicio encendido todo el mes son 730 horas). Con tarifa, el "
+            # Fallo 59: el modelo «ajustaba a la tabla» el uso (3.000 horas → 500.000) y copiaba el ejemplo de 144 millones
+            "en unidades, la cantidad de un mes que calculas, en la unidad de la fila: tal cual, sin redondearla, sin "
+            "ajustarla a la tabla y sin dividirla por el paquete. La tabla solo pone el precio; no limita ni cambia la "
+            "cantidad. Un servicio encendido todo el mes son 730 horas. Con tarifa, el "
             "precio, el paquete en que se cobra y lo gratuito los pone el programa: pon precio_unitario_eur 0, la "
             "unidad de la fila y periodicidad mensual. Si un servicio se cobra por varias cosas (eventos y unidades "
             "de throughput, cómputo y almacenamiento), pon un elemento por fila. Usa una fila solo si es el mismo "
