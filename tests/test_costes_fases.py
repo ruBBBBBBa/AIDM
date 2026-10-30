@@ -82,6 +82,8 @@ print("OK 4: sin horas de implantación, la tabla y la barra «Desarrollo e impl
 
 # 5) La implantación no puede durar más que el plazo corto
 largo = EquipoEstimado(perfiles=CON_FASES.perfiles, meses_min=2, meses_max=3, meses_implantacion=5)
+calculo = _calcular_equipo(largo, tarifas)
+
 # Fallo 49: y deja al menos un mes de desarrollo (antes se quedaban en 2, con 0 meses de desarrollo)
 assert calculo["meses_implantacion"] == 1 and "**Implantación en 1 mes: 6.480 €**" in calculo["texto"]
 assert "**Desarrollo en 1–2 meses: 9.280 € – 18.560 €**" in calculo["texto"]
