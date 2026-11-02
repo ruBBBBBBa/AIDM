@@ -999,7 +999,7 @@ def _generate_terraform_from_proposal(proposal_context: str, model_name: str) ->
     mencionados en la propuesta. Infracost parsea este HCL para obtener precios reales.
     """
     try:
-        response = litellm.completion(
+        response = gateway.completar(  # gateway (2): la llamada queda registrada, con las reservas del perfil
             model=model_name,
             messages=[
                 {
@@ -1025,7 +1025,6 @@ def _generate_terraform_from_proposal(proposal_context: str, model_name: str) ->
                 },
             ],
             temperature=0.1,
-            **gateway.parametros(model_name),  # reintentos, y el tope y la reserva del modelo si los tiene
         )
         raw = response.choices[0].message.content or ""
         cleaned = re.sub(r"```(?:hcl|terraform)?\n?", "", raw).replace("```", "").strip()
@@ -1310,6 +1309,7 @@ def run_estimation_crew(
     forzado = model_name
     model_name = forzado or gateway.modelo("costes")
     modelo_equipo = forzado or gateway.modelo("equipo")
+    modelo_perfiles = forzado or gateway.modelo("perfiles")  # gateway (2): los perfiles son texto; el equipo, JSON
     print(f"[estimation_crew] Modelo: {model_name}")  # para saber con qué modelo salió cada informe
 
     # --- Pre-fase: obtener precios reales via Infracost subprocess ---
@@ -1348,6 +1348,7 @@ def run_estimation_crew(
         allow_delegation=False,
     )
     team_builder = _make_agent("team_profiles_advisor", agents_config, modelo_equipo)
+    profiles_writer = _make_agent("team_profiles_advisor", agents_config, modelo_perfiles)
 
     pricing_note = (
         f"Resumen de costos reales obtenido de Infracost, en euros (basado en infraestructura generada desde la propuesta):\n{infracost_prices}"
@@ -1457,7 +1458,7 @@ def run_estimation_crew(
         ),
         expected_output="Los perfiles necesarios para el alcance pedido, con las responsabilidades, las habilidades y la dedicación (completa o parcial) de cada uno.",
         name="perfiles",
-        agent=team_builder,
+        agent=profiles_writer,
         # Fallo 40 (C14): si la descripción llega cortada, se repite una vez antes de pasar a la tarea del coste
         guardrail=_guardrail_perfiles() if PERFILES_CON_TARIFA else None,
         guardrail_max_retries=1,
@@ -1505,7 +1506,7 @@ def run_estimation_crew(
         crew_tasks.append(team_cost_task)
 
     crew = Crew(
-        agents=[report_writer_agent, team_builder],
+        agents=[report_writer_agent, profiles_writer, team_builder],
         tasks=crew_tasks,
         process=Process.sequential,
         cache=False,

@@ -270,14 +270,14 @@ def _propose_plan_with_agent(user_prompt: str, chat_history: list[dict[str, str]
     )
 
     print(f"Ejecutando discovery con modelo {model_name}...")
-    response = litellm.completion(
+    response = gateway.completar(  # gateway (2): la llamada queda registrada, con las reservas del perfil
         model=model_name,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
         temperature=0.1,
-        **gateway.parametros(model_name, num_retries=3),  # el tope y la reserva del modelo, si los tiene
+        num_retries=3,
     )
 
     raw_output = response.choices[0].message.content or ""

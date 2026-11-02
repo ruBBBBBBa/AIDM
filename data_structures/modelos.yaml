@@ -1,48 +1,74 @@
 # Gateway de modelos: qué modelo usa cada tarea de AIDM (lo lee gateway.py).
 #
-# - Un modelo se escribe con su nombre de LiteLLM («proveedor/modelo») o con una variable del .env: ${BIG_MODEL}.
-# - Si el de una tarea queda vacío, se usa el de «por_defecto».
-# - Para probar otro modelo en una tarea sin tocar este archivo, ponlo en el .env como MODELO_<TAREA>, en
-#   mayúsculas: MODELO_COSTES=groq/openai/gpt-oss-120b.
-# - El log dice qué modelo ha usado cada tarea, en las líneas que empiezan por «[gateway]».
+# - Cada tarea tiene un perfil, según el trabajo que hace. Cada perfil es una lista de modelos en orden: se usa el
+#   primero y, si falla o se queda sin cupo, el siguiente (sus reservas), mejor de otro proveedor.
+# - Un modelo se escribe con su nombre de LiteLLM, «proveedor/modelo»: groq/, gemini/, mistral/, sambanova/,
+#   nvidia_nim/ o cloudflare/. En el .env solo van las claves de cada proveedor.
+# - Para probar otro modelo en una tarea sin tocar este archivo: MODELO_<TAREA> en el .env, en mayúsculas
+#   (MODELO_COSTES=gemini/gemini-3.6-flash). Va primero, y las reservas del perfil siguen detrás.
+# - El log dice qué modelo usa cada tarea y lo que gasta cada llamada, en las líneas que empiezan por «[gateway]».
 # - Los cambios valen desde la siguiente ejecución, sin reiniciar Streamlit.
+# - Primera elección (2 nov 2026), sin medir todavía: se comparan con pruebas_modelos/comparar.py, y
+#   «comparar.py --comprobar» dice si algún nombre no existe con tus claves.
 
-por_defecto: ${BIG_MODEL}
+perfiles:
+  extraccion:       # JSON fiel a lo que dice el usuario, rápido y muchas veces (discovery)
+    - mistral/ministral-14b-2512
+    - gemini/gemini-3.5-flash-lite
+    - groq/openai/gpt-oss-20b
+  calculo:          # cantidades y cuentas en JSON (costes, equipo)
+    - gemini/gemini-3.8-flash
+    - sambanova/gpt-oss-120b
+    - cloudflare/@cf/openai/gpt-oss-120b
+  redaccion:        # texto largo y bien escrito, en el idioma del cliente (estructura, propuesta, perfiles)
+    - mistral/mistral-large-latest
+    - gemini/gemini-3.6-flash
+    - sambanova/DeepSeek-V3.1
+  tecnico:          # texto técnico largo, con mucha salida (las 7 fases del roadmap)
+    - gemini/gemini-3.8-flash
+    - mistral/mistral-large-latest
+    - cloudflare/@cf/openai/gpt-oss-120b
+  contexto_largo:   # leer mucho y resumirlo (el resumen de la propuesta)
+    - gemini/gemini-3.5-flash-lite
+    - mistral/mistral-small-latest
+  codigo:           # Terraform (solo con Infracost)
+    - mistral/codestral-latest
+    - cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct
+  decision:         # el modelo decisorio (Jev/Laya); aún no lo usa ninguna tarea
+    - mistral/ministral-8b-latest
+    - groq/openai/gpt-oss-20b
+
+por_defecto: redaccion   # el perfil de una tarea que no esté en la lista de abajo
 
 tareas:
-  discovery: ${BIG_MODEL}                      # entrevista y relleno del caso
-  estructura: ${BIG_MODEL}                     # propuesta de estructura
-
+  discovery: extraccion
+  estructura: redaccion
   # Propuesta (proposal_crew.py)
-  arquitectura: ${BIG_MODEL}
-  gobernanza: ${BIG_MODEL}
-  estrategia: ${BIG_MODEL}
-  visualizacion: ${BIG_MODEL}
-
+  arquitectura: redaccion
+  gobernanza: redaccion
+  estrategia: redaccion
+  visualizacion: redaccion
   # Costes (estimation_crew.py)
-  costes: ${BIG_MODEL}                         # componentes, cantidades y justificación
-  equipo: ${BIG_MODEL}                         # perfiles y horas del equipo
-  terraform: ${BIG_MODEL}                      # solo si hay Infracost
-
+  costes: calculo
+  perfiles: redaccion
+  equipo: calculo
+  terraform: codigo
   # Roadmap (roadmap_builder.py)
-  resumen: ${BIG_MODEL}                        # resumen de la propuesta que reciben las 7 fases
-  roadmap_fuentes: ${REASONING_RIGOROUS_MODEL}
-  roadmap_ingesta: ${REASONING_RIGOROUS_MODEL}
-  roadmap_almacenamiento: ${BIG_MODEL}
-  roadmap_etl: ${REASONING_RIGOROUS_MODEL}
-  roadmap_modelado: ${REASONING_MODEL}
-  roadmap_ml: ${SMALL_REASONING_MODEL}
-  roadmap_bi: ${BIG_MODEL}
+  resumen: contexto_largo
+  roadmap_fuentes: tecnico
+  roadmap_ingesta: tecnico
+  roadmap_almacenamiento: tecnico
+  roadmap_etl: tecnico
+  roadmap_modelado: tecnico
+  roadmap_ml: tecnico
+  roadmap_bi: tecnico
 
-# Reglas de cada modelo, en todas las tareas que lo usen (antes, MODEL_RULES en utils.py).
-# max_tokens es el tope de salida; si el modelo falla, se repite con «reserva» y max_tokens_reserva.
-# Un modelo de Cloudflare sin regla lleva 4096 de tope, porque si no corta a 256.
+# Reglas de cada modelo, en todos los perfiles: el tope de salida (max_tokens) y los reintentos antes de pasar a
+# la reserva (num_retries; 2 si no se dice). Límites del plan gratuito, a 2 nov 2026.
 modelos:
-  groq/openai/gpt-oss-20b:
-    max_tokens: 4096
-    reserva: cloudflare/@cf/openai/gpt-oss-20b
-    max_tokens_reserva: 6000
-  groq/openai/gpt-oss-120b:
-    max_tokens: 6000
-    reserva: cloudflare/@cf/openai/gpt-oss-120b
-    max_tokens_reserva: 6000
+  groq/openai/gpt-oss-20b: {max_tokens: 4096, num_retries: 0}    # 8.000 TPM: si no cabe, a la reserva sin reintentar
+  groq/openai/gpt-oss-120b: {max_tokens: 4096, num_retries: 0}   # 8.000 TPM
+  sambanova/gpt-oss-120b: {num_retries: 0}                       # 20 peticiones al día
+  sambanova/DeepSeek-V3.1: {num_retries: 0}                      # 20 peticiones al día
+  cloudflare/@cf/openai/gpt-oss-120b: {max_tokens: 6000}         # 10.000 neuronas al día, para todos sus modelos
+  cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct: {max_tokens: 4096}

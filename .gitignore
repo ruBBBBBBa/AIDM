@@ -11,3 +11,7 @@ __pycache__/
 *.tar.gz
 *.tmp.*
 *.log
+
+# Gateway (2): prompts y respuestas grabados para comparar modelos; llevan datos del cliente
+pruebas_modelos/grabaciones/
+pruebas_modelos/resultados/
