@@ -45,6 +45,7 @@ TESTS = [
     "test_costes_justificacion.py", # fallo 51
     "test_costes_fases_minimo.py",  # fallo 49
     "test_gateway.py",              # gateway de modelos
+    "test_comparar_modelos.py",        # compara los resultados de varios modelos simulados
 ]
 
 # Los resultados llevan «≥», «€»…: en Windows, sin esto, la salida por tubería usa cp1252 y falla.

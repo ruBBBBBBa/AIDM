@@ -20,6 +20,8 @@ import csv
 import json
 import re
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date
@@ -29,9 +31,23 @@ CSV_PRECIOS = Path(__file__).with_name("precios_cloud.csv")
 API = "https://prices.azure.com/api/retail/prices"
 
 
-def pedir(url: str) -> dict:
-    with urllib.request.urlopen(url, timeout=30) as respuesta:
-        return json.load(respuesta)
+def pedir(url: str, intentos: int = 3, espera: float = 5) -> dict:
+    """Una página de la API. Si no responde a tiempo (WinError 10060), se cae la conexión o la API está ocupada (429 o
+    5xx), lo intenta otra vez, esperando 5 s y luego 10 s; un error que no se arregla repitiendo (404…) sale a la primera."""
+    for intento in range(1, intentos + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=30) as respuesta:
+                return json.load(respuesta)
+        except urllib.error.HTTPError as error:
+            if error.code != 429 and error.code < 500 or intento == intentos:
+                raise
+            motivo = f"HTTP {error.code}"
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+            if intento == intentos:
+                raise
+            motivo = getattr(error, "reason", error)
+        print(f"            reintento {intento} de {intentos - 1}: la API no respondió ({motivo})")
+        time.sleep(espera * intento)
 
 
 def consultar(medidor: str, region: str, pedir=pedir) -> list[dict]:
@@ -83,7 +99,7 @@ def actualizar(probar: bool = False, pedir=pedir, hoy: str | None = None) -> int
         lector = csv.DictReader(f, delimiter=";")
         campos, filas = lector.fieldnames, list(lector)
     consultas: dict[tuple[str, str], list[dict]] = {}
-    cambios = 0
+    cambios = iguales = sin_api = sin_precio = 0
     for fila in filas:
         if not fila.get("api_medidor"):
             continue
@@ -92,10 +108,12 @@ def actualizar(probar: bool = False, pedir=pedir, hoy: str | None = None) -> int
             if clave not in consultas:
                 consultas[clave] = consultar(*clave, pedir=pedir)
         except Exception as error:  # sin red, la API caída…: la fila se queda como está
+            sin_api += 1
             print(f"SIN CAMBIOS  {fila['id']}: no se pudo consultar la API ({error})")
             continue
         resultado, motivo = precio_de(consultas[clave], fila)
         if resultado is None:
+            sin_precio += 1
             print(f"SIN CAMBIOS  {fila['id']}: {motivo}")
             continue
         precio, gratis = resultado
@@ -104,13 +122,21 @@ def actualizar(probar: bool = False, pedir=pedir, hoy: str | None = None) -> int
             cambios += 1
             print(f"CAMBIA      {fila['id']}: {numero(antes[0])} € → {numero(precio)} €"
                   + (f"; gratis {numero(antes[1])} → {numero(gratis)}" if gratis != antes[1] else ""))
+        else:  # comprobada y sin cambios: antes no se imprimía y parecía que no se había mirado
+            iguales += 1
+            print(f"IGUAL       {fila['id']}: {numero(precio)} €")
         fila.update(precio_eur=numero(precio), gratis_al_mes=numero(gratis), fecha=hoy)
     if not probar:
         with open(CSV_PRECIOS, "w", encoding="utf-8", newline="") as f:
             escritor = csv.DictWriter(f, fieldnames=campos, delimiter=";", lineterminator="\n")
             escritor.writeheader()
             escritor.writerows(filas)
-    print(f"\n{cambios} precio(s) cambiado(s)" + (" (sin escribir: --probar)" if probar else f"; fecha {hoy}"))
+    print(f"\n{cambios + iguales + sin_api + sin_precio} filas: {cambios} cambian, {iguales} igual, "
+          f"{sin_precio} sin precio en la API y {sin_api} sin poder consultarla"
+          + (" (sin escribir: --probar)" if probar else f"; fecha {hoy}"))
+    if sin_api:
+        print("Las que no se pudieron consultar se quedan con su precio y su fecha. Vuelve a ejecutarlo más tarde; si "
+              "fallan todas, la red no deja llegar a prices.azure.com (VPN o proxy de la empresa).")
     return cambios
 
 

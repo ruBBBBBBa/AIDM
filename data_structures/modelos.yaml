@@ -21,12 +21,12 @@ perfiles:
     - sambanova/gpt-oss-120b
     - cloudflare/@cf/openai/gpt-oss-120b
   redaccion:        # texto largo y bien escrito, en el idioma del cliente (estructura, propuesta, perfiles)
-    - mistral/mistral-large-latest
+    - mistral/mistral-large-4
     - gemini/gemini-3.6-flash
     - sambanova/DeepSeek-V3.1
   tecnico:          # texto técnico largo, con mucha salida (las 7 fases del roadmap)
     - gemini/gemini-3.8-flash
-    - mistral/mistral-large-latest
+    - mistral/mistral-large-4
     - cloudflare/@cf/openai/gpt-oss-120b
   contexto_largo:   # leer mucho y resumirlo (el resumen de la propuesta)
     - gemini/gemini-3.5-flash-lite

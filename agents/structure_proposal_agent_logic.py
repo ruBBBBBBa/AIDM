@@ -14,7 +14,7 @@ os.environ["CREWAI_TELEMETRY_OPT_OUT"] = "true"
 def build_structure_proposal(problem_case, chat_history: list[dict[str, str]] | None):
     transcript = _recent_chat_transcript(chat_history)
     
-    model_name = gateway.modelo("structure_proposal")
+    model_name = gateway.modelo("estructura")
     if not model_name:
         return "No hay modelo para la estructura: revisa data_structures/modelos.yaml y BIG_MODEL en el .env."
 
