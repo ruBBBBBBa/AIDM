@@ -28,22 +28,22 @@ TESTS = [
     #"test_presupuesto_unico.py",    # fallo 24
     #"test_prompts_sesgo.py",        # fallos 34 y 10
     #"test_roadmap_plataforma.py",   # fallo 6
-    "test_costes_componentes.py",   # fallo 32
-    "test_costes_perfiles.py",      # fallo 37
-    "test_costes_unitarios.py",     # fallo 41 (C15)
-    "test_costes_sin_tarifa.py",    # fallo 42 (C16 y C17)
-    "test_costes_perfiles_cortados.py",  # fallo 40 (C14); se cayó de la lista con el 42 
-    "test_costes_fases.py",         # fallo 43
-    "test_costes_tildes.py",        # C9; no estaba en la lista 
-    "test_secciones_sin_importes.py",  # fallo 44 (C2)
-    "test_costes_ceros.py",         # fallo 45 (C6)
-    "test_costes_json.py",          # fallo 46
-    "test_costes_json_envuelto.py", # fallo 47
-    "test_interfaz_sin_relanzar.py",  # fallo 48
-    "test_estructura_sin_importes.py",  # refuerzo del 44
-    "test_costes_json_reparado.py", # fallo 50
-    "test_costes_justificacion.py", # fallo 51
-    "test_costes_fases_minimo.py",  # fallo 49
+    #"test_costes_componentes.py",   # fallo 32
+    #"test_costes_perfiles.py",      # fallo 37
+    #"test_costes_unitarios.py",     # fallo 41 (C15)
+    #"test_costes_sin_tarifa.py",    # fallo 42 (C16 y C17)
+    #"test_costes_perfiles_cortados.py",  # fallo 40 (C14); se cayó de la lista con el 42 
+    #"test_costes_fases.py",         # fallo 43
+    #"test_costes_tildes.py",        # C9; no estaba en la lista 
+    #"test_secciones_sin_importes.py",  # fallo 44 (C2)
+    #"test_costes_ceros.py",         # fallo 45 (C6)
+    #"test_costes_json.py",          # fallo 46
+    #"test_costes_json_envuelto.py", # fallo 47
+    #"test_interfaz_sin_relanzar.py",  # fallo 48
+    #"test_estructura_sin_importes.py",  # refuerzo del 44
+    #"test_costes_json_reparado.py", # fallo 50
+    #"test_costes_justificacion.py", # fallo 51
+    #"test_costes_fases_minimo.py",  # fallo 49
     "test_gateway.py",              # gateway de modelos
     "test_comparar_modelos.py",        # compara los resultados de varios modelos simulados
 ]

@@ -12,6 +12,8 @@ __pycache__/
 *.tmp.*
 *.log
 
+problem_case.json
+
 # Gateway (2): prompts y respuestas grabados para comparar modelos; llevan datos del cliente
 pruebas_modelos/grabaciones/
 pruebas_modelos/resultados/

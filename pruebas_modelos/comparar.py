@@ -238,7 +238,7 @@ def llamar(modelo: str, mensajes: list[dict]) -> dict:
         time.sleep(espera)
     inicio = time.monotonic()
     try:
-        respuesta = litellm.completion(model=modelo, messages=mensajes, timeout=300, **gateway.parametros(modelo))
+        respuesta = litellm.completion(model=modelo, messages=mensajes, **gateway.parametros(modelo))  # con su tope de tiempo
     except Exception as error:
         return {"error": f"{type(error).__name__}: {str(error)[:300]}", "segundos": time.monotonic() - inicio}
     finally:

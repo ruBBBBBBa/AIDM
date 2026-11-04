@@ -39,6 +39,7 @@ perfiles:
     - groq/openai/gpt-oss-20b
 
 por_defecto: redaccion   # el perfil de una tarea que no esté en la lista de abajo
+timeout_por_defecto: 300  # segundos como máximo por intento; si tarda más, se reintenta o pasa a la reserva
 
 tareas:
   discovery: extraccion
@@ -63,8 +64,9 @@ tareas:
   roadmap_ml: tecnico
   roadmap_bi: tecnico
 
-# Reglas de cada modelo, en todos los perfiles: el tope de salida (max_tokens) y los reintentos antes de pasar a
-# la reserva (num_retries; 2 si no se dice). Límites del plan gratuito, a 2 nov 2026.
+# Reglas de cada modelo, en todos los perfiles: el tope de salida (max_tokens), los reintentos antes de pasar a
+# la reserva (num_retries; 2 si no se dice) y el tope de tiempo (timeout, en segundos; si no se dice, el de arriba).
+# Límites del plan gratuito, a 2 nov 2026.
 modelos:
   groq/openai/gpt-oss-20b: {max_tokens: 4096, num_retries: 0}    # 8.000 TPM: si no cabe, a la reserva sin reintentar
   groq/openai/gpt-oss-120b: {max_tokens: 4096, num_retries: 0}   # 8.000 TPM

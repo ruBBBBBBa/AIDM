@@ -83,12 +83,13 @@ assert llm.model == PERFILES["calculo"][0] and llm.is_litellm
 assert llm.additional_params["metadata"] == {"aidm_tarea": "costes"}
 reservas = llm.additional_params["fallbacks"]
 assert [r["model"] for r in reservas] == PERFILES["calculo"][1:]
-assert {"model": "sambanova/gpt-oss-120b", "num_retries": 0} in reservas
-assert {"model": "cloudflare/@cf/openai/gpt-oss-120b", "num_retries": 2, "max_tokens": 6000} in reservas
-assert gateway.parametros("groq/openai/gpt-oss-20b") == {"num_retries": 0, "max_tokens": 4096}
-assert gateway.parametros("mistral/ministral-14b-2512", num_retries=3) == {"num_retries": 3}
+assert {"model": "sambanova/gpt-oss-120b", "num_retries": 0, "timeout": 300} in reservas
+assert {"model": "cloudflare/@cf/openai/gpt-oss-120b", "num_retries": 2, "timeout": 300, "max_tokens": 6000} in reservas
+assert llm.timeout == 300  # sin tope, el 3 nov el equipo esperó 2 × 600 s a Gemini
+assert gateway.parametros("groq/openai/gpt-oss-20b") == {"num_retries": 0, "timeout": 300, "max_tokens": 4096}
+assert gateway.parametros("mistral/ministral-14b-2512", num_retries=3) == {"num_retries": 3, "timeout": 300}
 assert utils.build_llm is gateway.build_llm
-print("OK 3: las reservas llevan sus reglas (Groq y SambaNova pasan a la siguiente sin reintentar) y Gemini va por LiteLLM")
+print("OK 3: cada modelo y sus reservas llevan sus reglas, con 5 minutos como máximo por intento, y Gemini va por LiteLLM")
 
 # 4) Cada agente usa el modelo de su tarea: se le da uno distinto a cada una
 for tarea in TAREAS:
@@ -179,5 +180,18 @@ assert por_tarea["costes"]["respuesta"] == '{"componentes": []}'
 assert por_tarea["costes"]["mensajes"][-1]["content"] == "Valora los componentes"
 assert por_tarea["discovery"]["mensajes"] == [{"role": "user", "content": "Somos una distribuidora"}]
 print("OK 6: cada llamada sale en el log con sus tokens y segundos, y con GRABAR_LLAMADAS=1 se guarda su prompt")
+
+# 7) Si responde una reserva, el log lo dice (el 3 nov decía Gemini 3.8 Flash en el roadmap y respondieron las reservas)
+import litellm
+log = io.StringIO()
+with contextlib.redirect_stdout(log):
+    llm = gateway.build_llm(gateway.modelo("arquitectura"))
+    llm.additional_params["num_retries"] = 0
+    llm.additional_params["mock_response"] = litellm.RateLimitError("Rate limit exceeded", llm_provider="mistral",
+                                                                    model=PERFILES["redaccion"][0])
+    llm.additional_params["fallbacks"][0]["mock_response"] = "Respuesta de la reserva"
+    assert llm.call([{"role": "user", "content": "Escribe la arquitectura"}]) == "Respuesta de la reserva"
+assert f"[gateway] arquitectura · {PERFILES['redaccion'][0]} → reserva {PERFILES['redaccion'][1]} · " in log.getvalue(), log.getvalue()
+print("OK 7: si el primer modelo falla y responde una reserva, la línea del log lo dice")
 
 print("\nTodo bien: el gateway de modelos funciona (en la parte que se puede comprobar sin el LLM real).")
