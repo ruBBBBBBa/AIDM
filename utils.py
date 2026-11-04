@@ -154,6 +154,43 @@ def _normalize_text(value: str) -> str:
     texto = " ".join(sin_tildes.lower().split())
     return texto.strip(" .,;:\"'()[]¿¡")
 
+# Fallo 36: un «no lo sé» o un «no aplica» se guarda con el prefijo, para que los agentes no lo lean como un dato.
+VALORES_CERRADOS = {
+    "no_lo_sabe": "Confirmado por el usuario: no lo sabe",
+    "no_aplica": "Confirmado por el usuario: no aplica",
+}
+_FRASES_CERRADAS = {
+    "no_lo_sabe": {
+        "no lo se", "no se", "nose", "ni idea", "no tengo ni idea", "desconozco", "lo desconozco", "no lo sabemos",
+        "no sabemos", "no sabria decirte", "no sabria decir", "no te sabria decir", "no estoy seguro",
+        "no estoy segura", "no lo tengo claro", "no lo sabe", "no sabe",
+        "i don't know", "i dont know", "don't know", "dont know", "i do not know", "no idea", "not sure",
+        "i'm not sure", "im not sure", "we don't know", "no clue",
+    },
+    "no_aplica": {
+        "no aplica", "no nos aplica", "no aplica a nuestro proyecto", "no aplica al proyecto", "no aplica en nuestro caso",
+        "no procede", "no es aplicable", "n/a", "not applicable", "does not apply", "doesn't apply",
+    },
+}
+_RELLENO_INICIO = re.compile(r"^(?:pues|la verdad|sinceramente|uf+|mm+|hmm+)[\s,.]+")
+_RELLENO_FINAL = re.compile(r"[\s,.]+(?:la verdad|sinceramente|todavia|aun|de momento|sorry)$")
+
+
+def respuesta_cerrada(texto: Any) -> str | None:
+    """'no_lo_sabe' o 'no_aplica' si todo el texto es esa respuesta («No lo sé.», «Ni idea, la verdad»); si no, None.
+
+    Solo frases enteras: «No sé, unos 2 TB» lleva un dato y no cuenta.
+    """
+    if not isinstance(texto, str):
+        return None
+    normalizado = _normalize_text(texto.replace("’", "'"))
+    normalizado = _RELLENO_FINAL.sub("", _RELLENO_INICIO.sub("", normalizado)).strip(" .,;:!?…")
+    for estado, frases in _FRASES_CERRADAS.items():
+        if normalizado in frases:
+            return estado
+    return None
+
+
 def es_valor_de_relleno(value: Any) -> bool:
     """True si el valor no es un dato real: vacío o un relleno tipo 'no mencionado'."""
     if value is None:
@@ -343,7 +380,9 @@ def _normalize_update_value(field_key: str, value: str | List[str], operation: s
             raise ValueError(f"El campo {field_key} no puede actualizarse con texto vacío.")
         if es_valor_de_relleno(normalized):
             raise ValueError(f"El campo {field_key} no se guarda: es un valor de relleno, no un dato del cliente.")
-        return normalized
+        # Fallo 36: un «No lo sé» literal se leía como un dato confirmado
+        cerrada = respuesta_cerrada(normalized)
+        return VALORES_CERRADOS[cerrada] if cerrada else normalized
 
     if field_key in LIST_FIELDS:
         items = value if isinstance(value, list) else [value]
