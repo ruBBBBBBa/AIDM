@@ -84,8 +84,9 @@ assert llm.additional_params["metadata"] == {"aidm_tarea": "costes"}
 reservas = llm.additional_params["fallbacks"]
 assert [r["model"] for r in reservas] == PERFILES["calculo"][1:]
 assert {"model": "sambanova/gpt-oss-120b", "num_retries": 0, "timeout": 300} in reservas
-assert {"model": "cloudflare/@cf/openai/gpt-oss-120b", "num_retries": 2, "timeout": 300, "max_tokens": 6000} in reservas
 assert llm.timeout == 300  # sin tope, el 3 nov el equipo esperó 2 × 600 s a Gemini
+assert gateway.parametros("cloudflare/@cf/openai/gpt-oss-120b") == {"num_retries": 2, "timeout": 300, "max_tokens": 8192}
+assert gateway.build_llm("gemini/gemini-3.6-flash").is_litellm
 assert gateway.parametros("groq/openai/gpt-oss-20b") == {"num_retries": 0, "timeout": 300, "max_tokens": 4096}
 assert gateway.parametros("mistral/ministral-14b-2512", num_retries=3) == {"num_retries": 3, "timeout": 300}
 assert utils.build_llm is gateway.build_llm

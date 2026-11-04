@@ -17,17 +17,17 @@ perfiles:
     - gemini/gemini-3.5-flash-lite
     - groq/openai/gpt-oss-20b
   calculo:          # cantidades y cuentas en JSON (costes, equipo)
-    - gemini/gemini-3.8-flash
+    - cloudflare/@cf/openai/gpt-oss-120b   # 3 nov: hizo los costes y el equipo cuando falló Gemini 3.8 Flash
+    - gemini/gemini-3.6-flash
     - sambanova/gpt-oss-120b
-    - cloudflare/@cf/openai/gpt-oss-120b
   redaccion:        # texto largo y bien escrito, en el idioma del cliente (estructura, propuesta, perfiles)
     - mistral/mistral-large-4
     - gemini/gemini-3.6-flash
     - sambanova/DeepSeek-V3.1
   tecnico:          # texto técnico largo, con mucha salida (las 7 fases del roadmap)
-    - gemini/gemini-3.8-flash
-    - mistral/mistral-large-4
+    - gemini/gemini-3.6-flash              # 3 nov: Gemini 3.8 Flash no respondió en ninguna fase (503 y 429)
     - cloudflare/@cf/openai/gpt-oss-120b
+    - mistral/mistral-large-4              # da 429 si se le llama seguido: mejor de última reserva
   contexto_largo:   # leer mucho y resumirlo (el resumen de la propuesta)
     - gemini/gemini-3.5-flash-lite
     - mistral/mistral-small-latest
@@ -72,5 +72,5 @@ modelos:
   groq/openai/gpt-oss-120b: {max_tokens: 4096, num_retries: 0}   # 8.000 TPM
   sambanova/gpt-oss-120b: {num_retries: 0}                       # 20 peticiones al día
   sambanova/DeepSeek-V3.1: {num_retries: 0}                      # 20 peticiones al día
-  cloudflare/@cf/openai/gpt-oss-120b: {max_tokens: 6000}         # 10.000 neuronas al día, para todos sus modelos
+  cloudflare/@cf/openai/gpt-oss-120b: {max_tokens: 8192}         # 10.000 neuronas al día, para todos sus modelos; los costes gastaron 5.527
   cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct: {max_tokens: 4096}

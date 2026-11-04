@@ -110,7 +110,7 @@ with contextlib.redirect_stdout(log):
 texto = log.getvalue()
 assert "OK                     groq/openai/gpt-oss-20b  (extraccion, decision)" in texto, texto
 assert "sin clave en el .env   mistral/ministral-14b-2512" in texto
-assert "no se pudo consultar (<urlopen error sin red>) gemini/gemini-3.8-flash" in texto
+assert "no se pudo consultar (<urlopen error sin red>) gemini/gemini-3.6-flash" in texto
 assert "NO ESTÁ con tu clave   cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct  (codigo)" in texto
 assert faltan == 1, faltan
 print("OK 3: --comprobar dice qué modelos del yaml no tiene su proveedor, cuáles no tienen clave y qué no se pudo consultar")
