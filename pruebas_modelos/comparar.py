@@ -28,6 +28,7 @@ se suben (están en el .gitignore).
 import argparse
 import json
 import os
+import ssl
 import sys
 import time
 import urllib.error
@@ -40,6 +41,7 @@ RAIZ = Path(__file__).resolve().parent.parent  # la carpeta del proyecto (este a
 sys.path.insert(0, str(RAIZ))  # para importar gateway, utils y agents desde aquí
 os.chdir(RAIZ)                 # para que las rutas relativas (data_structures/…) apunten al proyecto
 
+import certifi
 import litellm
 
 import gateway
@@ -56,8 +58,12 @@ PAUSA_MINIMA = {"gemini": 6.5, "groq": 2.1, "mistral": 1.2, "sambanova": 3.1, "n
 # --- Los modelos que ofrece cada proveedor ---
 
 def _pedir_json(url: str, cabeceras: dict | None = None) -> dict:
+    """Verifica el certificado con los de certifi, los mismos que usa LiteLLM: el almacén de Windows puede no tener
+    aún la raíz de algún proveedor (a SambaNova le faltaba la de Go Daddy) y la consulta fallaba aunque el modelo sí
+    respondiera."""
     peticion = urllib.request.Request(url, headers={"User-Agent": "aidm-comparar", **(cabeceras or {})})
-    with urllib.request.urlopen(peticion, timeout=30) as respuesta:
+    contexto = ssl.create_default_context(cafile=certifi.where())
+    with urllib.request.urlopen(peticion, timeout=30, context=contexto) as respuesta:
         return json.loads(respuesta.read().decode("utf-8"))
 
 

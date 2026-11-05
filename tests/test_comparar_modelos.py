@@ -18,6 +18,7 @@ os.chdir(RAIZ)                 # para que las rutas relativas (data_structures/�
 import contextlib
 import io
 import json
+import ssl
 import tempfile
 import urllib.error
 from types import SimpleNamespace
@@ -130,11 +131,34 @@ def pedir_simulado(url, cabeceras=None):
     return paginas[url]
 
 
-comparar._pedir_json = pedir_simulado
+
+pedir_real, comparar._pedir_json = comparar._pedir_json, pedir_simulado
 os.environ.update(MISTRAL_API_KEY="x", GEMINI_API_KEY="x", CLOUDFLARE_API_KEY="x", CLOUDFLARE_ACCOUNT_ID="cuenta")
 assert comparar._tipo_openai("https://api.mistral.ai/v1", "MISTRAL_API_KEY") == {"mistral-large-2512", "mistral-large-latest"}
 assert comparar._gemini() == {"gemini-3.8-flash", "gemini-3.5-flash-lite"}
 assert len(comparar._cloudflare()) == 101 and "@cf/openai/gpt-oss-120b" in comparar._cloudflare()
 print("OK 4: --listar lee los modelos de cada proveedor, con los alias de Mistral y las páginas de Gemini y Cloudflare")
+
+# 5) Las consultas a los proveedores verifican el certificado, con los de certifi (los que usa LiteLLM) y no con los
+#    del sistema: en Windows faltaba la raíz de SambaNova y --comprobar no podía consultarla
+vistos = {}
+
+
+def urlopen_simulado(peticion, timeout=None, context=None):
+    vistos.update(url=peticion.full_url, contexto=context)
+    return io.BytesIO(b'{"data": [{"id": "gpt-oss-120b"}]}')
+
+
+urlopen_real, comparar.urllib.request.urlopen = comparar.urllib.request.urlopen, urlopen_simulado
+try:
+    assert pedir_real("https://api.sambanova.ai/v1/models") == {"data": [{"id": "gpt-oss-120b"}]}
+finally:
+    comparar.urllib.request.urlopen = urlopen_real
+contexto = vistos["contexto"]
+assert vistos["url"] == "https://api.sambanova.ai/v1/models"
+assert contexto.verify_mode == ssl.CERT_REQUIRED and contexto.check_hostname  # sigue verificando
+raices = Path(comparar.certifi.where()).read_text(encoding="utf-8").count("BEGIN CERTIFICATE")
+assert len(contexto.get_ca_certs()) == raices, (len(contexto.get_ca_certs()), raices)
+print("OK 5: --listar y --comprobar verifican el certificado de cada proveedor con los de certifi, como LiteLLM")
 
 print("\nTodo bien: el script de comparación funciona (en la parte que se puede comprobar sin llamar a los modelos).")

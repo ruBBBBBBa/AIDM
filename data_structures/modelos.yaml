@@ -8,22 +8,22 @@
 #   (MODELO_COSTES=gemini/gemini-3.6-flash). Va primero, y las reservas del perfil siguen detrás.
 # - El log dice qué modelo usa cada tarea y lo que gasta cada llamada, en las líneas que empiezan por «[gateway]».
 # - Los cambios valen desde la siguiente ejecución, sin reiniciar Streamlit.
-# - Primera elección (2 nov 2026), sin medir todavía: se comparan con pruebas_modelos/comparar.py, y
-#   «comparar.py --comprobar» dice si algún nombre no existe con tus claves.
+# - Primera elección el 2 nov 2026; extracción, cálculo, redacción y técnico, revisados con la comparación del 4 nov
+#   (pruebas_modelos/comparar.py). «comparar.py --comprobar» dice si algún nombre no existe con tus claves.
 
 perfiles:
   extraccion:       # JSON fiel a lo que dice el usuario, rápido y muchas veces (discovery)
     - mistral/ministral-14b-2512
     - gemini/gemini-3.5-flash-lite
     - groq/openai/gpt-oss-20b
-  calculo:          # cantidades y cuentas en JSON (costes, equipo)
-    - cloudflare/@cf/openai/gpt-oss-120b   # 3 nov: hizo los costes y el equipo cuando falló Gemini 3.8 Flash
-    - gemini/gemini-3.6-flash
+  calculo:
+    - gemini/gemini-3.6-flash              # 4 nov: costes y equipo válidos
+    - cloudflare/@cf/openai/gpt-oss-120b   # costes: bien el 3 nov, JSON roto el 4 nov
     - sambanova/gpt-oss-120b
   redaccion:        # texto largo y bien escrito, en el idioma del cliente (estructura, propuesta, perfiles)
     - mistral/mistral-large-4
     - gemini/gemini-3.6-flash
-    - sambanova/DeepSeek-V3.1
+    - cloudflare/@cf/openai/gpt-oss-120b   # en lugar de sambanova/DeepSeek-V3.1, retirado
   tecnico:          # texto técnico largo, con mucha salida (las 7 fases del roadmap)
     - gemini/gemini-3.6-flash              # 3 nov: Gemini 3.8 Flash no respondió en ninguna fase (503 y 429)
     - cloudflare/@cf/openai/gpt-oss-120b
@@ -71,6 +71,5 @@ modelos:
   groq/openai/gpt-oss-20b: {max_tokens: 4096, num_retries: 0}    # 8.000 TPM: si no cabe, a la reserva sin reintentar
   groq/openai/gpt-oss-120b: {max_tokens: 4096, num_retries: 0}   # 8.000 TPM
   sambanova/gpt-oss-120b: {num_retries: 0}                       # 20 peticiones al día
-  sambanova/DeepSeek-V3.1: {num_retries: 0}                      # 20 peticiones al día
   cloudflare/@cf/openai/gpt-oss-120b: {max_tokens: 8192}         # 10.000 neuronas al día, para todos sus modelos; los costes gastaron 5.527
   cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct: {max_tokens: 4096}
