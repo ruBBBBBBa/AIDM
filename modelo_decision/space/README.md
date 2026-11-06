@@ -9,6 +9,8 @@ pinned: false
 
 # Modelo de decisión de AIDM
 
+> Desde 2026, los Spaces Docker necesitan una cuenta PRO de Hugging Face (9 $/mes); con la cuenta gratuita solo se pueden crear Spaces estáticos. Lo normal es servir el modelo en local, en el mismo ordenador que AIDM: ver `modelo_decision/README.md`.
+
 Sirve con llama.cpp, en CPU, el modelo de decisión que entrena `modelo_decision/entrenar_decision.ipynb`. Hoy contesta una sola pregunta: qué hace la respuesta del cliente con el campo por el que pregunta el discovery (`dato`, `no_lo_sabe`, `no_aplica` o `no_responde`).
 
 ## Montarlo

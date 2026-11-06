@@ -1,13 +1,13 @@
 """Modelo de decisión de AIDM: preguntas cerradas que contesta un modelo ajustado con Unsloth, no un LLM.
 
-El modelo se entrena con modelo_decision/entrenar_decision.ipynb y se sirve con llama.cpp en un Space de
-Hugging Face (modelo_decision/space). AIDM lo llama por HTTP, en /v1/systemone, como a cualquier API.
+El modelo se entrena con modelo_decision/entrenar_decision.ipynb y se sirve con llama-server (llama.cpp, en CPU) en
+el mismo ordenador que AIDM (modelo_decision/README.md). AIDM lo llama por HTTP, en /v1/systemone, como a cualquier API.
 
 En el .env:
-    AIDM_DECISION_URL=https://<usuario>-aidm-decision.hf.space
-    HF_TOKEN=hf_...        (token de lectura; hace falta porque el Space es privado)
+    AIDM_DECISION_URL=http://127.0.0.1:8090
+Con un Space de Hugging Face (modelo_decision/space, necesita PRO), la URL del Space y además HF_TOKEN=hf_...
 
-Sin AIDM_DECISION_URL, o si el Space no responde, las funciones devuelven None y AIDM sigue como antes.
+Sin AIDM_DECISION_URL, o si no responde, las funciones devuelven None y AIDM sigue como antes.
 """
 import logging
 import os
@@ -19,8 +19,8 @@ from dotenv import load_dotenv
 load_dotenv(".env")
 logger = logging.getLogger("aidm")
 
-# Un Space gratuito se duerme tras 48 h sin uso y tarda en despertar: si no contesta a tiempo, el turno sigue
-# sin el modelo y no se le vuelve a llamar hasta pasada la pausa, para no frenar cada turno del discovery.
+# En CPU tarda unos 4 s. Si no contesta a tiempo (llama-server cerrado o un Space dormido), el turno sigue sin el
+# modelo y no se le vuelve a llamar hasta pasada la pausa, para no frenar cada turno del discovery.
 TIEMPO_MAXIMO = 30  # s
 PAUSA_TRAS_FALLO = 300  # s
 CONFIANZA_MINIMA = 0.7
