@@ -4,7 +4,8 @@ from pathlib import Path
 from crewai import Agent, Crew, Process, Task
 from dotenv import load_dotenv
 import gateway
-from utils import _make_agent, contexto_cliente, load_agents_config, load_problem_case, parse_html, md_to_html, sin_importes
+from utils import (_make_agent, contexto_cliente, load_agents_config, load_problem_case, parse_html, md_to_html,
+                   sin_importes, sin_emojis)
 
 load_dotenv(".env")
 
@@ -91,8 +92,10 @@ def resumir_solucion(propuesta_solucion: str, agents_config: dict) -> str:
         print(f"[roadmap_builder] Error ejecutando crew de resumen: {exc}")
         raise
 
-    print(f"\n\n\n=========================================================================================\n RESUMEN DE LA SOLUCIÓN: {result}\n ========================================================================================= \n\n\n")
-    return getattr(result, "raw", str(result)) if result else ""
+    # Fallo 65: sin emojis, para que las 7 fases del roadmap no copien el estilo
+    resumen = sin_emojis(getattr(result, "raw", str(result))) if result else ""
+    print(f"\n\n\n=========================================================================================\n RESUMEN DE LA SOLUCIÓN: {resumen}\n ========================================================================================= \n\n\n")
+    return resumen
 
 
 

@@ -513,7 +513,29 @@ def _br_como_salto(inline: Token) -> None:
                 hijos.append(texto)
     inline.children = hijos
 
+# Fallo 65: los modelos (Gemini sobre todo) adornan títulos y celdas con emojis («## 🧭 Panorama general», «📊 Bizkaia -
+# Operaciones»), que no pegan en un informe para un cliente. ✅ y ❌ pasan a ser ✓ y ✗, para que una tabla de sí y no
+# conserve su sentido; los demás pictogramas y símbolos de emoji (⚠️ ⭐ 🚀…) se quitan, con el espacio que los sigue, y
+# un número de tecla («1️⃣») se queda en «1.». Las flechas (→ ▼), las estrellas (★ ☆) y ✓ ✔ ✗ ✘ no se tocan.
+_MARCAS = str.maketrans({"\u2705": "\u2713", "\u2611": "\u2713",                    # ✅ ☑ → ✓
+                         "\u274C": "\u2717", "\u274E": "\u2717", "\u2716": "\u2717"})  # ❌ ❎ ✖ → ✗
+_TECLA = re.compile("([0-9])\uFE0F?\u20E3")
+_EMOJI = re.compile(
+    "(?:[\U0001F000-\U0001FAFF\u2600-\u2604\u2607-\u26FF\u2B05-\u2B07\u2B1B\u2B1C\u2B50\u2B55\u231A\u231B"
+    "\u23E9-\u23FA\u2702\u2708-\u270D\u270F\u2712\u271D\u2721\u2728\u2733\u2734\u2744\u2747\u2753-\u2755"
+    "\u2757\u2763\u2764\u2795-\u2797\u27A1\u27B0\u27BF\u200D\u20E3])+[ \t]*")
+_VARIANTE = re.compile("[\uFE0E\uFE0F]")  # el selector de «dibújalo como emoji»: fuera, y el espacio se queda
+
+
+def sin_emojis(texto: str) -> str:
+    """El texto de un LLM sin emojis (fallo 65). Lo usan md_to_html(), para todo lo que va al informe, y el resumen
+    de la propuesta, que llega como contexto a las 7 fases del roadmap."""
+    texto = _VARIANTE.sub("", _TECLA.sub(r"\1.", (texto or "").translate(_MARCAS)))
+    return _EMOJI.sub("", texto)
+
+
 def md_to_html(text: str) -> str:
+    text = sin_emojis(text)
     if not text or not text.strip():
         return "<p>No se ha generado contenido.</p>"
     tokens = _MD.parse(text)

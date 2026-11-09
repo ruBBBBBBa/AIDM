@@ -57,4 +57,18 @@ for plantilla in ("solution_builder_report.html", "solution_builder_report_recov
     assert ".prose table" in css and ".prose th, .prose td" in css, f"falta el CSS de tablas en {plantilla}"
 print("OK 6: las dos plantillas tienen estilos para tablas")
 
-print("\nTodo bien: el fallo 11 está arreglado.")
+# 7) Fallo 65: los emojis de los modelos no llegan al informe; las flechas, las estrellas y las marcas sí
+html = md_to_html("## 🧭 Panorama General\n* **Perfil:** 65 empleados 🚀\n## ⚠️ 2. Riesgos\n\n"
+                  "| Panel | RGPD | Nota |\n| --- | --- | --- |\n| **📊 Bizkaia - Operaciones** | ✅ | ★★★☆☆ |\n"
+                  "| 🏛️ Estratégico | ❌ | ✔️ revisado |\n\n1️⃣ Fuente → ADF → ADLS ▼ ✓ ✗\n\n👨‍👩‍👧 Equipo")
+assert "<h3>Panorama General</h3>" in html and "<h3>2. Riesgos</h3>" in html, html
+assert "65 empleados</li>" in html and "<td>Estratégico</td>" in html, html
+assert "<strong>Bizkaia - Operaciones</strong>" in html, html
+assert "<td>✓</td>" in html and "<td>✗</td>" in html and "★★★☆☆" in html and "✔revisado" not in html, html
+assert "<li>Fuente → ADF → ADLS ▼ ✓ ✗</li>" in html and "<p>Equipo</p>" in html, html  # «1️⃣» → «1.»: una lista
+quedan = [c for c in html if ord(c) >= 0x1F000 or c in "\u26a0\u2b50\ufe0f\u200d\u20e3"]
+assert not quedan, quedan
+assert md_to_html("🎯 ✨") == "<p>No se ha generado contenido.</p>"
+print("OK 7: fallo 65, sin emojis: ✅ y ❌ pasan a ✓ y ✗, y las flechas, las estrellas y las marcas se quedan")
+
+print("\nTodo bien: el fallo 11 está arreglado, y el 65 también.")
