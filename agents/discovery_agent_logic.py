@@ -6,17 +6,30 @@ from typing import Any
 import litellm
 from dotenv import load_dotenv
 
+import logging
+from pydantic import ValidationError
+import decisiones
+import gateway
+import utils
+
 from utils import (
     FieldUpdate,
     LIST_FIELDS,
     ProblemScopeUpdateRequest,
     TEXT_FIELDS,
+    VALORES_CERRADOS,
     update_problem_scope_tool,
     load_problem_case,
     _recent_chat_transcript,
+    es_valor_de_relleno,
+    respuesta_cerrada,
 )
 
 load_dotenv(".env")
+logger = logging.getLogger("aidm")
+
+# Fallo 36: el campo por el que pregunta el asistente se guarda en el caso, para leer la respuesta en el turno siguiente.
+CAMPO_PREGUNTADO = "campo_preguntado"
 
 
 
@@ -29,7 +42,8 @@ def _get_pending_fields(problem_case: dict[str, Any]) -> list[str]:
             continue
 
         value = field_data["value"]
-        if isinstance(value, str) and not value.strip():
+        # Vacío o relleno tipo "no mencionado": el campo sigue pendiente.
+        if isinstance(value, str) and es_valor_de_relleno(value):
             pending.append(field_key)
         elif isinstance(value, list) and len(value) == 0:
             pending.append(field_key)
@@ -62,9 +76,9 @@ def _extract_json_object(text: str) -> str:
 
 
 def _parse_plan(raw_output: str, allowed_fields: set[str]) -> dict[str, Any]:
-    parsed: dict[str, Any] = {"updates": [], "assistant_reply": "", "update_status": None}
+    parsed: dict[str, Any] = {"updates": [], "assistant_reply": "", "update_status": None, "campo_preguntado": None}
     try:
-        payload = json.loads(_extract_json_object(raw_output))
+        payload = json.loads(_extract_json_object(raw_output), strict =False)
     except Exception:
         return parsed
 
@@ -87,6 +101,9 @@ def _parse_plan(raw_output: str, allowed_fields: set[str]) -> dict[str, Any]:
         parsed["updates"] = safe_updates
 
     assistant_reply = payload.get("assistant_reply")
+    if isinstance(assistant_reply, dict):
+        # Algunos modelos devuelven {"text": "..."} en vez del texto directamente
+        assistant_reply = assistant_reply.get("text") or ""
     if isinstance(assistant_reply, str):
         parsed["assistant_reply"] = assistant_reply.strip()
 
@@ -94,16 +111,60 @@ def _parse_plan(raw_output: str, allowed_fields: set[str]) -> dict[str, Any]:
     if update_status in {"pending fields", "completed"}:
         parsed["update_status"] = update_status
 
+    if payload.get("campo_preguntado") in TEXT_FIELDS:
+        parsed["campo_preguntado"] = payload["campo_preguntado"]
+
     return parsed
 
+#RED DE SEGURIDAD PARA QUE EL DISCOVERY NO SE INVENTE DATOS QUE NO HA DADO EL USUARIO O INFLE LOS DADOS
+_CIFRA = re.compile(r"\d+(?:[.,]\d+)*")
+_ENUMERACION = re.compile(r"\(\d{1,2}\)|(?:^|(?<=\s))\d{1,2}[.)](?=\s)")  # (1)  1.  2)
+_TODO = re.compile(r"\b100\s?%")  # «100 %» es otra forma de decir «todo»
 
-def _apply_plan(plan: dict[str, Any]) -> None:
-    updates: list[FieldUpdate] = [FieldUpdate(**upd) for upd in plan.get("updates", [])]
+def _cifras(texto: str) -> set[str]:
+    """Números que aparecen en un texto, sin separadores: '90.000' y '90000' cuentan igual.
+    No cuentan los de una enumeración ni el «100 %»."""
+    limpio = _TODO.sub("", _ENUMERACION.sub("", texto or ""))
+    return {c.replace(".", "").replace(",", "") for c in _CIFRA.findall(limpio)}
+
+
+def _sin_cifras_inventadas(updates: list[dict[str, Any]], textos_usuario: str) -> list[dict[str, Any]]:
+    """Quita los valores con cifras que el usuario no ha dicho: suelen ser estimaciones del modelo."""
+    dichas = _cifras(textos_usuario)
+    limpios: list[dict[str, Any]] = []
+    for upd in updates:
+        valor = upd.get("value")
+        if isinstance(valor, list):  # evidencias: se quitan solo las frases con cifras inventadas
+            buenas = [v for v in valor if not isinstance(v, str) or _cifras(v) <= dichas]
+            if len(buenas) < len(valor):
+                logger.warning("Evidencias descartadas en '%s': %d con cifras que el usuario no ha dicho",
+                               upd.get("field_key"), len(valor) - len(buenas))
+            if buenas:
+                limpios.append({**upd, "value": buenas})
+            continue
+        nuevas = _cifras(valor) - dichas if isinstance(valor, str) else set()
+        if nuevas:
+            logger.warning("Cambio descartado en '%s': lleva cifras que el usuario no ha dicho (%s)",
+                           upd.get("field_key"), ", ".join(sorted(nuevas)))
+            continue
+        limpios.append(upd)
+    return limpios
+
+def _apply_plan(plan: dict[str, Any]) -> dict:
+# Cada cambio se construye por separado: si uno no tiene el formato esperado, se descarta solo ese.
+    updates: list[FieldUpdate] = []
+    for upd in plan.get("updates", []):
+        try:
+            updates.append(FieldUpdate(**upd))
+        except ValidationError as exc:
+            logger.warning("Cambio descartado en '%s': formato no válido (%s)",
+                           upd.get("field_key"), exc.errors()[0]["msg"])
+
     request = ProblemScopeUpdateRequest(
         updates=updates,
         update_status=plan.get("update_status"),
     )
-    update_problem_scope_tool(request)
+    return update_problem_scope_tool(request)
 
 # Fallback
 def _sync_status_with_content() -> None:
@@ -115,6 +176,52 @@ def _sync_status_with_content() -> None:
 
     request = ProblemScopeUpdateRequest(updates=[], update_status=expected_status)
     update_problem_scope_tool(request)
+
+
+def _ultima_pregunta(chat_history: list[dict[str, str]] | None) -> str:
+    """El último mensaje del asistente: la pregunta a la que contesta el mensaje actual del usuario."""
+    for mensaje in reversed(chat_history or []):
+        if mensaje.get("role") == "assistant":
+            return mensaje.get("content", "")
+    return ""
+
+
+def _con_respuesta_cerrada(updates: list[dict[str, Any]], problem_case: dict[str, Any], user_prompt: str,
+                           chat_history: list[dict[str, str]] | None) -> list[dict[str, Any]]:
+    """Fallo 36: si el cliente dice que no sabe o que no aplica lo que se le preguntó, se guarda aunque el LLM no lo haga.
+
+    Decide el modelo de decisión (decisiones.py); sin él, solo cuentan las frases claras («no lo sé», «no aplica»).
+    """
+    campo = problem_case.get(CAMPO_PREGUNTADO)
+    datos = problem_case.get(campo) if campo in TEXT_FIELDS else None
+    if not isinstance(datos, dict) or not es_valor_de_relleno(datos.get("value")):
+        return updates  # no se preguntó por ningún campo, o ya tiene valor
+    if any(upd.get("field_key") == campo for upd in updates):
+        return updates  # lo ha guardado el LLM; un «No lo sé» literal lo arregla _normalize_update_value()
+
+    decision = decisiones.estado_respuesta(campo, datos.get("description", ""), _ultima_pregunta(chat_history),
+                                           str(user_prompt))
+    estado, confianza = decision if decision else (respuesta_cerrada(user_prompt), 1.0)
+    if estado in VALORES_CERRADOS and confianza >= decisiones.CONFIANZA_MINIMA:
+        origen = f"modelo de decisión, {confianza:.2f}" if decision else "frase"
+        print(f"[discovery] {campo}: {estado} ({origen}); se guarda «{VALORES_CERRADOS[estado]}»")
+        return updates + [{"field_key": campo, "value": VALORES_CERRADOS[estado], "operation": "replace"}]
+    if estado == "dato":
+        logger.warning("[discovery] %s: el modelo de decisión ve un dato (%.2f) que el LLM no ha guardado", campo, confianza)
+    return updates
+
+
+def _guardar_campo_preguntado(campo: str | None) -> None:
+    """Apunta en el caso el campo por el que pregunta el asistente (o lo quita si no pregunta por ninguno)."""
+    problem_case = load_problem_case()
+    if problem_case.get(CAMPO_PREGUNTADO) == campo:
+        return
+    if campo:
+        problem_case[CAMPO_PREGUNTADO] = campo
+    else:
+        problem_case.pop(CAMPO_PREGUNTADO, None)
+    with open(utils.PROBLEM_CASE_PATH, "w", encoding="utf-8") as f:  # utils.: los tests cambian la ruta
+        json.dump(problem_case, f, ensure_ascii=False, indent=2)
 
 
 def _build_assistant_reply(
@@ -167,7 +274,7 @@ def _build_assistant_reply(
 
 def _propose_plan_with_agent(user_prompt: str, chat_history: list[dict[str, str]] | None) -> dict[str, Any]:
     allowed_fields = set(TEXT_FIELDS) | set(LIST_FIELDS)
-    model_name = os.getenv("BIG_MODEL", "").strip()
+    model_name = gateway.modelo("discovery")
     if not model_name:
         return {"updates": [], "assistant_reply": "", "update_status": None}
 
@@ -175,23 +282,42 @@ def _propose_plan_with_agent(user_prompt: str, chat_history: list[dict[str, str]
     pending = _get_pending_fields(problem_case)
     print(f"Campos pendientes detectados: {pending}")
     transcript = _recent_chat_transcript(chat_history)
-    current_json = json.dumps(problem_case, ensure_ascii=False, indent=2)
+    current_json = json.dumps({k: v for k, v in problem_case.items() if k != CAMPO_PREGUNTADO},
+                              ensure_ascii=False, indent=2)
 
     system_prompt = (
         "Eres un agente de discovery para proyectos de Data & AI de Inetum. "
-        "Tu objetivo es extraer información del cliente en cada mensaje y actualizar el caso de problema campo a campo.\n\n"
+        "Tu objetivo es recoger los datos que da el cliente y guardarlos en el caso, campo a campo.\n\n"
         "REGLAS ESTRICTAS:\n"
-        "1. En CADA turno, extrae y actualiza TODOS los campos que puedas deducir del mensaje actual o del historial.\n"
-        "2. No acumules información: si el usuario menciona algo relevante, escríbelo YA en 'updates'.\n"
-        "3. Haz UNA sola pregunta clara y concreta sobre el campo pendiente más relevante.\n"
-        "4. Devuelve EXCLUSIVAMENTE un JSON válido sin markdown ni texto extra, con este esquema:\n"
+        "1. Guarda SOLO lo que el usuario ha dicho explícitamente, en este mensaje o en el historial. "
+        "No deduzcas, no estimes ni completes nada por tu cuenta: si un dato no se ha dicho, el campo se queda pendiente. "
+        "Nunca escribas cifras (volúmenes, porcentajes, importes, plazos) que el usuario no haya dado.\n"
+        "2. Si el usuario da varios datos a la vez, guárdalos todos en este turno, cada uno en su campo, "
+        "aunque no sea el campo por el que preguntaste.\n"
+        "3. Valores breves y literales: una frase como máximo, con las palabras y cifras del usuario. "
+        "Sin markdown (ni ** ni listas) y sin análisis ni recomendaciones: la solución la diseñan otros agentes después.\n"
+        "4. En 'evidencias' (lista, operation 'merge') anota frases cortas de lo que ha dicho el usuario, nunca conclusiones tuyas, "
+        "y sin cambiarles el sentido. Anota también ahí los detalles que no encajan en ningún campo.\n"
+        "5. Campos sin dato: no los incluyas en 'updates' (nada de 'no mencionado', 'desconocido', 'N/A' ni similares). "
+        "Una respuesta negativa SÍ es un dato y se guarda tal cual: si dice «no tenemos equipo de datos», escribe "
+        "'No tiene equipo de datos'. El prefijo 'Confirmado por el usuario' es solo para dos casos: si dice que el tema "
+        "no aplica a su proyecto ('Confirmado por el usuario: no aplica') o que no lo sabe "
+        "('Confirmado por el usuario: no lo sabe'). No lo uses en ningún otro caso.\n"
+        "6. Haz UNA sola pregunta, clara y breve, sobre el campo pendiente más relevante, y pon su field_key en "
+        "'campo_preguntado' (null si no preguntas nada).\n"
+        "7. Regla de cierre: si tras tus updates no quedan campos pendientes, usa update_status='completed' "
+        "y un assistant_reply sin preguntas.\n"
+        "8. Devuelve EXCLUSIVAMENTE un JSON válido, sin markdown ni texto extra, con este esquema "
+        "(assistant_reply es un texto, no un objeto; un salto de línea dentro de un texto se escribe \\n):\n"
         '{"updates": [{"field_key": "...", "value": "...", "operation": "replace"}], '
-        '"assistant_reply": "...", "update_status": "pending fields" | "completed" | null}\n\n'
-        f"Campos válidos (únicos permitidos en field_key): {sorted(allowed_fields)}\n\n"
-        "Para el campo 'evidencias' (lista), usa operation 'merge' y value como array de strings.\n"
-        "Regla de cierre: si tras tus updates no quedan campos pendientes, usa update_status='completed' "
-        "y assistant_reply sin preguntas de seguimiento.\n"
-        "Sé descriptivo en los values: evita palabras genéricas o vacías."
+        '"assistant_reply": "...", "campo_preguntado": "..." | null, '
+        '"update_status": "pending fields" | "completed" | null}\n\n'
+        "EJEMPLO. Pregunta: «¿Tenéis equipo de datos?». Respuesta: «No, IT son 5 personas y una sabe Python. "
+        "Queremos que lo montéis vosotros y luego nos forméis.» Updates correctos: "
+        "tiene_equipo_datos='No tiene equipo de datos'; tamano_equipo_tecnico='5 personas de IT, una sabe Python'; "
+        "tipo_de_servicio='Que Inetum lo implemente y después forme al equipo del cliente'. Incorrecto: "
+        "tiene_equipo_datos='Confirmado por el usuario: no aplica', o dejar el tipo de servicio solo en evidencias.\n\n"
+        f"Campos válidos (únicos permitidos en field_key): {sorted(allowed_fields)}"
     )
 
     user_message = (
@@ -203,13 +329,14 @@ def _propose_plan_with_agent(user_prompt: str, chat_history: list[dict[str, str]
     )
 
     print(f"Ejecutando discovery con modelo {model_name}...")
-    response = litellm.completion(
+    response = gateway.completar(  # gateway (2): la llamada queda registrada, con las reservas del perfil
         model=model_name,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
         temperature=0.1,
+        num_retries=3,
     )
 
     raw_output = response.choices[0].message.content or ""
@@ -229,16 +356,25 @@ def run_agent(user_prompt, chat_history: list[dict[str, str]] | None = None):
     plan: dict[str, Any] = {"updates": [], "assistant_reply": "", "update_status": None}
     try:
         plan = _propose_plan_with_agent(user_prompt, chat_history)
-    except Exception:
-        # Si falla el LLM, se mantiene flujo de fallback determinista.
-        plan = {"updates": [], "assistant_reply": "", "update_status": None}
+    except Exception as exc:
+       # Falló la llamada al LLM (o leer su respuesta): se sigue con el plan vacío, pero queda registrado.
+        logger.error("Falló la llamada al LLM del discovery: %s", exc)
+
+     # Red de seguridad del prompt: un valor con cifras que el usuario no ha dicho es una estimación del modelo.
+    textos_usuario = " ".join(
+        m.get("content", "") for m in (chat_history or []) if m.get("role") == "user"
+    ) + " " + str(user_prompt)
+    plan["updates"] = _sin_cifras_inventadas(plan.get("updates", []), textos_usuario)
+    plan["updates"] = _con_respuesta_cerrada(plan["updates"], problem_case_before, user_prompt, chat_history)
+
 
     if plan.get("updates") or plan.get("update_status") is not None:
         try:
             _apply_plan(plan)
-        except Exception:
-            # Evita romper la conversación por un update inválido.
-            pass
+        except Exception as exc:
+            # Los cambios inválidos ya se descartan uno a uno; aquí solo llega un fallo inesperado
+            # (p. ej. no se puede leer o escribir problem_case.json). Se registra en vez de ocultarlo.
+            logger.error("No se pudo aplicar el plan del discovery: %s", exc)
 
     # Actualiza el status del caso según los campos pendientes, para mantener consistencia aunque el LLM no lo haya hecho bien.
     _sync_status_with_content()
@@ -249,5 +385,14 @@ def run_agent(user_prompt, chat_history: list[dict[str, str]] | None = None):
         and problem_case_after.get("status") == "completed"
     )
     llm_reply = "" if just_completed else plan.get("assistant_reply", "")
+    campo_preguntado = plan.get("campo_preguntado")
+
+    # Si el LLM da el caso por cerrado pero quedan campos sin dato real, su despedida no vale: se pregunta por lo que falta.
+    if plan.get("update_status") == "completed" and problem_case_after.get("status") != "completed":
+        pending = _get_pending_fields(problem_case_after)
+        if pending:
+            campo_preguntado, _, primero = pending[0].partition(": ")
+            llm_reply = f"Aún me faltan {len(pending)} datos para cerrar el caso. Empecemos por este: {primero or campo_preguntado}"
     
+    _guardar_campo_preguntado(None if problem_case_after.get("status") == "completed" else campo_preguntado)
     return _build_assistant_reply(problem_case_before, problem_case_after, llm_reply)

@@ -1,0 +1,95 @@
+"""Modelo de decisión de AIDM: preguntas cerradas que contesta un modelo ajustado con Unsloth, no un LLM.
+
+El modelo se entrena con modelo_decision/entrenar_decision.ipynb y se sirve con llama-server (llama.cpp, en CPU) en
+el mismo ordenador que AIDM (modelo_decision/README.md). AIDM lo llama por HTTP, en /v1/systemone, como a cualquier API.
+
+En el .env:
+    AIDM_DECISION_URL=http://127.0.0.1:8090
+Con un Space de Hugging Face (modelo_decision/space, necesita PRO), la URL del Space y además HF_TOKEN=hf_...
+
+Sin AIDM_DECISION_URL, o si no responde, las funciones devuelven None y AIDM sigue como antes.
+"""
+import logging
+import os
+import time
+
+import httpx
+from dotenv import load_dotenv
+
+load_dotenv(".env")
+logger = logging.getLogger("aidm")
+
+# En CPU tarda unos 4 s. Si no contesta a tiempo (llama-server cerrado o un Space dormido), el turno sigue sin el
+# modelo y no se le vuelve a llamar hasta pasada la pausa, para no frenar cada turno del discovery.
+TIEMPO_MAXIMO = 30  # s
+PAUSA_TRAS_FALLO = 300  # s
+CONFIANZA_MINIMA = 0.7
+_sin_respuesta_hasta = 0.0
+
+# La pregunta con la que se entrena el modelo (modelo_decision/generar_datos.py la importa de aquí).
+# Si cambian las instrucciones o las opciones, hay que volver a generar los datos y reentrenar.
+PREGUNTA_ESTADO = {
+    "type": "choice",
+    "instructions": "¿Qué hace la respuesta del cliente con el dato por el que se le pregunta?",
+    "criteria": {
+        "dato": "Da el dato o parte de él, aunque sea aproximado o negativo (por ejemplo «no tenemos», "
+                "«ninguno» o «solo usamos Excel»).",
+        "no_lo_sabe": "Dice que no lo sabe, que lo desconoce o que no está seguro, sin dar ningún valor.",
+        "no_aplica": "Dice que ese tema no aplica a su proyecto, que no lo necesita o que no es relevante para él.",
+        "no_responde": "No contesta a lo que se le pregunta: cambia de tema, da otro dato, pregunta otra cosa "
+                       "o lo deja para más tarde.",
+    },
+}
+
+
+def texto_estado(campo: str, descripcion: str, pregunta: str, respuesta: str) -> str:
+    """El estado que lee el modelo. Es el mismo texto en el entrenamiento y en AIDM."""
+    return (
+        f"Dato que se pregunta: {campo} ({(descripcion or '').strip()})\n"
+        f"Pregunta del asistente: {(pregunta or '').strip()[-600:]}\n"
+        f"Respuesta del cliente: {(respuesta or '').strip()[:600]}"
+    )
+
+
+def decidir(estado: str, preguntas: dict) -> dict | None:
+    """Las respuestas del modelo ({nombre: respuesta}) o None si no está configurado o no responde."""
+    global _sin_respuesta_hasta
+    url = os.getenv("AIDM_DECISION_URL", "").strip().rstrip("/")
+    if not url or time.monotonic() < _sin_respuesta_hasta:
+        return None
+    cabeceras = {"Content-Type": "application/json"}
+    token = os.getenv("HF_TOKEN", "").strip()
+    if token:
+        cabeceras["Authorization"] = f"Bearer {token}"
+    try:
+        respuesta = httpx.post(
+            f"{url}/v1/systemone",
+            json={"state": estado, "questions": preguntas},
+            headers=cabeceras,
+            timeout=httpx.Timeout(TIEMPO_MAXIMO, connect=10),
+        )
+        respuesta.raise_for_status()
+        respuestas = respuesta.json().get("answers")
+    except Exception as exc:
+        # Ni el estado ni la respuesta van al log: llevan datos del cliente.
+        _sin_respuesta_hasta = time.monotonic() + PAUSA_TRAS_FALLO
+        logger.warning("[decisiones] El modelo de decisión no responde (%s); se sigue sin él %d min",
+                       type(exc).__name__, PAUSA_TRAS_FALLO // 60)
+        return None
+    return respuestas if isinstance(respuestas, dict) else None
+
+
+def estado_respuesta(campo: str, descripcion: str, pregunta: str, respuesta: str) -> tuple[str, float] | None:
+    """('dato' | 'no_lo_sabe' | 'no_aplica' | 'no_responde', confianza) o None si el modelo no está disponible."""
+    inicio = time.monotonic()
+    respuestas = decidir(texto_estado(campo, descripcion, pregunta, respuesta), {"estado": PREGUNTA_ESTADO})
+    decision = (respuestas or {}).get("estado") or {}
+    eleccion = decision.get("choice")
+    if eleccion not in PREGUNTA_ESTADO["criteria"]:
+        return None
+    confianza = decision.get("confidence")
+    if not isinstance(confianza, (int, float)):
+        confianza = (decision.get("probabilities") or {}).get(eleccion, 0.0)
+    print(f"[decisiones] estado_respuesta · {campo} · {eleccion} ({confianza:.2f}) · "
+          f"{time.monotonic() - inicio:.1f} s")
+    return eleccion, float(confianza)

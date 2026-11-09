@@ -10,3 +10,13 @@ __pycache__/
 *.exe
 *.tar.gz
 *.tmp.*
+*.log
+
+problem_case.json
+
+# Gateway (2): prompts y respuestas grabados para comparar modelos; llevan datos del cliente
+pruebas_modelos/grabaciones/
+pruebas_modelos/resultados/
+
+# Modelo de decisión (fallo 36): el GGUF pesa 800 MB y va fuera del repo
+*.gguf

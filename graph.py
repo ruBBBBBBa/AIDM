@@ -8,6 +8,8 @@ from agents.roadmap_builder import roadmap_builder
 
 from utils import load_problem_case
 
+import gateway
+
 class AgentState(TypedDict):
     user_prompt: str
     chat_history: list[dict[str, str]]
@@ -37,12 +39,12 @@ def discovery_node(state: AgentState) -> AgentState:
     }
 
 def structure_proposal_node(state: AgentState) -> AgentState:
-    print("DISOVERY COMPELADO\n\n\n")
+    print("DISCOVERY COMPLETADO\n\n\n")
     problem_case = state.get("problem_case", {})
     chat_history = state.get("chat_history", [])
     
     structure_proposal = build_structure_proposal(problem_case, chat_history)
-    print("ESTRUCTURE PROPOSAL COMPLETADO\n\n\n")
+    print("STRUCTURE PROPOSAL COMPLETADO\n\n\n")
     
     return {
         **state,
@@ -66,7 +68,7 @@ def solution_building_node(state: AgentState) -> AgentState:
 def roadmap_node(state: AgentState) -> AgentState:
     problem_solution = state.get("problem_solution")
 
-    roadmap_response = roadmap_builder(problem_solution)
+    roadmap_response = roadmap_builder(problem_solution, state.get("problem_case"))
     print("ROADMAP COMPLETADO\n\n\n")
 
     return {
@@ -116,4 +118,7 @@ def run_graph(user_prompt: str, chat_history: list[dict[str, str]] | None = None
         "completion_reached": False,
         "roadmap": "",
     }
-    return aidm_graph.invoke(initial_state)
+    resultado = aidm_graph.invoke(initial_state)
+    if resultado.get("completion_reached"):
+        gateway.resumen_consumo()  # lo que ha gastado la ejecución, al acabar el informe
+    return resultado

@@ -1,15 +1,23 @@
 import json
-import re
 import yaml
-from html import escape
 from pathlib import Path
 from typing import Any
 from typing import List, Literal, Optional
 
 import litellm
 from bs4 import BeautifulSoup, FeatureNotFound
-from crewai import Agent
+from crewai import Agent, LLM
+from markdown_it import MarkdownIt
+from markdown_it.token import Token
 from pydantic import BaseModel, Field
+from gateway import build_llm # gateway de modelos: el tope y la reserva de cada modelo, en data_structures/modelos.yaml
+
+import logging
+import re
+import unicodedata
+
+
+
 
 litellm.drop_params = True
 
@@ -49,10 +57,39 @@ TEXT_FIELDS = {
 VALID_STATUSES = {"pending fields", "completed"}
 PROBLEM_CASE_PATH = Path("data_structures/problem_case.json")
 AGENTS_FILE = Path("data_structures/agents.yaml")
+logger = logging.getLogger("aidm")
+
+#Prueba para fallback por si uno de los modelos no llega a terminar, se puede usar otro modelo de reserva con mas tokens
+'''
+~cambiado, ahora el gateway se encarga de todo esto~
+
+MODEL_RULES = {
+    "groq/openai/gpt-oss-20b":  {"max_tokens": 4096, "fallback": "cloudflare/@cf/openai/gpt-oss-20b"},
+    "groq/openai/gpt-oss-120b": {"max_tokens": 6000, "fallback": "cloudflare/@cf/openai/gpt-oss-120b"},
+}
+FALLBACK_MAX_TOKENS = 6000
+'''
 
 def load_problem_case() -> dict[str, Any]:
     with open(PROBLEM_CASE_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
+
+'''
+~cambiado, ahora el gateway se encarga de todo esto~
+def build_llm(model_name: str):
+    """LLM para CrewAI con reintentos, tope de salida explícito y modelo de reserva."""
+    if model_name.startswith("gemini/"):
+        return model_name  # cliente nativo de CrewAI, no admite estos parámetros
+    rules = MODEL_RULES.get(model_name, {})
+    params = {"num_retries": 2}
+    # Cloudflare corta a 256 tokens si no se le indica un tope
+    max_tokens = rules.get("max_tokens") or (4096 if model_name.startswith("cloudflare/") else None)
+    if max_tokens:
+        params["max_tokens"] = max_tokens
+    if rules.get("fallback"):
+        params["fallbacks"] = [{"model": rules["fallback"], "max_tokens": FALLBACK_MAX_TOKENS}]
+    return LLM(model=model_name, **params)
+'''
     
 def _make_agent(key: str, agents_config, model_name) -> Agent:
     data = agents_config.get(key, {})
@@ -60,7 +97,7 @@ def _make_agent(key: str, agents_config, model_name) -> Agent:
         role=data.get("role"),
         goal=data.get("goal"),
         backstory=data.get("backstory"),
-        llm=model_name,
+        llm=build_llm(model_name),
         verbose=False,
         allow_delegation=False,
     )
@@ -97,17 +134,255 @@ class ProblemScopeUpdateRequest(BaseModel):
         description="Nuevo valor de status cuando proceda.",
     )
 
+
+# Valores con los que el LLM "rellena" un campo del que no sabe nada.
+PLACEHOLDER_EXACT = {
+    "desconocido", "desconocida", "pendiente", "por determinar", "por definir",
+    "sin datos", "sin informacion", "sin especificar", "n/a", "na", "n.a", "n/d", "nd",
+    "-", "--", "?", "unknown", "tbd", "none", "null",
+}
+PLACEHOLDER_PREFIXES = (
+    "no mencionad", "no se menciona", "no especificad", "no indicad", "no proporcionad",
+    "no facilitad", "not mentioned", "not specified", "not provided",
+)
+# Una respuesta explícita del usuario ("no aplica", "no lo sé") se guarda con este prefijo.
+CONFIRMED_PREFIX = "confirmado por el usuario"
+
+
+def _normalize_text(value: str) -> str:
+    sin_tildes = "".join(c for c in unicodedata.normalize("NFKD", value) if not unicodedata.combining(c))
+    texto = " ".join(sin_tildes.lower().split())
+    return texto.strip(" .,;:\"'()[]¿¡")
+
+# Fallo 36: un «no lo sé» o un «no aplica» se guarda con el prefijo, para que los agentes no lo lean como un dato.
+VALORES_CERRADOS = {
+    "no_lo_sabe": "Confirmado por el usuario: no lo sabe",
+    "no_aplica": "Confirmado por el usuario: no aplica",
+}
+_FRASES_CERRADAS = {
+    "no_lo_sabe": {
+        "no lo se", "no se", "nose", "ni idea", "no tengo ni idea", "desconozco", "lo desconozco", "no lo sabemos",
+        "no sabemos", "no sabria decirte", "no sabria decir", "no te sabria decir", "no estoy seguro",
+        "no estoy segura", "no lo tengo claro", "no lo sabe", "no sabe",
+        "i don't know", "i dont know", "don't know", "dont know", "i do not know", "no idea", "not sure",
+        "i'm not sure", "im not sure", "we don't know", "no clue",
+    },
+    "no_aplica": {
+        "no aplica", "no nos aplica", "no aplica a nuestro proyecto", "no aplica al proyecto", "no aplica en nuestro caso",
+        "no procede", "no es aplicable", "n/a", "not applicable", "does not apply", "doesn't apply",
+    },
+}
+_RELLENO_INICIO = re.compile(r"^(?:pues|la verdad|sinceramente|uf+|mm+|hmm+)[\s,.]+")
+_RELLENO_FINAL = re.compile(r"[\s,.]+(?:la verdad|sinceramente|todavia|aun|de momento|sorry)$")
+
+
+def respuesta_cerrada(texto: Any) -> str | None:
+    """'no_lo_sabe' o 'no_aplica' si todo el texto es esa respuesta («No lo sé.», «Ni idea, la verdad»); si no, None.
+
+    Solo frases enteras: «No sé, unos 2 TB» lleva un dato y no cuenta.
+    """
+    if not isinstance(texto, str):
+        return None
+    normalizado = _normalize_text(texto.replace("’", "'"))
+    normalizado = _RELLENO_FINAL.sub("", _RELLENO_INICIO.sub("", normalizado)).strip(" .,;:!?…")
+    for estado, frases in _FRASES_CERRADAS.items():
+        if normalizado in frases:
+            return estado
+    return None
+
+
+def es_valor_de_relleno(value: Any) -> bool:
+    """True si el valor no es un dato real: vacío o un relleno tipo 'no mencionado'."""
+    if value is None:
+        return True
+    if not isinstance(value, str):
+        return False
+    texto = _normalize_text(value)
+    if not texto:
+        return True
+    if texto.startswith(CONFIRMED_PREFIX):
+        return False
+    return texto in PLACEHOLDER_EXACT or texto.startswith(PLACEHOLDER_PREFIXES)
+
+#Necesario para que no se pierda contexto entre las 7 tareas ni entre las crews.
+#MODIFICADO, para que no se pierdan los datos del cliente y no se guarden valores de relleno
+REGLAS_DATOS_CLIENTE = (
+    "CÓMO USAR ESTOS DATOS:\n"
+    "- Solo lo confirmado y las notas del discovery son hechos sobre el cliente. No le atribuyas herramientas, "
+    "licencias, sistemas, cifras ni preferencias que no estén aquí.\n"
+    "- Si necesitas un dato que no está, no lo inventes: escribe «Por confirmar: …» si hay que preguntárselo al "
+    "cliente, o «Se asume: …» si es una suposición tuya para poder avanzar, y di de qué depende.\n"
+    "- No escribas cifras del cliente que no estén aquí: porcentajes actuales, volúmenes, ahorros, costes por "
+    "incidencia, fechas o número de usuarios.\n"
+)
+
+REGLA_PRESUPUESTO = (
+    "- Las cifras de presupuesto y coste salen solo de la sección de costes: no hagas presupuestos ni repartos de "
+    "importes, ni pongas precios o porcentajes de contingencia. Puedes comparar opciones por coste sin dar cifras.\n"
+)
+
+def _estado_del_valor(valor: Any) -> tuple[str, str]:
+    """('confirmado' | 'no_lo_sabe' | 'no_aplica' | 'sin_dato', valor limpio) de un campo de texto del caso."""
+    if not isinstance(valor, str) or es_valor_de_relleno(valor):
+        return "sin_dato", ""
+    texto = valor.strip()
+    normalizado = _normalize_text(texto)
+    if normalizado.startswith(CONFIRMED_PREFIX):
+        resto = normalizado[len(CONFIRMED_PREFIX):].strip(" :.-")
+        if resto.startswith(("no lo sabe", "no sabe", "no lo se")):
+            return "no_lo_sabe", ""
+        if resto.startswith("no aplica"):
+            return "no_aplica", ""
+        texto = texto[len(CONFIRMED_PREFIX):].strip(" :.-") or texto  # «Confirmado por el usuario: X» → X
+    return "confirmado", texto
+
+
+def contexto_cliente(problem_case: dict, con_costes: bool = False) -> str:
+    """Los datos del cliente para los agentes, cada campo con su estado, y las reglas para usarlos.
+
+    Todos los agentes reciben lo mismo, así que ninguno tiene que rellenar huecos por su cuenta.
+    """
+    grupos: dict[str, list[str]] = {"confirmado": [], "no_lo_sabe": [], "no_aplica": [], "sin_dato": []}
+    notas: list[str] = []
+    for campo, datos in (problem_case or {}).items():
+        if campo == "status" or not isinstance(datos, dict):
+            continue
+        valor = datos.get("value")
+        if campo == "evidencias":
+            notas = list(dict.fromkeys(v.strip() for v in valor or [] if isinstance(v, str) and v.strip()))
+            continue
+        estado, limpio = _estado_del_valor(valor)
+        grupos[estado].append(f"- {campo}: {limpio}" if estado == "confirmado" else f"- {campo}")
+
+    titulos = {
+        "confirmado": "Confirmados por el cliente:",
+        "no_lo_sabe": "El cliente no lo sabe (si hace falta, propón una opción y márcala como «Se asume»):",
+        "no_aplica": "El cliente dice que no aplica a su proyecto:",
+        "sin_dato": "Sin dato (no se preguntó o no se respondió):",
+    }
+    partes = ["DATOS DEL CLIENTE (caso del discovery)"]
+    for estado, lineas in grupos.items():
+        if lineas:
+            partes.append(titulos[estado] + "\n" + "\n".join(lineas))
+    if notas:
+        partes.append("Notas del discovery (frases del cliente; si alguna choca con un dato confirmado, manda el "
+                      "dato confirmado):\n" + "\n".join(f"- {n}" for n in notas))
+    if len(partes) == 1:
+        partes.append("(sin datos del cliente)")
+    reglas = REGLAS_DATOS_CLIENTE if con_costes else REGLAS_DATOS_CLIENTE + REGLA_PRESUPUESTO
+    return "\n\n".join(partes) + "\n\n" + reglas
+
+# Fallo 44: los importes salen solo en la sección de costes, donde se suman en Python. Arquitectura, BI y el
+# roadmap los ponían igualmente («~500 €/mes», «6.000 €/año») aunque REGLA_PRESUPUESTO se lo prohíbe
+_CANTIDAD = r"\d(?:[\d.,]*\d)?(?:\s*(?:mil(?:lones)?(?:\s+de)?|[km])(?![a-záéíóúñ]))?"
+_CANTIDAD_RE = re.compile(_CANTIDAD, re.IGNORECASE)
+_IMPORTE = re.compile(
+    rf"(?:~\s*)?(?:(?:€|\$|\beur\b|\busd\b)\s*{_CANTIDAD}"
+    rf"|{_CANTIDAD}(?:(?:\s*[–-]\s*|\s+a\s+){_CANTIDAD})?\s*(?:€|\$|eur(?:os)?\b|usd\b|d[óo]lares\b))"
+    rf"(?:\s*/\s*[a-záéíóúñ]+)*",
+    re.IGNORECASE,
+)
+NOTA_IMPORTES = "*Los importes de la solución están en la sección de costes.*"
+
+
+def _valor_cantidad(texto: str) -> float | None:
+    """'8.000' -> 8000; '1,5 millones' -> 1500000; '20K' -> 20000; '9,40' -> 9.4."""
+    m = re.match(r"(\d(?:[\d.,]*\d)?)\s*(mil(?:lones)?|[km])?", texto.strip(), re.IGNORECASE)
+    if not m:
+        return None
+    numero = m.group(1)
+    if "." in numero and "," in numero:  # el último separador es el decimal
+        decimal = "," if numero.rfind(",") > numero.rfind(".") else "."
+        numero = numero.replace("." if decimal == "," else ",", "").replace(decimal, ".")
+    else:
+        sep = "." if "." in numero else ","
+        grupos = numero.split(sep)
+        numero = "".join(grupos) if all(len(g) == 3 for g in grupos[1:]) else numero.replace(sep, ".")
+    try:
+        valor = float(numero)
+    except ValueError:
+        return None
+    return valor * {"k": 1e3, "mil": 1e3, "m": 1e6, "millones": 1e6}.get((m.group(2) or "").lower(), 1)
+
+
+def _importes_del_cliente(problem_case: dict) -> set[float]:
+    """Las cifras que dio el cliente, que sí se pueden citar: las del presupuesto y los importes de sus respuestas."""
+    permitidos: set[float] = set()
+    for campo, datos in (problem_case or {}).items():
+        if not isinstance(datos, dict):
+            continue
+        valores = datos.get("value")
+        for valor in valores if isinstance(valores, list) else [valores]:
+            if not isinstance(valor, str):
+                continue
+            # En el presupuesto vale cualquier número («90.000»); en el resto, solo los que llevan moneda
+            trozos = [valor] if campo == "restriccion_presupuestaria" else [m.group(0) for m in _IMPORTE.finditer(valor)]
+            for trozo in trozos:
+                permitidos.update(v for q in _CANTIDAD_RE.findall(trozo) if (v := _valor_cantidad(q)))
+    return permitidos
+
+
+def sin_importes(texto: str, problem_case: dict | None = None, seccion: str = "") -> str:
+    """Quita los importes de una sección que no es la de costes (fallo 44), salvo los que dio el cliente.
+
+    En una tabla, el importe se cambia por «—». En el texto, se quita el paréntesis que lo lleva o, si no
+    está entre paréntesis, la frase. Los bloques de código no se tocan.
+    """
+    if not texto:
+        return texto
+    permitidos = _importes_del_cliente(problem_case or {})
+
+    def ajeno(importe: str) -> bool:
+        valores = [_valor_cantidad(q) for q in _CANTIDAD_RE.findall(importe)]
+        return not all(v and any(abs(v - p) < 0.5 for p in permitidos) for v in valores)
+
+    def con_importe(trozo: str) -> bool:
+        return any(ajeno(m.group(0)) for m in _IMPORTE.finditer(trozo))
+
+    lineas, tocadas, en_codigo = [], 0, False
+    for linea in texto.splitlines():
+        if linea.lstrip().startswith("```"):
+            en_codigo = not en_codigo
+            lineas.append(linea)
+            continue
+        if en_codigo or not con_importe(linea):
+            lineas.append(linea)
+            continue
+        tocadas += 1
+        linea = re.sub(r"\s*\([^()]*\)", lambda m: "" if con_importe(m.group(0)) else m.group(0), linea)
+        if linea.lstrip().startswith("|"):  # fila de tabla: la celda se queda con «—»
+            linea = _IMPORTE.sub(lambda m: "—" if ajeno(m.group(0)) else m.group(0), linea)
+            lineas.append(re.sub(r"—(?:\s*[–-]\s*—)+", "—", linea))
+            continue
+        prefijo = re.match(r"\s*(?:[-*+]\s+|\d+[.)]\s+|>\s*|#+\s+)?", linea).group(0)
+        frases = re.split(r"(?:(?<=[.!?])|(?<=[.!?]\*\*)|(?<=[.!?][\"»”]))\s+", linea[len(prefijo):])
+        cuerpo = " ".join(f for f in frases if not con_importe(f)).strip()
+        if cuerpo:
+            lineas.append(prefijo + cuerpo)
+    if not tocadas:
+        return texto
+    logger.warning("Sección %s: se quitan los importes de %d línea(s); van en la de costes", seccion or "?", tocadas)
+    return "\n".join(lineas).rstrip() + "\n\n" + NOTA_IMPORTES
+
+#MODIFICADO: _normalize_update_value y _apply_field_update para que no se guarden valores de relleno
 def _normalize_update_value(field_key: str, value: str | List[str], operation: str) -> str | List[str]:
     if field_key in TEXT_FIELDS:
         if operation != "replace":
             raise ValueError(f"El campo {field_key} es de texto y solo permite operation='replace'.")
-        if not isinstance(value, str):
-            raise ValueError(f"El campo {field_key} debe actualizarse con texto, no con lista.")
+        if isinstance(value, list):
+            # Algunos modelos mandan un campo de texto como lista: se une en un texto en vez de perder el dato
+            value = "; ".join(str(item).strip() for item in value if str(item).strip())
+        elif not isinstance(value, str):
+            raise ValueError(f"El campo {field_key} debe actualizarse con texto.")
 
         normalized = value.strip()
         if not normalized:
             raise ValueError(f"El campo {field_key} no puede actualizarse con texto vacío.")
-        return normalized
+        if es_valor_de_relleno(normalized):
+            raise ValueError(f"El campo {field_key} no se guarda: es un valor de relleno, no un dato del cliente.")
+        # Fallo 36: un «No lo sé» literal se leía como un dato confirmado
+        cerrada = respuesta_cerrada(normalized)
+        return VALORES_CERRADOS[cerrada] if cerrada else normalized
 
     if field_key in LIST_FIELDS:
         items = value if isinstance(value, list) else [value]
@@ -118,45 +393,60 @@ def _normalize_update_value(field_key: str, value: str | List[str], operation: s
 
     raise ValueError(f"El campo {field_key} no está contemplado en la configuración de la tool.")
 
+# AÑADIDO: apply_field_update y
+# SUSTITUIDA: update_problem_scope_tool
+
+def _apply_field_update(problem_case: dict, upd: FieldUpdate) -> None:
+    """Valida UN cambio y, si es válido, lo aplica. Si lanza ValueError, no ha tocado nada."""
+    field_key = upd.field_key
+
+    if field_key not in problem_case:
+        raise ValueError(f"Campo no válido: {field_key}")
+    if field_key == "status":
+        raise ValueError("El campo 'status' no puede actualizarse dentro de 'updates'; usa 'update_status'.")
+
+    field_data = problem_case[field_key]
+    if not isinstance(field_data, dict) or "value" not in field_data:
+        raise ValueError(f"El campo {field_key} no sigue la estructura esperada con 'value'.")
+
+    normalized_value = _normalize_update_value(field_key, upd.value, upd.operation)
+    current_value = field_data["value"]
+
+    if upd.operation == "replace":
+        field_data["value"] = normalized_value
+        return
+
+    if not isinstance(current_value, list):
+        raise ValueError(f"El campo {field_key} no es una lista.")
+
+    new_items = normalized_value if isinstance(normalized_value, list) else [normalized_value]
+    if upd.operation == "append":
+        field_data["value"] = current_value + new_items
+    else:  # merge: añade solo lo que no estaba
+        merged = current_value[:]
+        for item in new_items:
+            if item not in merged:
+                merged.append(item)
+        field_data["value"] = merged
+
 
 def update_problem_scope_tool(request: ProblemScopeUpdateRequest) -> dict:
     with open(PROBLEM_CASE_PATH, "r", encoding="utf-8") as f:
         problem_case = json.load(f)
 
+    #TODO: cambiar la funcion y las listas por una base de datos???
+    updated_fields: list[str] = []
+    rejected: list[dict[str, str]] = []
+
+    # Cada cambio se valida por separado: uno inválido se descarta y los demás se guardan.
     for upd in request.updates:
-        field_key = upd.field_key
-
-        # Validacion de que el campo existe en el JSON y sigue la estructura esperada
-        if field_key not in problem_case:
-            raise ValueError(f"Campo no válido: {field_key}")
-
-        if field_key == "status":
-            raise ValueError("El campo 'status' no puede actualizarse dentro de 'updates'; usa 'update_status'.")
-
-        field_data = problem_case[field_key]
-        if not isinstance(field_data, dict) or "value" not in field_data:
-            raise ValueError(f"El campo {field_key} no sigue la estructura esperada con 'value'.")
-
-        normalized_value = _normalize_update_value(field_key, upd.value, upd.operation)
-        current_value = problem_case[field_key]["value"]
-
-        if upd.operation == "replace":
-            problem_case[field_key]["value"] = normalized_value
-            continue
-
-        if not isinstance(current_value, list):
-            raise ValueError(f"El campo {field_key} no es una lista.")
-
-        new_items = normalized_value if isinstance(normalized_value, list) else [normalized_value]
-
-        if upd.operation == "append":
-            problem_case[field_key]["value"].extend(new_items)
-        else:
-            merged = current_value[:]
-            for item in new_items:
-                if item not in merged:
-                    merged.append(item)
-            problem_case[field_key]["value"] = merged
+        try:
+            _apply_field_update(problem_case, upd)
+            updated_fields.append(upd.field_key)
+        except ValueError as exc:
+            rejected.append({"field_key": upd.field_key, "reason": str(exc)})
+            # Solo el campo y el motivo, nunca el valor: puede llevar datos del cliente.
+            logger.warning("Cambio descartado en '%s': %s", upd.field_key, exc)
 
     if request.update_status is not None:
         if request.update_status not in VALID_STATUSES:
@@ -167,10 +457,12 @@ def update_problem_scope_tool(request: ProblemScopeUpdateRequest) -> dict:
         json.dump(problem_case, f, ensure_ascii=False, indent=2)
 
     return {
-        "message": "Problem scope actualizado correctamente",
-        "updated_fields": [u.field_key for u in request.updates],
+        "message": "Problem scope actualizado" + (f" ({len(rejected)} cambio(s) descartado(s))" if rejected else ""),
+        "updated_fields": updated_fields,
+        "rejected": rejected,
         "status": problem_case["status"],
     }
+
 
 
 def _recent_chat_transcript(chat_history: list[dict[str, str]] | None, max_messages: int = 6) -> str:
@@ -198,88 +490,37 @@ def parse_html(markup: str) -> BeautifulSoup:
         return BeautifulSoup(markup, "html.parser")
 
 
+# Conversor Markdown → HTML: CommonMark + tablas. Con html=False, el HTML que escriba el LLM
+# se muestra como texto en vez de ejecutarse; breaks=True convierte cada salto de línea en <br>.
+_MD = MarkdownIt("commonmark", {"html": False, "breaks": True}).enable(["table", "strikethrough"])
+_BR = re.compile(r"</?br\s*/?>", re.IGNORECASE)  # <br>, <br/>, <br /> y también </br>, que el navegador lee como <br>
+
+def _br_como_salto(inline: Token) -> None:
+    """Los agentes escriben <br> dentro de las celdas para partir líneas. Con el HTML desactivado
+    saldría como texto, así que se cambia por un salto de línea real. Solo en texto normal:
+    un `<br>` entre comillas de código se queda como código, y el resto del HTML sigue escapado."""
+    hijos = []
+    for hijo in inline.children or []:
+        if hijo.type != "text" or not _BR.search(hijo.content):
+            hijos.append(hijo)
+            continue
+        for i, trozo in enumerate(_BR.split(hijo.content)):
+            if i:
+                hijos.append(Token("hardbreak", "br", 0))
+            if trozo:
+                texto = Token("text", "", 0)
+                texto.content = trozo
+                hijos.append(texto)
+    inline.children = hijos
+
 def md_to_html(text: str) -> str:
     if not text or not text.strip():
         return "<p>No se ha generado contenido.</p>"
-
-    lines = text.splitlines()
-    html_parts: list[str] = []
-    in_ul = False
-    in_ol = False
-
-    def close_lists():
-        nonlocal in_ul, in_ol
-        if in_ul:
-            html_parts.append("</ul>")
-            in_ul = False
-        if in_ol:
-            html_parts.append("</ol>")
-            in_ol = False
-
-    def inline(s: str) -> str:
-        s = escape(s)
-        s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
-        s = re.sub(r"\*(.+?)\*",     r"<em>\1</em>", s)
-        s = re.sub(r"_(.+?)_",       r"<em>\1</em>", s)
-        s = re.sub(r"`(.+?)`",       r"<code>\1</code>", s)
-        return s
-
-    pending_paragraph: list[str] = []
-
-    def flush_paragraph():
-        if pending_paragraph:
-            html_parts.append("<p>" + "<br>".join(pending_paragraph) + "</p>")
-            pending_paragraph.clear()
-
-    for line in lines:
-        heading_match = re.match(r"^(#{1,4})\s+(.*)", line)
-        if heading_match:
-            close_lists()
-            flush_paragraph()
-            level = len(heading_match.group(1))
-            tag = "h3" if level <= 2 else "h4"
-            html_parts.append(f"<{tag}>{inline(heading_match.group(2))}</{tag}>")
-            continue
-
-        if re.match(r"^[-*_]{3,}$", line.strip()):
-            close_lists()
-            flush_paragraph()
-            html_parts.append("<hr>")
-            continue
-
-        ul_match = re.match(r"^[\s]*[-*+]\s+(.*)", line)
-        if ul_match:
-            flush_paragraph()
-            if in_ol:
-                html_parts.append("</ol>")
-                in_ol = False
-            if not in_ul:
-                html_parts.append("<ul>")
-                in_ul = True
-            html_parts.append(f"<li>{inline(ul_match.group(1))}</li>")
-            continue
-
-        ol_match = re.match(r"^[\s]*\d+[.)]\s+(.*)", line)
-        if ol_match:
-            flush_paragraph()
-            if in_ul:
-                html_parts.append("</ul>")
-                in_ul = False
-            if not in_ol:
-                html_parts.append("<ol>")
-                in_ol = True
-            html_parts.append(f"<li>{inline(ol_match.group(1))}</li>")
-            continue
-
-        if not line.strip():
-            close_lists()
-            flush_paragraph()
-            continue
-
-        close_lists()
-        pending_paragraph.append(inline(line))
-
-    close_lists()
-    flush_paragraph()
-
-    return "\n".join(html_parts) if html_parts else "<p>No se ha generado contenido.</p>"
+    tokens = _MD.parse(text)
+    # Los títulos del LLM no deben competir con los del informe: # y ## → h3, el resto → h4 (como antes)
+    for token in tokens:
+        if token.type in ("heading_open", "heading_close"):
+            token.tag = "h3" if token.tag in ("h1", "h2") else "h4"
+        elif token.type == "inline":
+            _br_como_salto(token)
+    return _MD.renderer.render(tokens, _MD.options, {})

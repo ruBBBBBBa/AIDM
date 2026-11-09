@@ -1,7 +1,8 @@
 from crewai import Crew, Process, Task
 from pydantic import BaseModel
+import gateway
 
-from utils import _make_agent, _recent_chat_transcript, load_agents_config
+from utils import _make_agent, _recent_chat_transcript, load_agents_config, contexto_cliente
 
 
 class ProposalResult(BaseModel):
@@ -26,15 +27,18 @@ def run_proposal_crew(
     structure_proposal: str,
     problem_case: dict,
     chat_history: list[dict[str, str]] | None,
-    model_name: str,
+    model_name: str | None = None,
 ) -> ProposalResult:
     agents_config = load_agents_config()
     transcript = _recent_chat_transcript(chat_history)
+    contexto = contexto_cliente(problem_case)  # los mismos datos, con su estado, para los 4 agentes
 
-    architect = _make_agent("structure_proposal_agent", agents_config, model_name)
-    data_governance = _make_agent("data_governance_agent", agents_config, model_name)
-    data_ai_strategist = _make_agent("data_ai_strategist", agents_config, model_name)
-    bi_visualization_specialist = _make_agent("bi_visualization_specialist", agents_config, model_name)
+    # Gateway de modelos: cada agente pide el suyo. model_name, si se pasa (lo hacen los tests), vale para los 4
+    architect = _make_agent("structure_proposal_agent", agents_config, model_name or gateway.modelo("arquitectura"))
+    data_governance = _make_agent("data_governance_agent", agents_config, model_name or gateway.modelo("gobernanza"))
+    data_ai_strategist = _make_agent("data_ai_strategist", agents_config, model_name or gateway.modelo("estrategia"))
+    bi_visualization_specialist = _make_agent("bi_visualization_specialist", agents_config,
+                                              model_name or gateway.modelo("visualizacion"))
 
     architecture_task = Task(
         description=(
@@ -42,11 +46,11 @@ def run_proposal_crew(
             "Recomienda plataformas/servicios, justifica cada decisión y explicita supuestos cuando falten datos. "
             "Tambien dispones de el historial de el chat para que tengas contexto. "
             f"- Propuesta de solución:\n{structure_proposal}\n"
-            f"- Descripción del problema:\n{problem_case}\n"
+            f"{contexto}"
             f"- Historial reciente:\n{transcript}\n"
-            "Procura que la respuesta sea detallada y este bien redactada."
+            "Ajusta la propuesta al tamaño del cliente y al alcance que pide: no añadas componentes que el caso no necesita y redactala acordemente"
         ),
-        expected_output="Una propuesta de arquitectura detallada, extensa y justificada, con la siguiente estructura: Arquitectura Propuesta:\n (...). Sin dibujar ninguna tabla ni gráfico, solo texto.",
+        expected_output="Una propuesta de arquitectura justificada y proporcionada al cliente, con la siguiente estructura: Arquitectura Propuesta:\n (...). Sin dibujar ninguna tabla ni gráfico, solo texto.",
         agent=architect,
     )
 
@@ -56,7 +60,7 @@ def run_proposal_crew(
             "A partir de esta información, diseña una propuesta de gobernanza del dato y de inteligencia artificial adaptada al proyecto. "
             "Tambien dispones de el historial de el chat para que tengas contexto. "
             f"- Propuesta de solución:\n{structure_proposal}\n"
-            f"- Descripción del problema:\n{problem_case}\n"
+            f"{contexto}"
             f"- Historial reciente:\n{transcript}\n"
         ),
         expected_output="Texto estructurado que describa la propuesta de gobernanza del dato y AI para el proyecto, incluyendo secciones claras, explicaciones comprensibles y justificación de las decisiones tomadas. Sin dibujar ninguna tabla ni gráfico, solo texto.",
@@ -66,16 +70,17 @@ def run_proposal_crew(
     data_ai_task = Task(
         description=(
             "Toma estos inputs como contexto: "
-            f"problem case: {problem_case}\n"
+            f"{contexto}"
             f"estructura propuesta: {structure_proposal}\n"
-            "Basándote en el 'problem case' completo y en la propuesta de arquitectura realizada para el problema, realiza lo siguiente: "
-            "1. Análisis Crítico: Evalúa el problema de negocio y la madurez de datos actual. "
-            "2. Propuesta de Funcionalidades: Define al menos 3 funcionalidades clave de IA/Data "
-            "(ej. Modelos predictivos, RAG con LLMs, Optimización, etc.) que resuelvan el problema. "
-            "3. Roadmap Técnico: Por cada funcionalidad, detalla qué fuentes de datos usará, "
-            "qué tipo de análisis se aplicará y cómo se integrará en el flujo de trabajo. "
-            "4. Valor de Negocio: Explica cómo estas soluciones impactarán en las métricas "
-            "de éxito (success_metrics) definidas en el contexto."
+            "Basándote en los datos del cliente y en la estructura propuesta, realiza lo siguiente: "
+            "1. Análisis crítico: evalúa el problema de negocio y la madurez de datos actual (madurez_analitica_actual). "
+            "2. Funcionalidades: define las funcionalidades de IA y datos que resuelven lo que pide el cliente "
+            "(objetivo_del_proyecto y enfoque_ai), ni más ni menos. Separa lo que cabe en el plazo pedido (plazo_objetivo) "
+            "de lo que serían fases posteriores. "
+            "3. Roadmap técnico: por cada funcionalidad, qué fuentes de datos usará, qué tipo de análisis se aplicará "
+            "y cómo se integrará en el trabajo diario del cliente. "
+            "4. Valor de negocio: cómo contribuye cada funcionalidad a los KPIs del cliente (kpis_de_exito). "
+            "Si un KPI no se puede medir dentro del plazo pedido, dilo."
         ),
         expected_output="Texto estructurado que describa la propuesta de estrategia de datos e AI para el proyecto, incluyendo secciones claras, explicaciones comprensibles y justificación de las decisiones tomadas. Sin dibujar ninguna tabla ni gráfico, solo texto.",
         agent=data_ai_strategist,
@@ -84,17 +89,16 @@ def run_proposal_crew(
     bi_visualization_task = Task(
         description=(
             "Toma estos inputs como contexto: "
-            f"problem case: {problem_case}\n"
+            f"{contexto}"
             f"estructura propuesta: {structure_proposal}\n"
-            "Basándote en el 'Client Context' y las soluciones de IA propuestas anteriormente, desarrolla la estrategia de BI: "
-            "1. Definición de KPIs de Visualización: Traduce las 'success_metrics' en indicadores "
-            "visuales concretos (ej. Gauge charts para cumplimiento de objetivos, Heatmaps de ventas). "
-            "2. Diseño de Dashboards: Propón la estructura de al menos 2 dashboards (ej. Dashboard "
-            "Ejecutivo y Dashboard de Operaciones Detallado). "
-            "3. User Experience (UX): Especifica quiénes son los 'data_consumers' y cómo deben "
-            "interactuar con la información (filtros, drill-downs, alertas). "
-            "4. Stack de BI: Recomienda la herramienta ideal (Power BI, Tableau, Looker, Streamlit) "
-            "según las 'technology_constraints' del cliente."
+            "Basándote en los datos del cliente y en las soluciones de IA propuestas anteriormente, desarrolla la estrategia de BI: "
+            "1. KPIs de visualización: traduce los KPIs del cliente (kpis_de_exito) en indicadores visuales concretos. "
+            "2. Dashboards: propón los que necesita el caso, empezando por los que pide el cliente; no añadas otros solo para completar. "
+            "3. Usuarios: quién usará cada dashboard y cómo (filtros, drill-downs, alertas). Si el caso no dice quiénes son, "
+            "márcalo como «Se asume». "
+            "4. Herramienta: si el cliente ya tiene o prefiere una (herramienta_de_visualizacion), úsala y diseña con las "
+            "licencias que tiene. Si alguna función necesita licencias que no tiene, dilo como coste por confirmar. "
+            "Si no tiene ninguna, recomienda una y explica por qué."
         ),
         expected_output="Texto estructurado que describa la propuesta de estrategia de visualización de datos para el proyecto, incluyendo secciones claras, explicaciones comprensibles y justificación de las decisiones tomadas. Sin dibujar ninguna tabla ni gráfico, solo texto.",
         agent=bi_visualization_specialist,

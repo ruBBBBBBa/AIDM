@@ -1,0 +1,121 @@
+# Gateway de modelos: qué modelo usa cada tarea de AIDM (lo lee gateway.py).
+#
+# - Cada tarea tiene un perfil, según el trabajo que hace. Cada perfil es una lista de modelos en orden: se usa el
+#   primero y, si falla o se queda sin cupo, el siguiente (sus reservas), mejor de otro proveedor.
+# - Un modelo se escribe con su nombre de LiteLLM, «proveedor/modelo»: groq/, gemini/, mistral/, sambanova/,
+#   nvidia_nim/ o cloudflare/. En el .env solo van las claves de cada proveedor.
+# - Para probar otro modelo en una tarea sin tocar este archivo: MODELO_<TAREA> en el .env, en mayúsculas
+#   (MODELO_COSTES=gemini/gemini-3.6-flash). Va primero, y las reservas del perfil siguen detrás.
+# - El log dice qué modelo usa cada tarea y lo que gasta cada llamada, en las líneas que empiezan por «[gateway]».
+# - Los cambios valen desde la siguiente ejecución, sin reiniciar Streamlit.
+# - Primera elección el 2 nov 2026; extracción, cálculo, redacción y técnico, revisados con la comparación del 4 nov
+#   (pruebas_modelos/comparar.py). «comparar.py --comprobar» dice si algún nombre no existe con tus claves.
+
+perfiles:
+  extraccion:       # JSON fiel a lo que dice el usuario, rápido y muchas veces (discovery)
+    - mistral/ministral-14b-2512
+    - gemini/gemini-3.5-flash-lite
+    - groq/openai/gpt-oss-20b
+  calculo:
+    - gemini/gemini-3.6-flash              # 4 nov: costes y equipo válidos
+    - cloudflare/@cf/openai/gpt-oss-120b   # costes: bien el 3 nov, JSON roto el 4 nov
+    - sambanova/gemma-4-31B-it             # 9 nov: costes válidos en 6 s; con su ventana de 8K no vale para textos largos
+  redaccion:        # texto largo y bien escrito, en el idioma del cliente (estructura, propuesta, perfiles)
+    - mistral/mistral-large-4
+    - gemini/gemini-3.6-flash
+    - cloudflare/@cf/openai/gpt-oss-120b   # en lugar de sambanova/DeepSeek-V3.1, retirado
+  tecnico:          # texto técnico largo, con mucha salida (las 7 fases del roadmap)
+    - gemini/gemini-3.6-flash              # 3 nov: Gemini 3.8 Flash no respondió en ninguna fase (503 y 429)
+    - cloudflare/@cf/openai/gpt-oss-120b
+    - mistral/mistral-large-4              # da 429 si se le llama seguido: mejor de última reserva
+  contexto_largo:   # leer mucho y resumirlo (el resumen de la propuesta)
+    - gemini/gemini-3.5-flash-lite
+    - mistral/mistral-small-latest
+  codigo:           # Terraform (solo con Infracost)
+    - mistral/codestral-latest
+    - cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct
+  decision:         # el modelo decisorio (Jev/Laya); aún no lo usa ninguna tarea
+    - mistral/ministral-8b-latest
+    - groq/openai/gpt-oss-20b
+
+por_defecto: redaccion   # el perfil de una tarea que no esté en la lista de abajo
+timeout_por_defecto: 300  # segundos como máximo por intento; si tarda más, se reintenta o pasa a la reserva
+
+tareas:
+  discovery: extraccion
+  estructura: redaccion
+  # Propuesta (proposal_crew.py)
+  arquitectura: redaccion
+  gobernanza: redaccion
+  estrategia: redaccion
+  visualizacion: redaccion
+  # Costes (estimation_crew.py)
+  costes: calculo
+  perfiles: redaccion
+  equipo: calculo
+  terraform: codigo
+  # Roadmap (roadmap_builder.py)
+  resumen: contexto_largo
+  roadmap_fuentes: tecnico
+  roadmap_ingesta: tecnico
+  roadmap_almacenamiento: tecnico
+  roadmap_etl: tecnico
+  roadmap_modelado: tecnico
+  roadmap_ml: tecnico
+  roadmap_bi: tecnico
+
+# Reglas de cada proveedor, para todos sus modelos; las de «modelos:», más abajo, mandan sobre estas.
+# Con SambaNova y NVIDIA, LiteLLM hace 3 conexiones por cada intento (el cliente de OpenAI que usa por debajo reintenta
+# 2 veces por su cuenta, aunque se le diga que no): sin reintentos y con 100 s por conexión se queda en unos 5 minutos.
+# El 5 nov, MiniMax-M3.1-Flash, sin estas reglas, tardó 5.557 s en dar «timeout» (9 conexiones).
+proveedores:
+  sambanova: {num_retries: 0, timeout: 100}    # 20 peticiones al día por modelo y 8.192 tokens de ventana (entrada y salida)
+  nvidia_nim: {num_retries: 0, timeout: 100}   # unas 40 por minuto
+
+# Reglas de cada modelo, en todos los perfiles: el tope de salida (max_tokens), los reintentos antes de pasar a
+# la reserva (num_retries; si no se dice, el de su proveedor o 2) y el tope de tiempo (timeout, en segundos; si no se
+# dice, el de su proveedor o el de timeout_por_defecto).
+modelos:
+  groq/openai/gpt-oss-20b: {max_tokens: 4096, num_retries: 0}    # 8.000 TPM: si no cabe, a la reserva sin reintentar
+  groq/openai/gpt-oss-120b: {max_tokens: 4096, num_retries: 0}   # 8.000 TPM
+  
+  cloudflare/@cf/openai/gpt-oss-120b: {max_tokens: 8192}         # 10.000 neuronas al día, para todos sus modelos; los costes gastaron 5.527
+  cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct: {max_tokens: 4096}
+
+
+# Consumo de cada ejecución: al acabar el informe, el log resume las llamadas y los tokens de cada modelo (el que de
+# verdad respondió), lo que costarían pagando por tokens y qué parte de los cupos gratuitos del día se ha gastado.
+# Precios en dólares por millón de tokens, de entrada y de salida, a 9 nov 2026: Amazon Bedrock bajo demanda o, 
+# si el modelo no está en Bedrock, el de pago de su proveedor. «como» dice de qué modelo de pago es el precio.
+precios:
+  mistral/ministral-14b-2512: {como: "Ministral 3 14B en Bedrock", entrada: 0.20, salida: 0.20}
+  mistral/ministral-8b-latest: {como: "Ministral 3 8B en Bedrock", entrada: 0.15, salida: 0.15}
+  mistral/mistral-large-4: {como: "Mistral Large 3 en Bedrock", entrada: 0.50, salida: 1.50}
+  mistral/mistral-small-latest: {como: "Mistral Small en la API de Mistral", entrada: 0.10, salida: 0.30}
+  gemini/gemini-3.6-flash: {como: "Gemini 3.6 Flash de pago; 1,50 y 7,50 desde el 1 ene 2027", entrada: 0.75, salida: 3.75}
+  gemini/gemini-3.5-flash-lite: {como: "Gemini 3.5 Flash-Lite de pago", entrada: 0.30, salida: 2.50}
+  groq/openai/gpt-oss-20b: {como: "gpt-oss-20b en Bedrock", entrada: 0.07, salida: 0.30}
+  groq/openai/gpt-oss-120b: {como: "gpt-oss-120b en Bedrock", entrada: 0.15, salida: 0.60}
+  cloudflare/@cf/openai/gpt-oss-120b: {como: "gpt-oss-120b en Bedrock", entrada: 0.15, salida: 0.60}
+  cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct: {como: "Qwen2.5 Coder 32B de pago en Cloudflare", entrada: 0.66, salida: 1.00}
+  sambanova/gpt-oss-120b: {como: "gpt-oss-120b en Bedrock", entrada: 0.15, salida: 0.60}
+  sambanova/gemma-4-31B-it: {como: "Gemma 3 27B en Bedrock", entrada: 0.24, salida: 0.39}
+
+# Lo que costarían todos los tokens de la ejecución con un solo modelo de pago, para comparar.
+candidatos:
+  Claude Haiku 5.5 en Bedrock: {entrada: 0.10, salida: 0.50}       # con prompts de hasta 100.000 tokens
+  Claude Sonnet 5.5 en Bedrock: {entrada: 2.00, salida: 10.00}
+  Mistral Large 3 en Bedrock: {entrada: 0.50, salida: 1.50}
+  Amazon Nova 2 Lite en Bedrock: {entrada: 0.30, salida: 2.50}
+  gpt-oss-120b en Bedrock: {entrada: 0.15, salida: 0.60}
+
+# Cupos gratuitos al día. Groq y SambaNova cuentan por modelo; Cloudflare, en neuronas para todos sus modelos juntos.
+# Los de Gemini y Mistral se ven en AI Studio y en la consola de Mistral: si se ponen aquí, salen también.
+cupos:
+  groq: {peticiones_dia: 1000, tokens_dia: 200000}
+  sambanova: {peticiones_dia: 20}
+  cloudflare:
+    neuronas_dia: 10000
+    neuronas_por_millon:                                   # [de entrada, de salida]
+      "@cf/openai/gpt-oss-120b": [31818, 68182]
+      "@cf/qwen/qwen2.5-coder-32b-instruct": [60000, 90909]

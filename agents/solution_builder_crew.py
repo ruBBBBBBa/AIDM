@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from agents.estimation_crew import run_estimation_crew
 from agents.proposal_crew import run_proposal_crew
-from utils import md_to_html, parse_html
+from utils import md_to_html, parse_html, sin_importes
 
 load_dotenv(".env")
 
@@ -80,15 +80,24 @@ def propose_solution(
     problem_case: dict,
     chat_history: list[dict[str, str]] | None,
 ) -> dict:
-    model_name = os.getenv("BIG_MODEL", "").strip()
-    if not model_name:
-        return "No hay modelo configurado en .env (variable BIG_MODEL)."
+
+    # Refuerzo del 44: la estructura llega como contexto a los agentes de la propuesta; sin sus importes, no los copian
+    structure_proposal = sin_importes(structure_proposal, problem_case, "estructura")
 
     try:
-        proposal = run_proposal_crew(structure_proposal, problem_case, chat_history, model_name)
-        estimation = run_estimation_crew(proposal.as_combined_context(), model_name)
+        # Gateway de modelos: cada agente pide su modelo (data_structures/modelos.yaml); aquí ya no se elige
+        proposal = run_proposal_crew(structure_proposal, problem_case, chat_history)
+        # Fallo 46: la tarea de costes solo necesita los componentes y sus volúmenes, que están en la arquitectura
+        estimation = run_estimation_crew(proposal.as_combined_context(), problem_case=problem_case,
+                                         componentes=proposal.architecture)
     except RuntimeError as e:
         return str(e)
+
+    # Fallo 44: los importes salen solo en la sección de costes, donde se suman en Python
+    proposal = proposal.model_copy(update={
+        campo: sin_importes(getattr(proposal, campo), problem_case, campo)
+        for campo in ("architecture", "governance", "data_ai_strategy", "bi_visualization")
+    })
 
     _inject_into_html(
         proposal.architecture,
