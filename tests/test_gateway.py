@@ -83,12 +83,16 @@ assert llm.model == PERFILES["calculo"][0] and llm.is_litellm
 assert llm.additional_params["metadata"] == {"aidm_tarea": "costes"}
 reservas = llm.additional_params["fallbacks"]
 assert [r["model"] for r in reservas] == PERFILES["calculo"][1:]
-assert {"model": "sambanova/gpt-oss-120b", "num_retries": 0, "timeout": 300} in reservas
+assert {"model": "sambanova/gemma-4-31B-it", "num_retries": 0, "timeout": 100} in reservas  # la regla de SambaNova
 assert llm.timeout == 300  # sin tope, el 3 nov el equipo esperó 2 × 600 s a Gemini
 assert gateway.parametros("cloudflare/@cf/openai/gpt-oss-120b") == {"num_retries": 2, "timeout": 300, "max_tokens": 8192}
 assert gateway.build_llm("gemini/gemini-3.6-flash").is_litellm
 assert gateway.parametros("groq/openai/gpt-oss-20b") == {"num_retries": 0, "timeout": 300, "max_tokens": 4096}
-assert gateway.parametros("mistral/ministral-14b-2512", num_retries=3) == {"num_retries": 3, "timeout": 300}
+# Las reglas del proveedor valen para cualquier modelo suyo, aunque no esté en el yaml, y las del modelo mandan
+assert gateway.parametros("nvidia_nim/otro/modelo") == {"num_retries": 0, "timeout": 100}
+reglas = {"proveedores": {"sambanova": {"num_retries": 0, "timeout": 100}}, "modelos": {"sambanova/x": {"timeout": 50}}}
+assert gateway._reglas("sambanova/x", reglas) == {"num_retries": 0, "timeout": 50}
+assert gateway._reglas("sambanova/y", reglas) == {"num_retries": 0, "timeout": 100}
 assert utils.build_llm is gateway.build_llm
 print("OK 3: cada modelo y sus reservas llevan sus reglas, con 5 minutos como máximo por intento, y Gemini va por LiteLLM")
 
@@ -194,5 +198,31 @@ with contextlib.redirect_stdout(log):
     assert llm.call([{"role": "user", "content": "Escribe la arquitectura"}]) == "Respuesta de la reserva"
 assert f"[gateway] arquitectura · {PERFILES['redaccion'][0]} → reserva {PERFILES['redaccion'][1]} · " in log.getvalue(), log.getvalue()
 print("OK 7: si el primer modelo falla y responde una reserva, la línea del log lo dice")
+
+# 8) Una respuesta que llega al límite de tokens sale como «cortada» en el log y en la grabación (el 5 nov, la
+#    gobernanza de Gemma 4 en SambaNova acabó a media palabra al llenar su ventana de 8.192 tokens)
+def completion_cortada(*args, **kwargs):
+    return SimpleNamespace(model="gemma-4-31B-it", _hidden_params={"custom_llm_provider": "sambanova"},
+                           choices=[SimpleNamespace(message=SimpleNamespace(content="…que el técnico de Iber"),
+                                                    finish_reason="length")],
+                           usage=SimpleNamespace(prompt_tokens=7154, completion_tokens=1038))
+
+
+original, gateway._completion_registrada.original = gateway._completion_registrada.original, completion_cortada
+gateway._archivo = None
+os.environ["GRABAR_LLAMADAS"] = "1"
+log = io.StringIO()
+try:
+    with contextlib.redirect_stdout(log):
+        litellm.completion(model="sambanova/gemma-4-31B-it", messages=[{"role": "user", "content": "Gobernanza"}],
+                           metadata={"aidm_tarea": "gobernanza"})
+finally:
+    gateway._completion_registrada.original = original
+    del os.environ["GRABAR_LLAMADAS"]
+assert "[gateway] gobernanza · sambanova/gemma-4-31B-it · 7.154 tokens de entrada y 1.038 de salida · " in log.getvalue()
+assert log.getvalue().rstrip().endswith("· cortada: ha llegado al límite de tokens"), log.getvalue()
+grabada = json.loads(gateway._archivo.read_text(encoding="utf-8").splitlines()[-1])
+assert grabada["tarea"] == "gobernanza" and grabada["cortada"] is True
+print("OK 8: una respuesta cortada por el límite de tokens lo dice en el log y en la grabación")
 
 print("\nTodo bien: el gateway de modelos funciona (en la parte que se puede comprobar sin el LLM real).")

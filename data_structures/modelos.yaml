@@ -19,7 +19,7 @@ perfiles:
   calculo:
     - gemini/gemini-3.6-flash              # 4 nov: costes y equipo válidos
     - cloudflare/@cf/openai/gpt-oss-120b   # costes: bien el 3 nov, JSON roto el 4 nov
-    - sambanova/gpt-oss-120b
+    - sambanova/gemma-4-31B-it             # 9 nov: costes válidos en 6 s; con su ventana de 8K no vale para textos largos
   redaccion:        # texto largo y bien escrito, en el idioma del cliente (estructura, propuesta, perfiles)
     - mistral/mistral-large-4
     - gemini/gemini-3.6-flash
@@ -64,12 +64,20 @@ tareas:
   roadmap_ml: tecnico
   roadmap_bi: tecnico
 
+# Reglas de cada proveedor, para todos sus modelos; las de «modelos:», más abajo, mandan sobre estas.
+# Con SambaNova y NVIDIA, LiteLLM hace 3 conexiones por cada intento (el cliente de OpenAI que usa por debajo reintenta
+# 2 veces por su cuenta, aunque se le diga que no): sin reintentos y con 100 s por conexión se queda en unos 5 minutos.
+# El 5 nov, MiniMax-M3.1-Flash, sin estas reglas, tardó 5.557 s en dar «timeout» (9 conexiones).
+proveedores:
+  sambanova: {num_retries: 0, timeout: 100}    # 20 peticiones al día por modelo y 8.192 tokens de ventana (entrada y salida)
+  nvidia_nim: {num_retries: 0, timeout: 100}   # unas 40 por minuto
+
 # Reglas de cada modelo, en todos los perfiles: el tope de salida (max_tokens), los reintentos antes de pasar a
-# la reserva (num_retries; 2 si no se dice) y el tope de tiempo (timeout, en segundos; si no se dice, el de arriba).
-# Límites del plan gratuito, a 2 nov 2026.
+# la reserva (num_retries; si no se dice, el de su proveedor o 2) y el tope de tiempo (timeout, en segundos; si no se
+# dice, el de su proveedor o el de timeout_por_defecto).
 modelos:
   groq/openai/gpt-oss-20b: {max_tokens: 4096, num_retries: 0}    # 8.000 TPM: si no cabe, a la reserva sin reintentar
   groq/openai/gpt-oss-120b: {max_tokens: 4096, num_retries: 0}   # 8.000 TPM
-  sambanova/gpt-oss-120b: {num_retries: 0}                       # 20 peticiones al día
+  
   cloudflare/@cf/openai/gpt-oss-120b: {max_tokens: 8192}         # 10.000 neuronas al día, para todos sus modelos; los costes gastaron 5.527
   cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct: {max_tokens: 4096}

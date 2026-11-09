@@ -103,7 +103,7 @@ def falla():
 
 
 comparar.PROVEEDORES = {"groq": lambda: {"openai/gpt-oss-20b"}, "mistral": lambda: None,
-                        "gemini": falla, "sambanova": lambda: {"gpt-oss-120b", "DeepSeek-V3.1"},
+                        "gemini": falla, "sambanova": lambda: {"gpt-oss-120b", "gemma-4-31B-it"},
                         "cloudflare": lambda: {"@cf/openai/gpt-oss-120b"}, "nvidia_nim": lambda: set()}
 log = io.StringIO()
 with contextlib.redirect_stdout(log):
@@ -160,5 +160,23 @@ assert contexto.verify_mode == ssl.CERT_REQUIRED and contexto.check_hostname  # 
 raices = Path(comparar.certifi.where()).read_text(encoding="utf-8").count("BEGIN CERTIFICATE")
 assert len(contexto.get_ca_certs()) == raices, (len(contexto.get_ca_certs()), raices)
 print("OK 5: --listar y --comprobar verifican el certificado de cada proveedor con los de certifi, como LiteLLM")
+
+# 6) Una respuesta que llega al límite de tokens no sirve, aunque sea un texto: ni la grabada ni la nueva
+def completion_cortada(model, messages, **kwargs):
+    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="…que el técnico de Iber"),
+                                                    finish_reason="length")],
+                           usage=SimpleNamespace(prompt_tokens=7154, completion_tokens=1038))
+
+
+grabacion.write_text(json.dumps({"tarea": "gobernanza", "modelo": "sambanova/gemma-4-31B-it", "cortada": True,
+                                 "mensajes": [{"role": "user", "content": "Gobernanza"}], "respuesta": "…de Iber"}) + "\n",
+                     encoding="utf-8")
+comparar.litellm.completion = completion_cortada
+with contextlib.redirect_stdout(io.StringIO()):
+    salida = comparar.comparar(grabacion, modelos=["groq/corto"])
+resumen = (salida / "resumen.md").read_text(encoding="utf-8")
+assert "| sambanova/gemma-4-31B-it (grabado) | no |" in resumen, resumen
+assert "| groq/corto | no |" in resumen and "cortada: ha llegado al límite de tokens; 5 palabras" in resumen, resumen
+print("OK 6: una respuesta cortada por el límite de tokens no sirve en la comparación, aunque sea un texto")
 
 print("\nTodo bien: el script de comparación funciona (en la parte que se puede comprobar sin llamar a los modelos).")

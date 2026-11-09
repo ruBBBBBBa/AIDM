@@ -251,8 +251,13 @@ def llamar(modelo: str, mensajes: list[dict]) -> dict:
         _ultima_llamada[proveedor] = time.monotonic()
     uso = getattr(respuesta, "usage", None)
     return {"respuesta": respuesta.choices[0].message.content or "", "segundos": time.monotonic() - inicio,
-            "tokens_entrada": getattr(uso, "prompt_tokens", None), "tokens_salida": getattr(uso, "completion_tokens", None)}
+            "tokens_entrada": getattr(uso, "prompt_tokens", None), "tokens_salida": getattr(uso, "completion_tokens", None),
+            "cortada": getattr(respuesta.choices[0], "finish_reason", None) == "length"}
 
+def _con_corte(sirve, nota: str, cortada) -> tuple:
+    """Una respuesta que ha llegado al límite de tokens no sirve, aunque sea un texto «a juicio»: le falta el final
+    (el 5 nov, la gobernanza de Gemma 4 en SambaNova acababa a media palabra, con la ventana de 8.192 llena)."""
+    return (False, f"cortada: ha llegado al límite de tokens; {nota}") if cortada else (sirve, nota)
 
 def comparar(ruta: str | Path, tareas: list[str] | None = None, modelos: list[str] | None = None,
              mas: list[str] | None = None) -> Path:
@@ -268,7 +273,7 @@ def comparar(ruta: str | Path, tareas: list[str] | None = None, modelos: list[st
         _, del_perfil = gateway.modelos_de(tarea)
         candidatos = list(dict.fromkeys((modelos or del_perfil) + (mas or [])))
         for n, registro in enumerate(registros, 1):
-            sirve, nota = evaluar(tarea, registro.get("respuesta", ""))
+            sirve, nota = _con_corte(*evaluar(tarea, registro.get("respuesta", "")), registro.get("cortada"))
             filas.append({"tarea": tarea, "llamada": n, "modelo": f"{registro.get('modelo')} (grabado)", "sirve": sirve,
                           "nota": nota, "segundos": registro.get("segundos"), "tokens_entrada": registro.get("tokens_entrada"),
                           "tokens_salida": registro.get("tokens_salida"), "respuesta": registro.get("respuesta", "")})
@@ -278,7 +283,7 @@ def comparar(ruta: str | Path, tareas: list[str] | None = None, modelos: list[st
                 if "error" in resultado:
                     sirve, nota = False, resultado["error"]
                 else:
-                    sirve, nota = evaluar(tarea, resultado["respuesta"])
+                    sirve, nota = _con_corte(*evaluar(tarea, resultado["respuesta"]), resultado.get("cortada"))
                 filas.append({"tarea": tarea, "llamada": n, "modelo": modelo, "sirve": sirve, "nota": nota,
                               "segundos": resultado.get("segundos"), "tokens_entrada": resultado.get("tokens_entrada"),
                               "tokens_salida": resultado.get("tokens_salida"), "respuesta": resultado.get("respuesta", "")})
