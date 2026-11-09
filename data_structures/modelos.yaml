@@ -81,3 +81,41 @@ modelos:
   
   cloudflare/@cf/openai/gpt-oss-120b: {max_tokens: 8192}         # 10.000 neuronas al día, para todos sus modelos; los costes gastaron 5.527
   cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct: {max_tokens: 4096}
+
+
+# Consumo de cada ejecución: al acabar el informe, el log resume las llamadas y los tokens de cada modelo (el que de
+# verdad respondió), lo que costarían pagando por tokens y qué parte de los cupos gratuitos del día se ha gastado.
+# Precios en dólares por millón de tokens, de entrada y de salida, a 9 nov 2026: Amazon Bedrock bajo demanda o, 
+# si el modelo no está en Bedrock, el de pago de su proveedor. «como» dice de qué modelo de pago es el precio.
+precios:
+  mistral/ministral-14b-2512: {como: "Ministral 3 14B en Bedrock", entrada: 0.20, salida: 0.20}
+  mistral/ministral-8b-latest: {como: "Ministral 3 8B en Bedrock", entrada: 0.15, salida: 0.15}
+  mistral/mistral-large-4: {como: "Mistral Large 3 en Bedrock", entrada: 0.50, salida: 1.50}
+  mistral/mistral-small-latest: {como: "Mistral Small en la API de Mistral", entrada: 0.10, salida: 0.30}
+  gemini/gemini-3.6-flash: {como: "Gemini 3.6 Flash de pago; 1,50 y 7,50 desde el 1 ene 2027", entrada: 0.75, salida: 3.75}
+  gemini/gemini-3.5-flash-lite: {como: "Gemini 3.5 Flash-Lite de pago", entrada: 0.30, salida: 2.50}
+  groq/openai/gpt-oss-20b: {como: "gpt-oss-20b en Bedrock", entrada: 0.07, salida: 0.30}
+  groq/openai/gpt-oss-120b: {como: "gpt-oss-120b en Bedrock", entrada: 0.15, salida: 0.60}
+  cloudflare/@cf/openai/gpt-oss-120b: {como: "gpt-oss-120b en Bedrock", entrada: 0.15, salida: 0.60}
+  cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct: {como: "Qwen2.5 Coder 32B de pago en Cloudflare", entrada: 0.66, salida: 1.00}
+  sambanova/gpt-oss-120b: {como: "gpt-oss-120b en Bedrock", entrada: 0.15, salida: 0.60}
+  sambanova/gemma-4-31B-it: {como: "Gemma 3 27B en Bedrock", entrada: 0.24, salida: 0.39}
+
+# Lo que costarían todos los tokens de la ejecución con un solo modelo de pago, para comparar.
+candidatos:
+  Claude Haiku 5.5 en Bedrock: {entrada: 0.10, salida: 0.50}       # con prompts de hasta 100.000 tokens
+  Claude Sonnet 5.5 en Bedrock: {entrada: 2.00, salida: 10.00}
+  Mistral Large 3 en Bedrock: {entrada: 0.50, salida: 1.50}
+  Amazon Nova 2 Lite en Bedrock: {entrada: 0.30, salida: 2.50}
+  gpt-oss-120b en Bedrock: {entrada: 0.15, salida: 0.60}
+
+# Cupos gratuitos al día. Groq y SambaNova cuentan por modelo; Cloudflare, en neuronas para todos sus modelos juntos.
+# Los de Gemini y Mistral se ven en AI Studio y en la consola de Mistral: si se ponen aquí, salen también.
+cupos:
+  groq: {peticiones_dia: 1000, tokens_dia: 200000}
+  sambanova: {peticiones_dia: 20}
+  cloudflare:
+    neuronas_dia: 10000
+    neuronas_por_millon:                                   # [de entrada, de salida]
+      "@cf/openai/gpt-oss-120b": [31818, 68182]
+      "@cf/qwen/qwen2.5-coder-32b-instruct": [60000, 90909]

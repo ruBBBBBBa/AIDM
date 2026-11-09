@@ -8,6 +8,8 @@ from agents.roadmap_builder import roadmap_builder
 
 from utils import load_problem_case
 
+import gateway
+
 class AgentState(TypedDict):
     user_prompt: str
     chat_history: list[dict[str, str]]
@@ -116,4 +118,7 @@ def run_graph(user_prompt: str, chat_history: list[dict[str, str]] | None = None
         "completion_reached": False,
         "roadmap": "",
     }
-    return aidm_graph.invoke(initial_state)
+    resultado = aidm_graph.invoke(initial_state)
+    if resultado.get("completion_reached"):
+        gateway.resumen_consumo()  # lo que ha gastado la ejecución, al acabar el informe
+    return resultado
