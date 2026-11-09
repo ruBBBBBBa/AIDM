@@ -1,0 +1,3 @@
+# Fallo 66: el navegador no manda estadísticas de uso a Streamlit (es una llamada de red más en cada página).
+[browser]
+gatherUsageStats = false

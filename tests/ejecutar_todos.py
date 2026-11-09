@@ -14,10 +14,10 @@ CARPETA = Path(__file__).resolve().parent
 TESTS = [
     #"test_discovery_update.py",     # fallo 1
     #"test_discovery_relleno.py",    # fallo 2
-    #"test_interfaz_informe.py",     # fallo 3
-    #"test_roadmap_contexto.py",     # fallo 4
+    "test_interfaz_informe.py",     # fallo 3
+    "test_roadmap_contexto.py",     # fallo 4
     #"test_costes_equipo.py",        # fallo 5
-    #"test_md_to_html.py",           # fallo 11
+    "test_md_to_html.py",           # fallo 11
     #"test_discovery_inventos.py",   # fallo 21
     #"test_discovery_formato.py",    # fallo 22
     #"test_md_br.py",                # fallo 30
@@ -46,6 +46,7 @@ TESTS = [
     #"test_costes_fases_minimo.py",  # fallo 49
     "test_gateway.py",              # gateway de modelos
     "test_comparar_modelos.py",        # compara los resultados de varios modelos simulados
+    "test_arranque_local.py",       # fallo 66
 ]
 
 # Los resultados llevan «≥», «€»…: en Windows, sin esto, la salida por tubería usa cp1252 y falla.

@@ -1,4 +1,5 @@
 import json
+import base64
 import yaml
 from pathlib import Path
 from typing import Any
@@ -434,7 +435,7 @@ def update_problem_scope_tool(request: ProblemScopeUpdateRequest) -> dict:
     with open(PROBLEM_CASE_PATH, "r", encoding="utf-8") as f:
         problem_case = json.load(f)
 
-    #TODO: cambiar la funcion y las listas por una base de datos???
+    #DONE: cambiar la funcion y las listas por una base de datos???
     updated_fields: list[str] = []
     rejected: list[dict[str, str]] = []
 
@@ -533,6 +534,24 @@ def sin_emojis(texto: str) -> str:
     texto = _VARIANTE.sub("", _TECLA.sub(r"\1.", (texto or "").translate(_MARCAS)))
     return _EMOJI.sub("", texto)
 
+# Fallo 66: la fuente del informe (Space Mono) va dentro del propio HTML, desde assets/fonts/, en vez de pedirla a
+# Google Fonts cada vez que se abre: el informe se ve igual sin conexión y no avisa a Google de quién lo abre.
+FUENTES = Path("assets/fonts")
+_GOOGLE_FONTS = re.compile(r'<link[^>]*fonts\.(?:googleapis|gstatic)\.com[^>]*>\s*')
+
+
+def fuentes_locales(html: str) -> str:
+    """Cambia los <link> a Google Fonts por un @font-face con la fuente en base64. Si falta algún archivo de la
+    fuente, el HTML se queda como estaba (con Google Fonts)."""
+    archivos = {peso: FUENTES / f"space-mono-{peso}.woff2" for peso in (400, 700)}
+    if not _GOOGLE_FONTS.search(html or "") or not all(a.exists() for a in archivos.values()):
+        return html
+    caras = "".join(
+        "@font-face{font-family:'Space Mono';font-style:normal;font-display:swap;"
+        f"font-weight:{peso};src:url(data:font/woff2;base64,{base64.b64encode(a.read_bytes()).decode('ascii')})"
+        " format('woff2');}" for peso, a in archivos.items())
+    html = _GOOGLE_FONTS.sub("", html)
+    return html.replace("</head>", f"<style>{caras}</style>\n</head>", 1)
 
 def md_to_html(text: str) -> str:
     text = sin_emojis(text)
