@@ -43,6 +43,7 @@ timeout_por_defecto: 300  # segundos como máximo por intento; si tarda más, se
 
 tareas:
   discovery: extraccion
+  plataforma: redaccion   # el agente de plataforma explica qué hiperescalar conviene (agents/plataforma.py)
   estructura: redaccion
   # Propuesta (proposal_crew.py)
   arquitectura: redaccion

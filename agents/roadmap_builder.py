@@ -29,8 +29,10 @@ _ROADMAP_IDS = [
 REPORT_PATH = Path("data_structures/solution_builder_report.html")
 
 # Las tareas del roadmap no dan por hecha ninguna nube ni herramienta: usan las del cliente o las de la propuesta.
+# Fallo 67: si el agente de plataforma ha elegido una nube (PLATAFORMA OBJETIVO en los datos del cliente), manda esa.
 PLATAFORMA = (
-    "PLATAFORMA: usa la nube y las herramientas que indica el caso (cloud_provider, modelo_de_despliegue, "
+    "PLATAFORMA: si los datos del cliente traen una PLATAFORMA OBJETIVO, diseña en esa nube; si no, en la que indica "
+    "el caso (cloud_provider). Usa además las herramientas que indica el caso (modelo_de_despliegue, "
     "herramienta_de_visualizacion, stack_tecnologico_actual) y las que ya eligió la propuesta de arquitectura. "
     "Si el cliente no tiene preferencia, elige tú y justifícalo. Nombra los servicios concretos de esa plataforma; "
     "los ejemplos de esta tarea son solo orientativos.\n\n"

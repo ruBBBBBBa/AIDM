@@ -1,0 +1,110 @@
+# Fallo 67: los cinco hiperescalares que compara el agente de plataforma (agents/plataforma.py) y cómo se puntúan.
+# Python puntúa con estos datos y el LLM solo explica el resultado: para cambiar una recomendación, se cambia aquí,
+# no en el prompt. Datos consultados el 9 nov 2026; la fuente va al lado de cada uno. Las notas van de 0 a 5.
+
+# Cuánto pesa cada criterio en la nota final (se lleva a 100).
+pesos:
+  continuidad: 30    # el cliente ya la usa: sus datos, contratos y gente que la conoce
+  ecosistema: 25     # encaja con lo que ya tiene (Microsoft 365, Oracle, SAP, Google Workspace, IBM i…)
+  datos_ia: 20       # servicios gestionados de datos e IA para el proyecto
+  cumplimiento: 15   # región en España y ENS en categoría alta
+  talento: 10        # facilidad de encontrar y formar gente
+
+# Otra nube tiene que sacar al menos estos puntos (de 100) a la que el cliente ya usa para recomendar el cambio:
+# por debajo, migrar y formar al equipo no compensa.
+cambiar_si_ventaja: 15
+
+# Formación del equipo del cliente en una nube que no conoce.
+formacion:
+  horas_fundamentos: 20       # por persona: la certificación de fundamentos
+  horas_especialidad: 80      # por persona: la de datos (ingeniería de datos o arquitectura)
+  coste_hora_eur: 35          # coste interno de una hora de su equipo; cámbialo si se sabe
+  personas_si_no_se_sabe: 2
+
+# Palabras del caso que delatan lo que ya usa el cliente, y cuánto acerca eso a cada nube (0 a 5). Un 0 quiere decir
+# que esa nube no lo admite: si el cliente lo usa, su nota de datos e IA en esa nube baja a 0.
+ecosistemas:
+  microsoft:
+    nombre: Microsoft 365 / Power BI
+    palabras: [microsoft 365, office 365, m365, excel, power bi, teams, sharepoint, dynamics, outlook, active directory]
+    afinidad: {azure: 5, aws: 1, google: 1, oracle: 1, ibm: 1}
+  google_workspace:
+    nombre: Google Workspace / BigQuery
+    palabras: [google workspace, gmail, google drive, google sheets, looker, bigquery]
+    afinidad: {google: 5, azure: 1, aws: 1, oracle: 1, ibm: 1}
+  oracle:
+    nombre: Oracle (base de datos o ERP)
+    palabras: [oracle database, base de datos oracle, oracle db, jd edwards, e-business suite, peoplesoft, netsuite]
+    # Oracle Database@AWS, @Azure y @Google Cloud: la base de datos de Oracle también corre dentro de las otras tres
+    afinidad: {oracle: 5, azure: 3, aws: 3, google: 3, ibm: 1}
+  sap:
+    nombre: SAP
+    palabras: [sap, s/4hana, s4hana]
+    afinidad: {aws: 4, azure: 4, google: 4, ibm: 3, oracle: 2}
+  ibm:
+    nombre: IBM (IBM i, mainframe, Db2, Cognos)
+    palabras: [as/400, as400, ibm i, iseries, mainframe, z/os, db2, cognos, spss, maximo]
+    afinidad: {ibm: 5, azure: 2, aws: 2, google: 1, oracle: 1}
+  databricks:
+    nombre: Databricks
+    palabras: [databricks]
+    # Databricks solo corre en AWS, Azure y Google Cloud (databricks.com/cloud-provider-directory)
+    afinidad: {aws: 5, azure: 5, google: 5, oracle: 0, ibm: 0}
+
+# Palabras del caso que piden cumplimiento español (ENS) o soberanía; con ellas, una nube sin ENS alta confirmado
+# puntúa menos en cumplimiento.
+pide_ens: [ens, esquema nacional de seguridad, sector publico, administracion publica, ayuntamiento, diputacion]
+pide_soberania: [soberania, soberana, datos en espana, datos en la ue, cloud act]
+
+proveedores:
+  azure:
+    nombre: Microsoft Azure
+    # Palabras del caso que dicen que el cliente ya la usa (cloud_provider, stack_tecnologico_actual, equipo…)
+    claves: [azure, microsoft fabric, synapse, adls, azure data factory, azure databricks, azure machine learning]
+    region_espana: Spain Central (Madrid)
+    ens_alta: true      # 197 servicios de Azure en categoría alta (Microsoft, 2026)
+    soberania: Microsoft Sovereign Public Cloud en las regiones europeas
+    datos_ia: 5         # Microsoft Fabric, Azure Databricks, Azure Machine Learning, Azure AI Foundry, Power BI
+    talento: 5          # 23 % del mercado mundial (Synergy, 2.º trimestre de 2024)
+    formacion: {plataforma: Microsoft Learn, fundamentos: Azure Fundamentals (AZ-900), datos: Fabric Data Engineer Associate (DP-700)}
+  aws:
+    nombre: Amazon Web Services (AWS)
+    claves: [aws, amazon web services, ec2, s3, redshift, sagemaker, aws lambda, amazon bedrock, aws glue]
+    region_espana: Europe (Spain), eu-south-2 (Aragón)
+    ens_alta: true      # ENS alta en 174 servicios (AWS, 2026)
+    soberania: AWS European Sovereign Cloud (Brandeburgo, desde enero de 2026, unos 90 servicios)
+    datos_ia: 5         # S3, Glue, Redshift, Databricks en AWS, SageMaker, Bedrock
+    talento: 5          # 32 % del mercado mundial (Synergy, 2.º trimestre de 2024)
+    formacion: {plataforma: AWS Skill Builder, fundamentos: AWS Certified Cloud Practitioner, datos: AWS Certified Data Engineer – Associate}
+  google:
+    nombre: Google Cloud
+    claves: [gcp, google cloud, bigquery, vertex ai, gke, dataflow, dataproc]
+    region_espana: europe-southwest1 (Madrid)
+    ens_alta: true      # certificado ENS de categoría alta de 16 oct 2025 (Google Cloud y Google Workspace)
+    soberania: Google Sovereign Cloud (hub en Múnich y socios europeos)
+    datos_ia: 5         # BigQuery, Dataflow, Databricks en Google Cloud, Vertex AI, Looker
+    talento: 4          # 12 % del mercado mundial (Synergy, 2.º trimestre de 2024)
+    formacion: {plataforma: Google Cloud Skills Boost, fundamentos: Cloud Digital Leader, datos: Professional Data Engineer}
+  oracle:
+    nombre: Oracle Cloud Infrastructure (OCI)
+    claves: [oci, oracle cloud, autonomous database, exadata, oracle analytics]
+    region_espana: Spain Central (Madrid), eu-madrid-1, y Madrid 3 (eu-madrid-3, desde oct 2025)
+    ens_alta: null      # no encontramos el certificado: por confirmar antes de proponerla a un cliente que pida ENS
+    soberania: Oracle EU Sovereign Cloud, con una región en Madrid operada por personal de la UE
+    datos_ia: 3         # Autonomous Database, OCI Data Flow, OCI Data Science, OCI Generative AI; sin Databricks
+    talento: 2          # 2,4 % del mercado mundial (Synergy, 2.º trimestre de 2024)
+    formacion: {plataforma: Oracle University, fundamentos: OCI Foundations Associate, datos: certificación de datos de OCI}
+  ibm:
+    nombre: IBM Cloud
+    claves: [ibm cloud, watsonx, cloud pak]
+    region_espana: Madrid, eu-es (tres zonas)
+    ens_alta: true      # certificado ENS de categoría alta de LEET Security (29 nov 2023): comprobar la renovación
+    soberania: sin dato
+    datos_ia: 3         # watsonx, Db2, Cloud Pak for Data; sin Databricks
+    talento: 2          # cuota pequeña; menos perfiles disponibles
+    formacion: {plataforma: IBM Training, fundamentos: certificación de fundamentos de IBM Cloud, datos: certificación de datos de IBM}
+
+# Lo que el informe recuerda siempre al hablar de cambiar de nube.
+notas:
+  - "Ley de Datos de la UE: desde el 12 de enero de 2027 los proveedores no pueden cobrar por cambiar de nube, tampoco la salida de los datos; hasta entonces, como mucho lo que les cueste. AWS, Azure y Google ya no cobran la salida de datos al marcharse desde 2024."
+  - "Las cinco tienen región en España, así que los datos pueden quedarse en el país con cualquiera."

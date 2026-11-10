@@ -552,7 +552,9 @@ def _tabla_precios(problem_case: dict | None, arquitectura: str) -> str:
     """Fallo 53: las filas de la tabla que puede usar el modelo, en texto: las de los servicios que nombra la
     arquitectura (columna «buscar») y, si se sabe la nube del cliente, solo las de esa nube. Así el prompt no empuja
     servicios que la propuesta no trae (fallo 34). Vacío si no queda ninguna."""
-    nube = _normalize_text(_valor_caso(problem_case, "cloud_provider"))
+    # Fallo 67: la plataforma objetivo, si el agente de plataforma la ha elegido; si no, la nube del cliente
+    nube = _normalize_text(_valor_caso(problem_case, "plataforma_objetivo")
+                           or _valor_caso(problem_case, "cloud_provider"))
     del_cliente = {p for clave, p in _PROVEEDORES.items() if clave in nube}
     texto = _normalize_text(arquitectura or "")
     filas = [f for f in PRECIOS_CLOUD.values()

@@ -152,7 +152,7 @@ assert usados["roadmap"] == {"resume_agent": p("resumen"), "data_sources_agent":
                              "ml_mlops_agent": p("roadmap_ml"), "bi_visualization_agent": p("roadmap_bi")}, usados["roadmap"]
 for tarea in TAREAS:
     del os.environ[f"MODELO_{tarea.upper()}"]
-print("OK 4: las 18 tareas usan cada una su modelo; los perfiles del equipo ya no comparten modelo con el JSON del equipo")
+print("OK 4: cada tarea usa su modelo; los perfiles del equipo ya no comparten modelo con el JSON del equipo")
 
 # 5) Si un test pasa el modelo a la crew, vale para todos sus agentes, sin reservas (como antes)
 usados.clear()

@@ -282,7 +282,8 @@ def _propose_plan_with_agent(user_prompt: str, chat_history: list[dict[str, str]
     pending = _get_pending_fields(problem_case)
     print(f"Campos pendientes detectados: {pending}")
     transcript = _recent_chat_transcript(chat_history)
-    current_json = json.dumps({k: v for k, v in problem_case.items() if k != CAMPO_PREGUNTADO},
+    internos = (CAMPO_PREGUNTADO, utils.PLATAFORMA_OBJETIVO)  # fallo 67: la plataforma no es un dato que preguntar
+    current_json = json.dumps({k: v for k, v in problem_case.items() if k not in internos},
                               ensure_ascii=False, indent=2)
 
     system_prompt = (

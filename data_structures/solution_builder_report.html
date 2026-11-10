@@ -114,7 +114,7 @@
   .icon-arch  { background: #e0f2fe; }
   .icon-gov   { background: #fef3c7; }
   .icon-ai    { background: #ede9fe; }
-  .icon-bi    { background: #fce7f3; }
+  .icon-plat  { background: #dcfce7; }
   /* Roadmap stage icon colours */
   .icon-sources   { background: #fef3c7; color: #b45309; }
   .icon-ingestion { background: #dbeafe; color: #1d4ed8; }
@@ -128,6 +128,7 @@
     .icon-gov   { background: #2d2008; }
     .icon-ai    { background: #1e1635; }
     .icon-bi    { background: #2d0f1f; }
+    .icon-plat  { background: #0d2a1a; }
     .icon-sources   { background: #2d2008; color: #fbbf24; }
     .icon-ingestion { background: #0c2a3d; color: #60a5fa; }
     .icon-storage   { background: #0a2420; color: #2dd4bf; }
@@ -305,6 +306,7 @@
 <h1 id="hero-title">Respuesta Final del Solution Builder</h1>
 <p class="hero-desc" id="hero-desc">Resumen consolidado de las propuestas generadas por los agentes especializados.</p>
 <div class="pills">
+<span class="pill"><span class="pill-dot"></span>Plataforma</span>
 <span class="pill"><span class="pill-dot"></span>Arquitectura</span>
 <span class="pill"><span class="pill-dot"></span>Gobernanza</span>
 <span class="pill"><span class="pill-dot"></span>Estrategia de Datos &amp; IA</span>
@@ -326,6 +328,23 @@
 <div class="tab-panel active" id="tab-propuesta">
 <div style="display:flex;justify-content:flex-end;padding:20px 0 4px">
 <button id="toggle-all" onclick="toggleAll()" style="font-size:12px;padding:5px 14px;border-radius:8px;border:1px solid var(--border-strong);background:var(--surface);color:var(--muted);cursor:pointer;">Colapsar todo</button>
+</div>
+<div class="section-card">
+<div class="section-header">
+<div class="section-icon icon-plat">
+<svg fill="none" stroke="#15803d" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24">
+<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path>
+</svg>
+</div>
+<div class="section-header-text">
+<h2>Plataforma Recomendada</h2>
+<span>Hiperescalar para el proyecto: mantener la nube actual o cambiar</span>
+</div>
+<svg class="chevron" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24"><polyline points="6 9 12 15 18 9"></polyline></svg>
+</div>
+<div class="section-body">
+<div class="prose" id="content-platform"><div class="empty-state">Contenido pendiente de generación.</div></div>
+</div>
 </div>
 <div class="section-card">
 <div class="section-header">

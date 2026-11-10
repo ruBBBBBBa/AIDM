@@ -56,6 +56,9 @@ TEXT_FIELDS = {
     "kpis_de_exito",
 }
 VALID_STATUSES = {"pending fields", "completed"}
+# Fallo 67: la nube en la que se diseña la solución. La pone el agente de plataforma después del discovery; no es un
+# campo que pregunte el discovery, así que no está en TEXT_FIELDS.
+PLATAFORMA_OBJETIVO = "plataforma_objetivo"
 PROBLEM_CASE_PATH = Path("data_structures/problem_case.json")
 AGENTS_FILE = Path("data_structures/agents.yaml")
 logger = logging.getLogger("aidm")
@@ -246,7 +249,7 @@ def contexto_cliente(problem_case: dict, con_costes: bool = False) -> str:
     grupos: dict[str, list[str]] = {"confirmado": [], "no_lo_sabe": [], "no_aplica": [], "sin_dato": []}
     notas: list[str] = []
     for campo, datos in (problem_case or {}).items():
-        if campo == "status" or not isinstance(datos, dict):
+        if campo in ("status", PLATAFORMA_OBJETIVO) or not isinstance(datos, dict):
             continue
         valor = datos.get("value")
         if campo == "evidencias":
@@ -262,6 +265,10 @@ def contexto_cliente(problem_case: dict, con_costes: bool = False) -> str:
         "sin_dato": "Sin dato (no se preguntó o no se respondió):",
     }
     partes = ["DATOS DEL CLIENTE (caso del discovery)"]
+    plataforma = (problem_case or {}).get(PLATAFORMA_OBJETIVO)
+    if isinstance(plataforma, dict) and plataforma.get("value"):  # fallo 67: manda sobre cloud_provider
+        partes.append(f"PLATAFORMA OBJETIVO: {plataforma['value']} ({plataforma.get('motivo', 'elegida por Inetum')}). "
+                      "Diseña la solución, sus servicios y sus costes en esta nube, aunque cloud_provider diga otra.")
     for estado, lineas in grupos.items():
         if lineas:
             partes.append(titulos[estado] + "\n" + "\n".join(lineas))

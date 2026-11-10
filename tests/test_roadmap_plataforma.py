@@ -58,7 +58,7 @@ assert len(prompts) == 7, f"se esperaban 7 tareas y hay {len(prompts)}"
 
 # 1) Las 7 tareas reciben la regla de la plataforma, después de los datos del cliente
 for n, prompt in enumerate(prompts, start=1):
-    assert "PLATAFORMA: usa la nube y las herramientas que indica el caso" in prompt, f"la tarea {n} no lleva la regla"
+    assert "PLATAFORMA: si los datos del cliente traen una PLATAFORMA OBJETIVO" in prompt, f"la tarea {n} no lleva la regla"
     assert "- cloud_provider: AWS" in prompt
 print("OK 1: las 7 tareas del roadmap reciben la regla de usar la plataforma del cliente")
 

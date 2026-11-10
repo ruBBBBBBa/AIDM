@@ -27,7 +27,7 @@ TESTS = [
     #"test_contexto_cliente.py",     # fallo 25
     #"test_presupuesto_unico.py",    # fallo 24
     #"test_prompts_sesgo.py",        # fallos 34 y 10
-    #"test_roadmap_plataforma.py",   # fallo 6
+    "test_roadmap_plataforma.py",   # fallo 6
     #"test_costes_componentes.py",   # fallo 32
     #"test_costes_perfiles.py",      # fallo 37
     #"test_costes_unitarios.py",     # fallo 41 (C15)
@@ -47,6 +47,7 @@ TESTS = [
     "test_gateway.py",              # gateway de modelos
     "test_comparar_modelos.py",        # compara los resultados de varios modelos simulados
     "test_arranque_local.py",       # fallo 66
+    "test_plataforma.py",           # fallo 67
 ]
 
 # Los resultados llevan «≥», «€»…: en Windows, sin esto, la salida por tubería usa cp1252 y falla.
