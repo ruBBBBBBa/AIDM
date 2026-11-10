@@ -1,6 +1,7 @@
 ﻿import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import litellm
@@ -31,6 +32,18 @@ logger = logging.getLogger("aidm")
 # Fallo 36: el campo por el que pregunta el asistente se guarda en el caso, para leer la respuesta en el turno siguiente.
 CAMPO_PREGUNTADO = "campo_preguntado"
 
+# Fallo 68: los campos que ya se han vuelto a preguntar por una respuesta vaga (una sola vez cada uno)
+CAMPOS_REPREGUNTADOS = "campos_repreguntados"
+# El modelo de decisión lee la respuesta mientras el LLM prepara el turno: así no añade espera
+_EN_PARALELO = ThreadPoolExecutor(max_workers=1, thread_name_prefix="decision")
+REPREGUNTA = {
+    "es": "Necesito algo más concreto para poder estimarlo, aunque sea aproximado: una cifra, un rango o un nombre. ",
+    "en": "I need something a bit more concrete to work with, even if it's rough: a figure, a range or a name. ",
+}
+_PALABRAS_EN = {"the", "and", "we", "our", "is", "are", "it", "of", "to", "in", "for", "with", "you", "your",
+                "an", "do", "don't", "have", "what", "how", "which", "quite", "lot", "some", "usual", "about"}
+_PALABRAS_ES = {"el", "la", "los", "las", "de", "que", "y", "en", "un", "una", "por", "con", "para", "es", "son",
+                "no", "lo", "se", "nos", "tenemos", "qué", "cuántos", "bastante", "bastantes", "algo", "normal"}
 
 
 def _get_pending_fields(problem_case: dict[str, Any]) -> list[str]:
@@ -186,29 +199,86 @@ def _ultima_pregunta(chat_history: list[dict[str, str]] | None) -> str:
     return ""
 
 
-def _con_respuesta_cerrada(updates: list[dict[str, Any]], problem_case: dict[str, Any], user_prompt: str,
-                           chat_history: list[dict[str, str]] | None) -> list[dict[str, Any]]:
-    """Fallo 36: si el cliente dice que no sabe o que no aplica lo que se le preguntó, se guarda aunque el LLM no lo haga.
-
-    Decide el modelo de decisión (decisiones.py); sin él, solo cuentan las frases claras («no lo sé», «no aplica»).
-    """
+def _campo_por_decidir(problem_case: dict[str, Any]) -> tuple[str, dict] | None:
+    """El campo por el que se preguntó en el turno anterior, si sigue sin valor (o None)."""
     campo = problem_case.get(CAMPO_PREGUNTADO)
     datos = problem_case.get(campo) if campo in TEXT_FIELDS else None
     if not isinstance(datos, dict) or not es_valor_de_relleno(datos.get("value")):
-        return updates  # no se preguntó por ningún campo, o ya tiene valor
-    if any(upd.get("field_key") == campo for upd in updates):
-        return updates  # lo ha guardado el LLM; un «No lo sé» literal lo arregla _normalize_update_value()
+        return None
+    return campo, datos
 
-    decision = decisiones.estado_respuesta(campo, datos.get("description", ""), _ultima_pregunta(chat_history),
-                                           str(user_prompt))
+
+def _pedir_estado(problem_case: dict[str, Any], user_prompt: str, chat_history: list[dict[str, str]] | None):
+    """Fallo 68: pide al modelo de decisión el estado de la respuesta en otro hilo, mientras responde el LLM.
+    Devuelve el Future (o None si no hay campo por el que se haya preguntado)."""
+    por_decidir = _campo_por_decidir(problem_case)
+    if not por_decidir:
+        return None
+    campo, datos = por_decidir
+    return _EN_PARALELO.submit(decisiones.estado_respuesta, campo, datos.get("description", ""),
+                               _ultima_pregunta(chat_history), str(user_prompt))
+
+
+def _resultado(futuro) -> tuple[str, float] | None:
+    """Lo que ha decidido el modelo (o None si no hay decisión o ha fallado)."""
+    if futuro is None:
+        return None
+    try:
+        return futuro.result(timeout=decisiones.TIEMPO_MAXIMO + 15)
+    except Exception as exc:
+        logger.warning("[discovery] El modelo de decisión no ha contestado (%s)", type(exc).__name__)
+        return None
+
+
+def _con_respuesta_cerrada(updates: list[dict[str, Any]], problem_case: dict[str, Any], user_prompt: str,
+                           decision: tuple[str, float] | None) -> tuple[list[dict[str, Any]], bool]:
+    """Fallo 36: si el cliente dice que no sabe o que no aplica lo que se le preguntó, se guarda aunque el LLM no lo haga.
+    Fallo 68: si la respuesta es vaga, no se guarda y se vuelve a preguntar (una vez por campo).
+
+    Decide el modelo de decisión (decisiones.py, ya consultado en _pedir_estado); sin él, solo cuentan las frases
+    claras («no lo sé», «no aplica»). Devuelve los updates y si hay que volver a preguntar por el campo.
+    """
+    por_decidir = _campo_por_decidir(problem_case)
+    if not por_decidir:
+        return updates, False  # no se preguntó por ningún campo, o ya tiene valor
+    campo = por_decidir[0]
     estado, confianza = decision if decision else (respuesta_cerrada(user_prompt), 1.0)
+    if (estado == "vaga" and confianza >= decisiones.CONFIANZA_MINIMA
+            and campo not in (problem_case.get(CAMPOS_REPREGUNTADOS) or [])):
+        print(f"[discovery] {campo}: respuesta vaga (modelo de decisión, {confianza:.2f}); se vuelve a preguntar")
+        return [upd for upd in updates if upd.get("field_key") != campo], True
+    if any(upd.get("field_key") == campo for upd in updates):
+        return updates, False  # lo ha guardado el LLM; un «No lo sé» literal lo arregla _normalize_update_value()
     if estado in VALORES_CERRADOS and confianza >= decisiones.CONFIANZA_MINIMA:
         origen = f"modelo de decisión, {confianza:.2f}" if decision else "frase"
         print(f"[discovery] {campo}: {estado} ({origen}); se guarda «{VALORES_CERRADOS[estado]}»")
-        return updates + [{"field_key": campo, "value": VALORES_CERRADOS[estado], "operation": "replace"}]
+        return updates + [{"field_key": campo, "value": VALORES_CERRADOS[estado], "operation": "replace"}], False
     if estado == "dato":
         logger.warning("[discovery] %s: el modelo de decisión ve un dato (%.2f) que el LLM no ha guardado", campo, confianza)
-    return updates
+    return updates, False
+
+
+def _repregunta(user_prompt: str, chat_history: list[dict[str, str]] | None) -> str:
+    """Fallo 68: la misma pregunta otra vez, con una frase que pide algo concreto, en el idioma del cliente."""
+    pregunta = _ultima_pregunta(chat_history)
+    palabras = re.findall(r"[a-záéíóúñ']+", f"{user_prompt} {pregunta}".lower())
+    idioma = "en" if sum(p in _PALABRAS_EN for p in palabras) > sum(p in _PALABRAS_ES for p in palabras) else "es"
+    return REPREGUNTA[idioma] + pregunta.strip()
+
+
+def _apuntar_repreguntado(campo: str | None) -> None:
+    """Apunta el campo como ya repreguntado (con None, borra la lista: al cerrar el caso)."""
+    problem_case = load_problem_case()
+    repreguntados = list(problem_case.get(CAMPOS_REPREGUNTADOS) or [])
+    if campo and campo not in repreguntados:
+        problem_case[CAMPOS_REPREGUNTADOS] = repreguntados + [campo]
+    elif campo is None and CAMPOS_REPREGUNTADOS in problem_case:
+        problem_case.pop(CAMPOS_REPREGUNTADOS)
+    else:
+        return
+    with open(utils.PROBLEM_CASE_PATH, "w", encoding="utf-8") as f:  # utils.: los tests cambian la ruta
+        json.dump(problem_case, f, ensure_ascii=False, indent=2)
+
 
 
 def _guardar_campo_preguntado(campo: str | None) -> None:
@@ -282,7 +352,8 @@ def _propose_plan_with_agent(user_prompt: str, chat_history: list[dict[str, str]
     pending = _get_pending_fields(problem_case)
     print(f"Campos pendientes detectados: {pending}")
     transcript = _recent_chat_transcript(chat_history)
-    internos = (CAMPO_PREGUNTADO, utils.PLATAFORMA_OBJETIVO)  # fallo 67: la plataforma no es un dato que preguntar
+    # fallo 67: la plataforma no es un dato que preguntar; fallo 68: los repreguntados tampoco
+    internos = (CAMPO_PREGUNTADO, utils.PLATAFORMA_OBJETIVO, CAMPOS_REPREGUNTADOS)
     current_json = json.dumps({k: v for k, v in problem_case.items() if k not in internos},
                               ensure_ascii=False, indent=2)
 
@@ -355,6 +426,7 @@ def run_agent(user_prompt, chat_history: list[dict[str, str]] | None = None):
         return _build_assistant_reply(problem_case_before, problem_case_before, "")
 
     plan: dict[str, Any] = {"updates": [], "assistant_reply": "", "update_status": None}
+    futuro = _pedir_estado(problem_case_before, user_prompt, chat_history)  # fallo 68: a la vez que el LLM
     try:
         plan = _propose_plan_with_agent(user_prompt, chat_history)
     except Exception as exc:
@@ -366,8 +438,10 @@ def run_agent(user_prompt, chat_history: list[dict[str, str]] | None = None):
         m.get("content", "") for m in (chat_history or []) if m.get("role") == "user"
     ) + " " + str(user_prompt)
     plan["updates"] = _sin_cifras_inventadas(plan.get("updates", []), textos_usuario)
-    plan["updates"] = _con_respuesta_cerrada(plan["updates"], problem_case_before, user_prompt, chat_history)
-
+    plan["updates"], repreguntar = _con_respuesta_cerrada(plan["updates"], problem_case_before, user_prompt,
+                                                          _resultado(futuro))
+    if repreguntar:
+        plan["update_status"] = None  # el campo vago sigue pendiente: el caso no se puede cerrar en este turno
 
     if plan.get("updates") or plan.get("update_status") is not None:
         try:
@@ -395,5 +469,12 @@ def run_agent(user_prompt, chat_history: list[dict[str, str]] | None = None):
             campo_preguntado, _, primero = pending[0].partition(": ")
             llm_reply = f"Aún me faltan {len(pending)} datos para cerrar el caso. Empecemos por este: {primero or campo_preguntado}"
     
-    _guardar_campo_preguntado(None if problem_case_after.get("status") == "completed" else campo_preguntado)
+    if repreguntar:  # fallo 68: la misma pregunta otra vez, en vez de la que traía el LLM
+        campo_preguntado = problem_case_before[CAMPO_PREGUNTADO]
+        llm_reply = _repregunta(user_prompt, chat_history)
+        _apuntar_repreguntado(campo_preguntado)
+    completado = problem_case_after.get("status") == "completed"
+    _guardar_campo_preguntado(None if completado else campo_preguntado)
+    if completado:
+        _apuntar_repreguntado(None)
     return _build_assistant_reply(problem_case_before, problem_case_after, llm_reply)

@@ -48,6 +48,8 @@ TESTS = [
     "test_comparar_modelos.py",        # compara los resultados de varios modelos simulados
     "test_arranque_local.py",       # fallo 66
     "test_plataforma.py",           # fallo 67
+    "test_discovery_vaga.py",       # fallo 68
+
 ]
 
 # Los resultados llevan «≥», «€»…: en Windows, sin esto, la salida por tubería usa cp1252 y falla.

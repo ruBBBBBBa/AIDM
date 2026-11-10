@@ -38,6 +38,9 @@ PREGUNTA_ESTADO = {
         "no_aplica": "Dice que ese tema no aplica a su proyecto, que no lo necesita o que no es relevante para él.",
         "no_responde": "No contesta a lo que se le pregunta: cambia de tema, da otro dato, pregunta otra cosa "
                        "o lo deja para más tarde.",
+        # Fallo 68: la respuesta habla del dato pero no sirve para estimar nada; el discovery vuelve a preguntar
+        "vaga": "Habla del dato pero sin concretar nada que sirva para estimarlo: ni una cifra, ni un rango, ni un "
+                "nombre (por ejemplo «bastantes», «lo normal», «depende» o «un poco de todo»).",
     },
 }
 
@@ -79,17 +82,26 @@ def decidir(estado: str, preguntas: dict) -> dict | None:
     return respuestas if isinstance(respuestas, dict) else None
 
 
-def estado_respuesta(campo: str, descripcion: str, pregunta: str, respuesta: str) -> tuple[str, float] | None:
-    """('dato' | 'no_lo_sabe' | 'no_aplica' | 'no_responde', confianza) o None si el modelo no está disponible."""
-    inicio = time.monotonic()
-    respuestas = decidir(texto_estado(campo, descripcion, pregunta, respuesta), {"estado": PREGUNTA_ESTADO})
-    decision = (respuestas or {}).get("estado") or {}
+
+def _eleccion(decision: dict | None, criterios: dict) -> tuple[str, float] | None:
+    """(opción, confianza) de una respuesta del modelo, o None si no es una de las opciones de la pregunta."""
+    decision = decision if isinstance(decision, dict) else {}
     eleccion = decision.get("choice")
-    if eleccion not in PREGUNTA_ESTADO["criteria"]:
+    if eleccion not in criterios:
         return None
     confianza = decision.get("confidence")
     if not isinstance(confianza, (int, float)):
         confianza = (decision.get("probabilities") or {}).get(eleccion, 0.0)
-    print(f"[decisiones] estado_respuesta · {campo} · {eleccion} ({confianza:.2f}) · "
-          f"{time.monotonic() - inicio:.1f} s")
     return eleccion, float(confianza)
+
+
+def estado_respuesta(campo: str, descripcion: str, pregunta: str, respuesta: str) -> tuple[str, float] | None:
+    """('dato' | 'no_lo_sabe' | 'no_aplica' | 'no_responde' | 'vaga', confianza) o None si el modelo no está
+    disponible."""
+    inicio = time.monotonic()
+    respuestas = decidir(texto_estado(campo, descripcion, pregunta, respuesta), {"estado": PREGUNTA_ESTADO})
+    resultado = _eleccion((respuestas or {}).get("estado"), PREGUNTA_ESTADO["criteria"])
+    if resultado:
+        print(f"[decisiones] estado_respuesta · {campo} · {resultado[0]} ({resultado[1]:.2f}) · "
+              f"{time.monotonic() - inicio:.1f} s")
+    return resultado

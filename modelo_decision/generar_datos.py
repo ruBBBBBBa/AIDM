@@ -1,12 +1,14 @@
-"""Genera los ejemplos inventados para entrenar el modelo de decisión del estado de la respuesta (fallo 36).
+"""Genera los ejemplos inventados para entrenar el modelo de decisión de AIDM.
 
-Cada ejemplo es un turno del discovery: el campo por el que pregunta el asistente, su pregunta y la respuesta
-del cliente. La etiqueta dice qué hace la respuesta con ese campo:
+Tarea «estado» (fallos 36 y 68). Cada ejemplo es un turno del discovery: el campo por el que pregunta el asistente,
+su pregunta y la respuesta del cliente. La etiqueta dice qué hace la respuesta con ese campo:
     dato         da el dato, aunque sea aproximado o negativo («no tenemos», «ninguno», «solo Excel»)
     no_lo_sabe   dice que no lo sabe, sin dar ningún valor
     no_aplica    dice que ese tema no aplica a su proyecto o que no lo necesita
     no_responde  no contesta a lo preguntado: cambia de tema, da un dato de otro campo o lo deja para luego
+    vaga         habla del dato sin concretar nada («bastantes», «lo normal», «depende»): se vuelve a preguntar
 
+    
 Nada sale de clientes reales. Las respuestas de prueba (las listas *_PRUEBA) no aparecen en el entrenamiento,
 así que la prueba mide si el modelo generaliza a frases que no ha visto.
 
@@ -36,7 +38,7 @@ SEMILLA = 3407
 # --------------------------------------------------------------------------------------------------------
 CAMPOS = {
     "nombre_del_cliente": {
-        "grupo": "empresa", "no_lo_sabe": False, "no_aplica": False,
+        "grupo": "empresa", "no_lo_sabe": False, "no_aplica": False, "vaga": False,
         "tema": ("el nombre de la empresa", "the company name"),
         "preguntas": {
             "es": ["¿Cómo se llama tu empresa?", "¿Para qué empresa sería el proyecto?",
@@ -81,7 +83,7 @@ CAMPOS = {
         },
     },
     "sector": {
-        "grupo": "empresa", "no_lo_sabe": False, "no_aplica": False,
+        "grupo": "empresa", "no_lo_sabe": False, "no_aplica": False, "vaga": False,
         "tema": ("el sector", "your industry"),
         "preguntas": {
             "es": ["¿A qué sector se dedica la empresa?", "¿En qué sector trabajáis?",
@@ -525,6 +527,59 @@ NO_RESPONDE_PRUEBA = {
            "Hmm, sigamos con otra cosa."],
     "en": ["Can I tell you later?", "What do other clients usually do?"],
 }
+# Fallo 68: respuestas vagas. Hablan del dato pero no dan nada con que estimar: ni cifra, ni rango, ni nombre.
+# Ojo: «Poca cosa, unos cuantos gigas» o «Lo normal, protección de datos» SÍ son datos (llevan una magnitud o un
+# nombre); por eso VAGO_ANTES pone a veces una de estas muletillas delante de un dato, que sigue siendo «dato».
+VAGA = {
+    "es": ["Bastante.", "Depende.", "Lo normal.", "Lo típico.", "Un poco de todo.", "Lo de siempre.", "Algo hay.",
+           "Más o menos lo habitual.", "Como cualquier empresa.", "De todo un poco.", "Pues lo normal, ¿no?",
+           "Lo estándar.", "Normalito.", "Ni mucho ni poco.", "Lo que tiene cualquiera.", "Pues depende un poco.",
+           "Lo habitual en {tema}.", "Lo normal en {tema}, nada raro.", "Pues lo típico, ya sabes."],
+    "en": ["Quite a lot.", "It depends.", "The usual.", "A bit of everything.", "Some.", "Like any company.",
+           "The standard stuff.", "Pretty normal, I'd say.", "The usual for {tema}."],
+}
+VAGA_PRUEBA = {
+    "es": ["Pues regular, como todos.", "Bueno, lo que viene siendo lo normal.", "Tirando a bastante.", "Uf, de todo.",
+           "Lo corriente."],
+    "en": ["Fairly standard, I guess.", "A fair amount.", "Nothing out of the ordinary."],
+}
+VAGAS_PROPIAS = {  # las de cada campo (solo entrenamiento)
+    "tamaño_empresa": {"es": ["Bastante gente.", "Somos unos cuantos."], "en": ["Quite a few people."]},
+    "tiene_equipo_datos": {"es": ["Algo hay, sí.", "Hay gente que toca datos.", "Más o menos."], "en": ["Sort of."]},
+    "tipo_de_servicio": {"es": ["Lo que haga falta.", "Lo que se suele hacer."], "en": ["Whatever's needed."]},
+    "objetivo_del_proyecto": {"es": ["Mejorar.", "Ser más eficientes, lo típico.", "Sacar más partido a los datos."],
+                              "en": ["Just to improve things."]},
+    "modelo_de_despliegue": {"es": ["Lo que se lleve ahora.", "Algo moderno."], "en": ["Whatever's modern."]},
+    "cloud_provider": {"es": ["Alguna tenemos.", "La de siempre.", "Una de las grandes."], "en": ["One of the big ones."]},
+    "tipo_de_arquitectura": {"es": ["Algo moderno.", "Algo que funcione.", "Lo que se usa ahora."],
+                             "en": ["Something that works."]},
+    "herramienta_de_visualizacion": {"es": ["La de siempre.", "Una de esas de gráficos.", "Alguna tenemos por ahí."],
+                                     "en": ["One of those charting tools."]},
+    "enfoque_ai": {"es": ["Lo que se lleva ahora.", "Algo de IA, lo típico.", "Que sea inteligente."],
+                   "en": ["Some AI, the usual."]},
+    "integration_scope": {"es": ["Varios sistemas.", "Unos cuantos.", "Lo que tenemos."], "en": ["A few systems."]},
+    "volumen_de_datos": {"es": ["Bastantes datos.", "Muchos.", "Un montón."], "en": ["Lots of data.", "Quite a bit."]},
+    "madurez_analitica_actual": {"es": ["Normalito.", "Regular.", "Como todo el mundo."], "en": ["Average, I guess."]},
+    "tamano_equipo_tecnico": {"es": ["Algunos.", "Gente hay.", "Los de siempre."], "en": ["Some people."]},
+    "stack_tecnologico_actual": {"es": ["Lo típico.", "Varios programas.", "Lo normal de una empresa."],
+                                 "en": ["The usual stuff."]},
+    "restriccion_presupuestaria": {"es": ["Lo razonable.", "No mucho.", "Ajustado."],
+                                   "en": ["Something reasonable.", "Not much."]},
+    "plazo_objetivo": {"es": ["Pronto.", "En breve.", "Más bien pronto."], "en": ["Soon.", "Fairly soon."]},
+    "regulacion_y_compliance": {"es": ["Lo de siempre.", "Las normales.", "Lo que toque."], "en": ["The usual ones."]},
+    "kpis_de_exito": {"es": ["Que funcione bien.", "Que se note.", "Mejorar en general."], "en": ["That it works."]},
+}
+VAGAS_PROPIAS_PRUEBA = {
+    "volumen_de_datos": {"es": ["Una barbaridad de datos."], "en": ["Tons."]},
+    "restriccion_presupuestaria": {"es": ["Lo que veamos sensato."], "en": []},
+    "plazo_objetivo": {"es": ["Para dentro de poco."], "en": []},
+    "tamano_equipo_tecnico": {"es": ["Algo de gente tenemos."], "en": []},
+}
+VAGO_ANTES = {  # muletilla vaga delante de un dato: sigue siendo un dato
+    "es": ["Lo normal: ", "Pues lo típico, ", "Bastante: ", "Un poco de todo: ", "Lo de siempre, "],
+    "en": ["The usual: ", "Quite a lot, "],
+}
+
 
 # Lo que se pone delante de la pregunta del asistente y de la respuesta del cliente, para variar.
 INICIO_PREGUNTA = {
@@ -580,6 +635,11 @@ def _respuestas(nombre: str, etiqueta: str, idioma: str, prueba: bool) -> list[s
         base = (NO_APLICA_PRUEBA if prueba else NO_APLICA)[idioma]
         propias = [] if prueba else campo.get("no_aplica_propio", {}).get(idioma, [])
         return [_con_tema(r, campo, idioma) for r in base] + propias
+    if etiqueta == "vaga":
+        base = (VAGA_PRUEBA if prueba else VAGA)[idioma]
+        propias = (VAGAS_PROPIAS_PRUEBA if prueba else VAGAS_PROPIAS).get(nombre, {}).get(idioma, [])
+        return [_con_tema(r, campo, idioma) for r in base] + propias
+
     # no_responde: frases que no contestan y, tantas como esas, datos de campos de otro grupo
     base = list((NO_RESPONDE_PRUEBA if prueba else NO_RESPONDE)[idioma])
     base += [] if prueba else campo.get("no_responde_propio", {}).get(idioma, [])
@@ -602,6 +662,9 @@ def _ejemplo(rng: random.Random, nombre: str, etiqueta: str, idioma: str, prueba
     respuesta = rng.choice(_respuestas(nombre, etiqueta, idioma, prueba))
     if etiqueta == "dato" and campo["grupo"] != "empresa" and rng.random() < 0.2:
         respuesta = rng.choice(DUDA[idioma]) + _minuscula_inicial(respuesta)
+    elif etiqueta == "dato" and campo.get("vaga", True) and rng.random() < 0.1:
+        # fallo 68: «Lo normal: Power BI» lleva el dato aunque empiece vago
+        respuesta = rng.choice(VAGO_ANTES[idioma]) + _minuscula_inicial(respuesta)    
     elif etiqueta == "dato" and rng.random() < 0.1:
         # un dato con otro dato detrás sigue siendo un dato del campo preguntado
         respuesta += " " + rng.choice(_datos_de_otros(nombre, idioma, prueba))
@@ -614,19 +677,21 @@ def _ejemplo(rng: random.Random, nombre: str, etiqueta: str, idioma: str, prueba
         "state": texto_estado(nombre, descripciones[nombre], pregunta, respuesta),
         "questions": {"estado": PREGUNTA_ESTADO},
         "gold": {"estado": etiqueta},
+        "tarea": "estado",
         "campo": nombre,
         "idioma": idioma,
     }
 
 
 # Ejemplos por campo y etiqueta (entrenamiento, prueba). El español pesa más: es el idioma de casi todos los clientes.
-CUANTOS = {"dato": (40, 4), "no_lo_sabe": (26, 3), "no_aplica": (24, 3), "no_responde": (30, 3)}
+CUANTOS = {"dato": (40, 4), "no_lo_sabe": (26, 3), "no_aplica": (24, 3), "no_responde": (30, 3), "vaga": (24, 3)}
 PARTE_EN_INGLES = 0.25
 
 
 def _etiquetas(campo: dict) -> list[str]:
-    """dato y no_responde valen para todos los campos; no_lo_sabe y no_aplica, solo donde tienen sentido."""
-    return [e for e in CUANTOS if e in ("dato", "no_responde") or campo[e]]
+    """dato y no_responde valen para todos los campos; no_lo_sabe y no_aplica, solo donde tienen sentido; vaga, en
+    todos salvo el nombre y el sector."""
+    return [e for e in CUANTOS if e in ("dato", "no_responde") or campo.get(e, e == "vaga")]
 
 
 def generar(prueba: bool, descripciones: dict, rng: random.Random) -> list[dict]:
@@ -668,10 +733,12 @@ def main() -> None:
         with open(SALIDA / f"{nombre}.jsonl", "w", encoding="utf-8") as f:
             for fila in filas:
                 f.write(json.dumps(fila, ensure_ascii=False) + "\n")
-        reparto = Counter(fila["gold"]["estado"] for fila in filas)
         idiomas = Counter(fila["idioma"] for fila in filas)
-        print(f"{nombre}: {len(filas)} ejemplos · " + ", ".join(f"{k} {v}" for k, v in sorted(reparto.items()))
-              + f" · es {idiomas['es']}, en {idiomas['en']}")
+        print(f"{nombre}: {len(filas)} ejemplos (es {idiomas['es']}, en {idiomas['en']})")
+        for tarea in sorted({fila["tarea"] for fila in filas}):
+            # una fila puede llevar varias preguntas (uso_1, uso_2…): se cuentan las respuestas, no las filas
+            reparto = Counter(v for fila in filas if fila["tarea"] == tarea for v in fila["gold"].values())
+            print(f"  {tarea}: " + ", ".join(f"{k} {v}" for k, v in sorted(reparto.items())))
 
 
 if __name__ == "__main__":
