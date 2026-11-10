@@ -19,6 +19,8 @@ Unsloth (state, questions, gold).
 """
 import json
 import random
+import re
+
 import sys
 import unicodedata
 from collections import Counter
@@ -26,7 +28,9 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ))
-from decisiones import PREGUNTA_ESTADO, texto_estado  # noqa: E402  la misma pregunta y el mismo texto que AIDM
+from decisiones import (  # noqa: E402  las mismas preguntas y los mismos textos que AIDM
+    PREGUNTA_ESTADO, USOS_POR_LLAMADA, pregunta_uso, texto_estado, texto_uso,
+)
 
 SALIDA = RAIZ / "modelo_decision" / "datos"
 SEMILLA = 3407
@@ -713,6 +717,121 @@ def generar(prueba: bool, descripciones: dict, rng: random.Random) -> list[dict]
     rng.shuffle(filas)
     return filas
 
+# --------------------------------------------------------------------------------------------------------
+# Tarea «uso» (fallo 69): qué dice el cliente de cada herramienta o nube que nombra en un campo del caso. El estado
+# es el texto del campo (como lo guarda el discovery: a menudo en tercera persona) y hay una pregunta por
+# herramienta (uso_1, uso_2…), con su nombre tal como sale en el texto. Las plantillas *_PRUEBA no se entrenan.
+# --------------------------------------------------------------------------------------------------------
+HERRAMIENTAS = ["Power BI", "Microsoft 365", "Excel", "SharePoint", "Teams", "Dynamics 365", "Office 365", "Azure",
+                "AWS", "Google Cloud", "Oracle Cloud", "IBM Cloud", "Databricks", "SAP", "S/4HANA", "Oracle Database",
+                "JD Edwards", "AS/400", "Db2", "Cognos", "Google Workspace", "BigQuery", "Looker", "Synapse",
+                "Redshift", "S3", "Tableau", "Qlik", "Snowflake", "Salesforce", "Odoo", "SQL Server", "Navision",
+                "HubSpot", "MySQL", "Microsoft Fabric", "Azure Data Factory", "SageMaker", "NetSuite", "Mainframe"]
+CAMPOS_USO = ["stack_tecnologico_actual", "cloud_provider", "herramienta_de_visualizacion", "madurez_analitica_actual",
+              "tamano_equipo_tecnico", "evidencias"]
+USO = {
+    "la_usa": {
+        "es": ["usamos {h}", "usan {h}", "tenemos {h}", "tienen {h}", "trabajamos con {h}", "trabajan con {h}",
+               "todo está en {h}", "en finanzas usan {h}", "{h} para los informes", "algo de {h}", "estamos con {h}",
+               "tienen licencias de {h}", "el ERP va sobre {h}", "los datos están en {h}", "{h} en toda la empresa",
+               "usan {h} aunque poco", "IT conoce {h}"],
+        "en": ["we use {h}", "they use {h}", "we have {h}", "we're on {h}", "{h} for reporting",
+               "everything runs on {h}", "some {h}"],
+    },
+    "quiere_usarla": {
+        "es": ["queremos empezar con {h}", "nos gustaría usar {h}", "preferimos {h} para esto", "estamos pensando en {h}",
+               "quieren probar {h}", "les interesa {h}", "la idea es pasar a {h}", "preferirían {h}",
+               "quieren montarlo en {h}"],
+        "en": ["we'd like to use {h}", "we're thinking about {h}", "we'd prefer {h}", "they want to try {h}"],
+    },
+    "no_la_usa": {
+        "es": ["no usamos {h}", "no usan {h}", "no tenemos {h}", "no tienen {h}", "nada de {h}", "{h} no lo usamos",
+               "sin {h}", "no tienen licencias de {h}", "{h} no, nunca lo han usado", "no quieren {h}",
+               "nunca hemos tenido {h}", "{h} no lo conocen"],
+        "en": ["we don't use {h}", "they don't have {h}", "no {h}", "we've never used {h}", "we don't want {h}",
+               "without {h}"],
+    },
+    "la_deja": {
+        "es": ["dejamos {h} el año pasado", "antes usábamos {h}", "estamos saliendo de {h}", "vamos a dejar {h}",
+               "tenían {h} pero lo quitaron", "están migrando desde {h}", "{h} lo van a sustituir",
+               "{h}, hasta el año pasado", "abandonaron {h}", "dejaron {h} en 2025"],
+        "en": ["we used to use {h}", "we're moving away from {h}", "they dropped {h} last year",
+               "we're replacing {h}", "{h} until last year"],
+    },
+}
+USO_PRUEBA = {
+    "la_usa": {"es": ["tiramos de {h} para casi todo", "el equipo se apaña con {h}"], "en": ["we rely on {h}"]},
+    "quiere_usarla": {"es": ["nos han recomendado {h} y queremos verlo"], "en": ["we're keen on {h}"]},
+    "no_la_usa": {"es": ["de {h}, nada", "{h} ni lo hemos probado"], "en": ["{h}? not at all"]},
+    "la_deja": {"es": ["{h} lo jubilamos en marzo", "nos estamos quitando de {h}"], "en": ["we're phasing out {h}"]},
+}
+PARES = {  # dos herramientas con la misma relación en una frase: «no usan Power BI ni Microsoft 365»
+    "la_usa": {"es": ["usan {h1} y {h2}", "tenemos {h1} y {h2}"], "en": ["we use {h1} and {h2}"]},
+    "no_la_usa": {"es": ["no usan {h1} ni {h2}", "ni {h1} ni {h2}", "no tenemos ni {h1} ni {h2}",
+                         "nada de {h1} ni de {h2}"],
+                  "en": ["we don't use {h1} or {h2}", "neither {h1} nor {h2}"]},
+    "la_deja": {"es": ["dejaron {h1} y {h2}"], "en": ["we dropped {h1} and {h2}"]},
+}
+PARES_PRUEBA = {"no_la_usa": {"es": ["ni rastro de {h1} ni de {h2}"], "en": ["no {h1}, no {h2}"]},
+                "la_usa": {"es": ["se apañan con {h1} y {h2}"], "en": []}, "la_deja": {"es": [], "en": []}}
+NEUTRAS = {"es": ["ERP propio", "algo de Python", "un CRM hecho a medida", "todo a mano en los almacenes"],
+           "en": ["a custom ERP", "some Python", "a home-grown CRM"]}
+UNIONES = {"es": ["; ", ", ", ". ", " y ", ", pero "], "en": ["; ", ", ", ". ", " and ", ", but "]}
+CUANTOS_USO = (1000, 100)  # filas de entrenamiento y de prueba
+
+
+def _clausula(rng: random.Random, idioma: str, prueba: bool, libres: list[str]) -> tuple[str, dict[str, str]]:
+    """Una frase con una herramienta (o dos, con la misma relación) y lo que dice de cada una."""
+    relacion = rng.choice(list(USO))
+    pares = (PARES_PRUEBA if prueba else PARES).get(relacion, {}).get(idioma, [])
+    if pares and len(libres) >= 2 and rng.random() < 0.3:
+        h1, h2 = libres.pop(), libres.pop()
+        return rng.choice(pares).format(h1=h1, h2=h2), {h1: relacion, h2: relacion}
+    plantillas = (USO_PRUEBA if prueba else USO)[relacion][idioma] or USO[relacion][idioma]
+    h = libres.pop()
+    return rng.choice(plantillas).format(h=h), {h: relacion}
+
+
+def _ejemplo_uso(rng: random.Random, idioma: str, prueba: bool) -> dict | None:
+    libres = rng.sample(HERRAMIENTAS, k=4)
+    frases, etiquetas = [], {}
+    for _ in range(rng.choice([1, 1, 2, 2, 3])):
+        if len(etiquetas) >= USOS_POR_LLAMADA - 1 or not libres:
+            break
+        frase, nuevas = _clausula(rng, idioma, prueba, libres)
+        frases.append(frase)
+        etiquetas.update(nuevas)
+    if rng.random() < 0.3:
+        frases.insert(rng.randrange(len(frases) + 1), rng.choice(NEUTRAS[idioma]))
+    texto = frases[0]
+    for frase in frases[1:]:
+        texto += rng.choice(UNIONES[idioma]) + frase
+    texto = texto[:1].upper() + texto[1:] + ("." if rng.random() < 0.6 else "")
+    texto = _escrita_a_mano(rng, texto)
+    nombres = list(etiquetas)
+    rng.shuffle(nombres)  # en AIDM el orden es el del yaml, no el del texto
+    preguntas, gold = {}, {}
+    for i, h in enumerate(nombres, 1):
+        m = re.search(re.escape(h), texto, re.IGNORECASE)
+        if not m:
+            return None
+        preguntas[f"uso_{i}"] = pregunta_uso(m.group(0))  # el nombre como sale en el texto (a veces en minúsculas)
+        gold[f"uso_{i}"] = etiquetas[h]
+    campo = rng.choice(CAMPOS_USO)
+    return {"state": texto_uso(campo, texto), "questions": preguntas, "gold": gold, "tarea": "uso",
+            "campo": campo, "idioma": idioma}
+
+
+def generar_usos(prueba: bool, rng: random.Random) -> list[dict]:
+    filas, vistos = [], set()
+    objetivo = CUANTOS_USO[1 if prueba else 0]
+    while len(filas) < objetivo:
+        fila = _ejemplo_uso(rng, "en" if rng.random() < PARTE_EN_INGLES else "es", prueba)
+        if fila and fila["state"] not in vistos:
+            vistos.add(fila["state"])
+            filas.append(fila)
+    return filas
+
 
 def main() -> None:
     plantilla = json.loads((RAIZ / "data_structures" / "problem_case_recovery.json").read_text(encoding="utf-8"))
@@ -724,6 +843,11 @@ def main() -> None:
     rng = random.Random(SEMILLA)
     entrenamiento = generar(False, descripciones, rng)
     prueba = generar(True, descripciones, rng)
+    entrenamiento += generar_usos(False, rng)  # fallo 69
+    prueba += generar_usos(True, rng)
+    rng.shuffle(entrenamiento)
+    rng.shuffle(prueba)
+
     solapadas = {f["state"] for f in entrenamiento} & {f["state"] for f in prueba}
     if solapadas:
         raise SystemExit(f"{len(solapadas)} ejemplos de prueba están también en el entrenamiento")

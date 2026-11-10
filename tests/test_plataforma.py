@@ -11,8 +11,7 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent  # la carpeta del proyecto (este archivo está en tests/)
 sys.path.insert(0, str(RAIZ))  # para importar utils, agents, graph… desde aquí
-os.chdir(RAIZ)                 # para que las rutas relativas (data_structures/…) apunten al proyecto
-
+os.environ["AIDM_DECISION_URL"] = ""  # fallo 69: este test no usa el modelo de decisión, aunque esté en tu .env
 import contextlib
 import io
 import json

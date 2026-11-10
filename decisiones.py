@@ -45,6 +45,28 @@ PREGUNTA_ESTADO = {
 }
 
 
+
+# Fallo 69: qué dice el cliente de una herramienta o una nube que nombra. El agente de plataforma lo pregunta solo
+# cuando cerca hay una negación o un cambio («no usan Power BI», «dejaron Oracle»): sin eso, nombrarla es usarla.
+CRITERIOS_USO = {
+    "la_usa": "La empresa la usa hoy, aunque sea poco o solo en una parte.",
+    "quiere_usarla": "Todavía no la usa, pero quiere usarla o la prefiere para este proyecto.",
+    "no_la_usa": "Dice que no la usa, que no la tiene o que no la quiere.",
+    "la_deja": "La usaba o la usa todavía, pero la ha dejado o la va a dejar.",
+}
+USOS_POR_LLAMADA = 4  # como en el entrenamiento: hasta 4 herramientas por texto
+
+
+def pregunta_uso(nombre: str) -> dict:
+    """La pregunta por una herramienta o una nube, con su nombre tal como lo escribe el cliente."""
+    return {"type": "choice", "instructions": f"¿Qué dice el cliente de {nombre}?", "criteria": CRITERIOS_USO}
+
+
+def texto_uso(campo: str, texto: str) -> str:
+    """El estado que lee el modelo para la tarea de uso. Es el mismo texto en el entrenamiento y en AIDM."""
+    return f"Lo que ha dicho el cliente ({campo}): {(texto or '').strip()[:600]}"
+
+
 def texto_estado(campo: str, descripcion: str, pregunta: str, respuesta: str) -> str:
     """El estado que lee el modelo. Es el mismo texto en el entrenamiento y en AIDM."""
     return (
@@ -104,4 +126,26 @@ def estado_respuesta(campo: str, descripcion: str, pregunta: str, respuesta: str
     if resultado:
         print(f"[decisiones] estado_respuesta · {campo} · {resultado[0]} ({resultado[1]:.2f}) · "
               f"{time.monotonic() - inicio:.1f} s")
+    return resultado
+
+
+
+def usos(campo: str, texto: str, nombres: list[str]) -> dict[str, tuple[str, float]] | None:
+    """Fallo 69: {nombre: (opción de CRITERIOS_USO, confianza)} de cada herramienta o nube nombrada en el texto de un
+    campo, con una pregunta por cada una (hasta USOS_POR_LLAMADA por llamada). None si el modelo no está disponible."""
+    resultado = {}
+    for desde in range(0, len(nombres), USOS_POR_LLAMADA):
+        grupo = nombres[desde:desde + USOS_POR_LLAMADA]
+        preguntas = {f"uso_{i}": pregunta_uso(nombre) for i, nombre in enumerate(grupo, 1)}
+        inicio = time.monotonic()
+        respuestas = decidir(texto_uso(campo, texto), preguntas)
+        if respuestas is None:
+            return None
+        for clave, nombre in zip(preguntas, grupo):
+            eleccion = _eleccion(respuestas.get(clave), CRITERIOS_USO)
+            if eleccion:
+                resultado[nombre] = eleccion
+        print(f"[decisiones] usos · {campo} · " + ", ".join(
+            f"{n}: {resultado[n][0]} ({resultado[n][1]:.2f})" for n in grupo if n in resultado)
+            + f" · {time.monotonic() - inicio:.1f} s")
     return resultado

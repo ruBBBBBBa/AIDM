@@ -12,6 +12,8 @@ import re
 from pathlib import Path
 
 import yaml
+import decisiones
+
 
 import gateway
 import utils
@@ -29,8 +31,66 @@ CAMPOS_DEL_CLIENTE = ("cloud_provider", "stack_tecnologico_actual", "modelo_de_d
                       "regulacion_y_compliance", "enfoque_ai", "volumen_de_datos", "sector", "evidencias")
 
 
+# Fallo 69: palabras que, en el mismo campo que una herramienta o una nube, pueden cambiar lo que significa nombrarla
+# («no usan Power BI», «dejaron Oracle»). Solo esos campos se preguntan al modelo de decisión.
+_CAMBIO = re.compile(r"(?<![a-z])(no|ni|sin|nunca|nada de|ya no|dej\w*|abandon\w*|antes|antigu\w*|anterior\w*|"
+                     r"migr\w*|sal(?:ir|iendo|imos|en) de|sustitu\w*|reemplaz\w*|quit\w*|jubil\w*|"
+                     r"en (?:vez|lugar) de|hasta (?:el|hace)|not|no longer|never|without|used to|moving (?:away|off)|"
+                     r"replac\w*|instead of|former\w*|previous\w*|dropp\w*|leav\w*|phas\w* out)(?![a-z])"
+                     r"|[a-z]+n't")
+NO_CUENTA = {"no_la_usa": "dice que no la usa", "la_deja": "la ha dejado o la va a dejar"}
+
+
 def _config() -> dict:
     return yaml.safe_load(CONFIG.read_text(encoding="utf-8")) or {}
+
+
+def _textos(problem_case: dict, campos=CAMPOS_DEL_CLIENTE) -> dict[str, str]:
+    """El texto original de cada campo con dato real (las evidencias, juntas)."""
+    textos = {}
+    for campo in campos:
+        valor = (problem_case or {}).get(campo)
+        valor = valor.get("value") if isinstance(valor, dict) else valor
+        valores = valor if isinstance(valor, list) else [valor]
+        partes = [str(v) for v in valores if isinstance(v, str) and not es_valor_de_relleno(v)]
+        if partes:
+            textos[campo] = " | ".join(partes)
+    return textos
+
+
+def _palabra(p: str) -> str:
+    return rf"(?<![a-z0-9]){re.escape(_normalize_text(p))}(?![a-z0-9])"
+
+
+def _nombre_en(texto: str, palabra: str) -> str:
+    """La palabra tal como la escribe el cliente («Power BI»), para preguntar por ella."""
+    m = re.search(rf"(?<!\w){re.escape(palabra)}(?!\w)", texto, re.IGNORECASE)
+    return m.group(0) if m else palabra
+
+
+def _sin_lo_que_no_usa(problem_case: dict, config: dict) -> tuple[str, dict, list[str]]:
+    """Fallo 69: el texto del caso (normalizado) sin las herramientas y nubes que el cliente nombra para decir que no
+    las usa o que las deja, según el modelo de decisión; lo que se ha quitado ({nombre: opción}) y las nubes que
+    deja. Solo se pregunta por los campos con una negación o un cambio (_CAMBIO); sin el modelo, no se quita nada."""
+    palabras = [p for e in config["ecosistemas"].values() for p in e.get("palabras", [])]
+    claves = {p: prov for prov, datos in config["proveedores"].items() for p in datos.get("claves", [])}
+    partes, quitadas, dejadas = [], {}, []
+    for campo, original in _textos(problem_case).items():
+        texto = _normalize_text(original)
+        nombradas = [p for p in dict.fromkeys(palabras + list(claves)) if re.search(_palabra(p), texto)]
+        if nombradas and _CAMBIO.search(texto):
+            nombres = {p: _nombre_en(original, p) for p in nombradas}
+            respuestas = decisiones.usos(campo, original, list(dict.fromkeys(nombres.values()))) or {}
+            for p, nombre in nombres.items():
+                opcion, confianza = respuestas.get(nombre, (None, 0.0))
+                if opcion in NO_CUENTA and confianza >= decisiones.CONFIANZA_MINIMA:
+                    texto = re.sub(_palabra(p), " ", texto)
+                    quitadas[nombre] = opcion
+                    if opcion == "la_deja" and p in claves and claves[p] not in dejadas:
+                        dejadas.append(claves[p])
+        partes.append(texto)
+    return " | ".join(partes), quitadas, dejadas
+
 
 
 def _texto(problem_case: dict, campos=CAMPOS_DEL_CLIENTE) -> str:
@@ -65,10 +125,13 @@ def senales(problem_case: dict, config: dict | None = None) -> dict:
     """Lo que el caso dice que importa para elegir nube: las que ya usa, sus ecosistemas, si pide ENS o soberanía."""
     config = config or _config()
     texto = _texto(problem_case)
-    actuales = [clave for clave, p in config["proveedores"].items() if _encontradas(texto, p.get("claves", []))]
-    ecosistemas = {clave: _encontradas(texto, e.get("palabras", [])) for clave, e in config["ecosistemas"].items()}
+    usadas, quitadas, dejadas = _sin_lo_que_no_usa(problem_case, config)  # fallo 69
+    actuales = [clave for clave, p in config["proveedores"].items() if _encontradas(usadas, p.get("claves", []))]
+    ecosistemas = {clave: _encontradas(usadas, e.get("palabras", [])) for clave, e in config["ecosistemas"].items()}
     personas, de_caso = _personas(problem_case, config)
     return {"actuales": actuales,
+            "no_cuentan": quitadas, "dejando": [c for c in dejadas if c not in actuales],
+
             "ecosistemas": {k: v for k, v in ecosistemas.items() if v},
             "pide_ens": bool(_encontradas(texto, config.get("pide_ens", []))),
             "pide_soberania": bool(_encontradas(texto, config.get("pide_soberania", []))),
@@ -165,6 +228,10 @@ def resumen(resultado: dict, config: dict) -> str:
     elif resultado["decision"] == "cambiar":
         decision = (f"**Cambiar de {prov[resultado['actual']]['nombre']} a {rec['nombre']}**: le saca "
                     f"{_numero(resultado['ventaja'])} puntos (hacen falta {config.get('cambiar_si_ventaja', 15)}).")
+    elif s.get("dejando"):  # fallo 69
+        decision = (f"**{rec['nombre']}.** El cliente está dejando {', '.join(prov[c]['nombre'] for c in s['dejando'])} "
+                    "y no usa ni prefiere otra de las cinco.")
+    
     else:
         decision = f"**{rec['nombre']}.** El caso no dice que el cliente use o prefiera ninguna de las cinco."
     lineas = [f"**Plataforma recomendada:** {decision}", ""]
@@ -176,6 +243,10 @@ def resumen(resultado: dict, config: dict) -> str:
         pistas.append("pide soberanía de los datos")
     lineas.append("**Lo que ha pesado del caso:** " + ("; ".join(pistas) if pistas else "nada concreto: "
                   "la nota sale de los servicios de datos e IA, el cumplimiento y el talento") + ".")
+    if s.get("no_cuentan"):  # fallo 69: lo que nombra para decir que no lo usa no suma
+        lineas += ["", "**No cuenta, aunque el cliente lo nombra:** " + "; ".join(
+            f"{nombre} ({NO_CUENTA[opcion]})" for nombre, opcion in s["no_cuentan"].items()) + "."]
+
     afectadas = [c for c in resultado["bloqueos"] if c in (resultado["actual"], resultado["recomendado"])]
     if afectadas:
         lineas += ["", "**No admite lo que ya usa el cliente:** " + "; ".join(
