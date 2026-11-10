@@ -57,6 +57,35 @@ CRITERIOS_USO = {
 USOS_POR_LLAMADA = 4  # como en el entrenamiento: hasta 4 herramientas por texto
 
 
+
+# Fallo 70: el modelo de despliegue que conviene al cliente. Es decisión de Inetum, no una preferencia del cliente
+# (reunión con el jefe): cuentan su infraestructura, sus normas, su conexión y su gente, no lo que diga preferir.
+PREGUNTA_DESPLIEGUE = {
+    "type": "choice",
+    "instructions": "Con lo que ha contado el cliente, ¿qué modelo de despliegue le conviene a la solución?",
+    "criteria": {
+        "cloud": "Todo en la nube: nada le obliga a dejar datos o sistemas en sus servidores.",
+        "hibrido": "Una parte se queda en sus servidores (sistemas que no se pueden mover, datos que no pueden salir, "
+                   "servidores renovados hace poco o equipos de planta sin buena conexión o que necesitan respuesta "
+                   "inmediata) y el resto va a la nube.",
+        "on_premises": "Todo en sus servidores: una norma, un contrato o el propio cliente impide que los datos salgan "
+                       "de sus instalaciones.",
+        "sin_datos": "Lo que ha contado no basta para decidirlo.",
+    },
+}
+# Los campos del caso que lee, en este orden (las evidencias, juntas)
+CAMPOS_DESPLIEGUE = ("modelo_de_despliegue", "cloud_provider", "stack_tecnologico_actual", "integration_scope",
+                     "volumen_de_datos", "regulacion_y_compliance", "tamano_equipo_tecnico", "sector", "evidencias")
+
+
+def texto_despliegue(datos: dict[str, str]) -> str:
+    """El estado de la tarea de despliegue: un campo por línea, hasta 1.000 caracteres. Es el mismo texto en el
+    entrenamiento y en AIDM."""
+    lineas = [f"{campo}: {' '.join(str(datos[campo]).split())[:300]}" for campo in CAMPOS_DESPLIEGUE
+              if datos.get(campo)]
+    return ("Datos del cliente:\n" + "\n".join(lineas))[:1000]
+
+
 def pregunta_uso(nombre: str) -> dict:
     """La pregunta por una herramienta o una nube, con su nombre tal como lo escribe el cliente."""
     return {"type": "choice", "instructions": f"¿Qué dice el cliente de {nombre}?", "criteria": CRITERIOS_USO}
@@ -128,6 +157,15 @@ def estado_respuesta(campo: str, descripcion: str, pregunta: str, respuesta: str
               f"{time.monotonic() - inicio:.1f} s")
     return resultado
 
+def despliegue_recomendado(datos: dict[str, str]) -> tuple[str, float] | None:
+    """Fallo 70: ('cloud' | 'hibrido' | 'on_premises' | 'sin_datos', confianza) con los datos del cliente
+    ({campo: texto}), o None si el modelo no está disponible."""
+    inicio = time.monotonic()
+    respuestas = decidir(texto_despliegue(datos), {"despliegue": PREGUNTA_DESPLIEGUE})
+    resultado = _eleccion((respuestas or {}).get("despliegue"), PREGUNTA_DESPLIEGUE["criteria"])
+    if resultado:
+        print(f"[decisiones] despliegue · {resultado[0]} ({resultado[1]:.2f}) · {time.monotonic() - inicio:.1f} s")
+    return resultado
 
 
 def usos(campo: str, texto: str, nombres: list[str]) -> dict[str, tuple[str, float]] | None:

@@ -29,7 +29,7 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ))
 from decisiones import (  # noqa: E402  las mismas preguntas y los mismos textos que AIDM
-    PREGUNTA_ESTADO, USOS_POR_LLAMADA, pregunta_uso, texto_estado, texto_uso,
+    PREGUNTA_DESPLIEGUE, PREGUNTA_ESTADO, USOS_POR_LLAMADA, pregunta_uso, texto_despliegue, texto_estado, texto_uso,
 )
 
 SALIDA = RAIZ / "modelo_decision" / "datos"
@@ -832,6 +832,174 @@ def generar_usos(prueba: bool, rng: random.Random) -> list[dict]:
             filas.append(fila)
     return filas
 
+# --------------------------------------------------------------------------------------------------------
+# Tarea «despliegue» (fallo 70): qué modelo de despliegue conviene al cliente con lo que ha contado. Cada ejemplo es
+# un caso inventado hecho de hechos sueltos (cada uno en su campo); la etiqueta la pone la regla de Inetum en
+# despliegue_correcto(). Para cambiar el criterio, se cambia esa función y se vuelve a entrenar.
+# --------------------------------------------------------------------------------------------------------
+HECHOS = {  # tipo de hecho: (campos donde puede ir, {"es": [...], "en": [...]}, {"es": [...], "en": [...]} de prueba)
+    "prohibe_todo": (("regulacion_y_compliance", "evidencias"), {
+        "es": ["Por contrato con Defensa, ningún dato puede salir de nuestras instalaciones.",
+               "Normativa interna: los datos no pueden salir de nuestro CPD bajo ningún concepto.",
+               "Datos clasificados: todo tiene que quedarse en casa.",
+               "El cliente final nos prohíbe guardar sus datos fuera de nuestros servidores.",
+               "La dirección no quiere ni un dato fuera de la empresa, nada en la nube.",
+               "Los datos de los pacientes no pueden salir del hospital, y aquí todo son datos de pacientes."],
+        "en": ["Under our defence contract, no data may leave our premises.",
+               "Nothing can go to the cloud: it's classified data.",
+               "Our client forbids storing their data outside our data centre."]},
+        {"es": ["Ni un byte fuera de nuestras instalaciones: lo exige el contrato con el ministerio.",
+                "Todo lo que manejamos es confidencial y tiene que quedarse dentro."],
+         "en": ["Every record must stay on-site, contractually."]}),
+    "parte_sensible": (("regulacion_y_compliance", "evidencias"), {
+        "es": ["Las nóminas tienen que quedarse en local; el resto da igual.",
+               "Los historiales clínicos se quedan en el hospital, pero los datos de gestión pueden ir fuera.",
+               "Los datos de I+D no pueden salir; las ventas y el marketing, sí.",
+               "Los datos personales de clientes no queremos sacarlos; lo demás, sí.",
+               "Los planos de los productos se quedan en nuestros servidores, el resto no importa."],
+        "en": ["Payroll must stay on-site; the rest can go anywhere.",
+               "Patient records stay in the hospital, but operational data can go to the cloud."]},
+        {"es": ["Lo de recursos humanos se queda aquí; para lo demás no hay problema."],
+         "en": ["R&D data stays in-house, everything else is fine."]}),
+    "no_se_mueve": (("stack_tecnologico_actual", "integration_scope", "evidencias"), {
+        "es": ["El ERP corre en un AS/400 que no se puede tocar.", "La facturación está en un mainframe que no vamos a mover.",
+               "Los SCADA de la planta no pueden ir a la nube.", "Un SAP en nuestros servidores con contrato hasta 2030.",
+               "La aplicación de producción es antigua y solo funciona en nuestros servidores."],
+        "en": ["Our ERP runs on an AS/400 we can't touch.", "Billing is on a mainframe that isn't moving."]},
+        {"es": ["El sistema de almacén es de los 90 y no hay forma de migrarlo."],
+         "en": ["The plant control system can't be moved."]}),
+    "planta": (("evidencias", "volumen_de_datos", "integration_scope"), {
+        "es": ["Las máquinas de la planta necesitan respuesta en milisegundos.",
+               "Los sensores de la línea paran la máquina si algo falla, y eso no puede depender de internet.",
+               "En la mina la conexión es muy mala.", "Los barcos pasan semanas sin conexión.",
+               "La planta está en una zona sin fibra."],
+        "en": ["The plant machines need millisecond responses.", "Our ships go weeks without a connection."]},
+        {"es": ["En las granjas apenas hay cobertura."], "en": ["The factory floor can't rely on the internet."]}),
+    "servidores_nuevos": (("stack_tecnologico_actual", "evidencias"), {
+        "es": ["Renovamos los servidores del CPD el año pasado.", "Acabamos de comprar servidores nuevos para el CPD.",
+               "Hemos invertido mucho en el CPD en 2025."],
+        "en": ["We refreshed our data centre servers last year.", "We just bought new servers."]},
+        {"es": ["El CPD lo estrenamos hace seis meses."], "en": ["Our server room is brand new."]}),
+    # señales de nube: no hay nada que obligue a quedarse en sus servidores
+    "servidores_viejos": (("stack_tecnologico_actual", "evidencias"), {
+        "es": ["Tenemos un par de servidores viejos en la oficina que queremos jubilar.",
+               "El servidor del ERP tiene 10 años y hay que cambiarlo.",
+               "El CPD se nos queda pequeño y no queremos invertir más en él."],
+        "en": ["We have two old servers we want to retire.", "Our server room is end-of-life."]},
+        {"es": ["Los servidores están para tirarlos."], "en": ["Our hardware is ancient and due for replacement."]}),
+    "saas": (("stack_tecnologico_actual",), {
+        "es": ["Todo es SaaS: Microsoft 365, Salesforce y Holded.", "No tenemos servidores, todo está en la nube.",
+               "Google Workspace y HubSpot, nada instalado.", "Odoo en la nube y Microsoft 365."],
+        "en": ["Everything is SaaS: Microsoft 365 and Salesforce.", "We don't have any servers, it's all cloud."]},
+        {"es": ["Ni un servidor: todo son aplicaciones web."], "en": ["All our tools are online services."]}),
+    "nube": (("cloud_provider",), {
+        "es": ["Azure.", "AWS, con casi todo allí.", "Google Cloud.", "Tenemos casi todo en Azure.", "AWS desde hace años.",
+               "Azure como prioridad, con un módulo en AWS que no quieren migrar.",
+               "Google Cloud, y una parte en AWS que se queda como está."],
+        "en": ["Azure.", "Mostly AWS.", "Google Cloud.", "Azure first, with an AWS module that stays as it is."]},
+        {"es": ["Estamos en Azure desde 2022.", "Casi todo en Azure; lo de los sensores sigue en AWS."],
+         "en": ["We've been on AWS for years."]}),
+    "sin_sistemas": (("tamano_equipo_tecnico",), {
+        "es": ["Nadie de sistemas; un proveedor nos lleva el correo.", "Solo el responsable de IT, que no da abasto.",
+               "No hay nadie que pueda mantener servidores."],
+        "en": ["Nobody in IT, an external provider handles email."]},
+        {"es": ["Una persona de IT a media jornada."], "en": ["Just a part-time IT person."]}),
+    "pide_nube": (("modelo_de_despliegue",), {
+        "es": ["En la nube.", "Preferimos cloud.", "Todo en cloud.", "Queremos ir a la nube."],
+        "en": ["Cloud.", "We'd prefer cloud."]},
+        {"es": ["Que sea en la nube."], "en": ["Cloud, please."]}),
+    # neutros: por sí solos no deciden nada (una preferencia sin motivo tampoco: decide Inetum)
+    "pide_local": (("modelo_de_despliegue",), {
+        "es": ["On-premises.", "Preferimos nuestros servidores.", "En local."], "en": ["On-premises."]},
+        {"es": ["En casa, mejor."], "en": ["On our own kit."]}),
+    "pide_hibrido": (("modelo_de_despliegue",), {"es": ["Híbrido.", "Una mezcla."], "en": ["Hybrid."]},
+                     {"es": ["Mitad y mitad."], "en": ["A mix."]}),
+    "le_da_igual": (("modelo_de_despliegue",), {"es": ["Nos da igual.", "Lo que recomendéis."], "en": ["We don't mind."]},
+                    {"es": ["Lo que veáis."], "en": ["Up to you."]}),
+    "no_lo_sabe": (("modelo_de_despliegue", "cloud_provider", "volumen_de_datos"), {
+        "es": ["Confirmado por el usuario: no lo sabe"], "en": ["Confirmado por el usuario: no lo sabe"]},
+        {"es": ["Confirmado por el usuario: no lo sabe"], "en": ["Confirmado por el usuario: no lo sabe"]}),
+    "normativa": (("regulacion_y_compliance",), {
+        "es": ["RGPD, tenemos datos de clientes.", "ISO 27001.", "Nada especial más allá del RGPD.",
+               "ENS, trabajamos con la administración."], "en": ["GDPR.", "ISO 27001."]},
+        {"es": ["Lo normal, protección de datos."], "en": ["GDPR, nothing else."]}),
+    "con_sistemas": (("tamano_equipo_tecnico",), {
+        "es": ["Tres de sistemas que llevan los servidores.", "IT son 8 personas."], "en": ["Five people in IT."]},
+        {"es": ["Un equipo de sistemas de cuatro personas."], "en": ["Our IT team is six people."]}),
+    "sector": (("sector",), {
+        "es": ["Logística.", "Hospital privado.", "Fabricación de piezas de automoción.", "Retail.", "Banca."],
+        "en": ["Logistics.", "Retail.", "Manufacturing."]},
+        {"es": ["Una cadena de gimnasios."], "en": ["Insurance."]}),
+    "volumen": (("volumen_de_datos",), {
+        "es": ["Unos 2 TB.", "Unos 50.000 pedidos al mes.", "Pocos datos."], "en": ["About 2 TB."]},
+        {"es": ["Unos 300 GB."], "en": ["Roughly 1 TB."]}),
+    "fuentes": (("integration_scope",), {"es": ["El ERP y el CRM.", "SAP y unos Excel."], "en": ["ERP and CRM."]},
+                {"es": ["La web y el ERP."], "en": ["Salesforce and the ERP."]}),
+}
+OBLIGAN_A_LOCAL = {"parte_sensible", "no_se_mueve", "planta", "servidores_nuevos"}
+SENALES_DE_NUBE = {"servidores_viejos", "saas", "nube", "sin_sistemas", "pide_nube"}
+NEUTROS = {"pide_local", "pide_hibrido", "le_da_igual", "no_lo_sabe", "normativa", "con_sistemas", "sector", "volumen",
+           "fuentes"}
+CUANTOS_DESPLIEGUE = (200, 25)  # por opción: entrenamiento y prueba
+
+
+def despliegue_correcto(tipos: set[str]) -> str:
+    """La regla de Inetum (fallo 70): manda lo que obliga, no lo que el cliente dice preferir.
+    1. Si una norma, un contrato o el cliente prohíben que salga ningún dato: on-premises.
+    2. Si una parte no puede salir o moverse (datos sensibles, sistemas antiguos, planta, servidores nuevos): híbrido.
+    3. Si hay alguna señal de nube (ya usa la nube o SaaS, servidores viejos, nadie que los mantenga, pide nube): cloud.
+    4. Si solo hay datos que no deciden (sector, volumen, normativa general, una preferencia sin motivo): sin_datos."""
+    if "prohibe_todo" in tipos:
+        return "on_premises"
+    if tipos & OBLIGAN_A_LOCAL:
+        return "hibrido"
+    if tipos & SENALES_DE_NUBE:
+        return "cloud"
+    return "sin_datos"
+
+
+def _tipos_para(rng: random.Random, opcion: str) -> set[str]:
+    """Hechos al azar que, con la regla, dan esa opción."""
+    neutros = set(rng.sample(sorted(NEUTROS), k=rng.randint(0 if opcion != "sin_datos" else 1, 3)))
+    if opcion == "on_premises":
+        extra = set(rng.sample(sorted(OBLIGAN_A_LOCAL | {"con_sistemas", "pide_local"}), k=rng.randint(0, 2)))
+        return {"prohibe_todo"} | extra | neutros
+    if opcion == "hibrido":
+        locales = set(rng.sample(sorted(OBLIGAN_A_LOCAL), k=rng.randint(1, 2)))
+        return locales | set(rng.sample(sorted(SENALES_DE_NUBE), k=rng.randint(0, 2))) | neutros
+    if opcion == "cloud":
+        return set(rng.sample(sorted(SENALES_DE_NUBE), k=rng.randint(1, 2))) | neutros
+    return neutros
+
+
+def _ejemplo_despliegue(rng: random.Random, opcion: str, idioma: str, prueba: bool) -> dict:
+    tipos = _tipos_para(rng, opcion)
+    datos: dict[str, list[str]] = {}
+    for tipo in sorted(tipos):
+        campos, frases, frases_prueba = HECHOS[tipo]
+        lista = (frases_prueba if prueba else frases)[idioma] or frases[idioma]
+        datos.setdefault(rng.choice(campos), []).append(rng.choice(lista))
+    juntos = {campo: (" | " if campo == "evidencias" else "; ").join(frases) for campo, frases in datos.items()}
+    assert despliegue_correcto(tipos) == opcion, (tipos, opcion)
+    return {"state": texto_despliegue(juntos), "questions": {"despliegue": PREGUNTA_DESPLIEGUE},
+            "gold": {"despliegue": opcion}, "tarea": "despliegue", "campo": "", "idioma": idioma}
+
+
+def generar_despliegues(prueba: bool, rng: random.Random, excluir: set[str] = frozenset()) -> list[dict]:
+    """Con excluir (los estados del entrenamiento), la prueba no repite ningún caso: con pocos hechos neutros,
+    dos casos pueden salir iguales."""
+    filas, vistos = [], set(excluir)
+    for opcion in PREGUNTA_DESPLIEGUE["criteria"]:
+        hechos, intentos = 0, 0
+        while hechos < CUANTOS_DESPLIEGUE[1 if prueba else 0] and intentos < 5000:
+            intentos += 1
+            fila = _ejemplo_despliegue(rng, opcion, "en" if rng.random() < PARTE_EN_INGLES else "es", prueba)
+            if fila["state"] not in vistos:
+                vistos.add(fila["state"])
+                filas.append(fila)
+                hechos += 1
+    return filas
+
 
 def main() -> None:
     plantilla = json.loads((RAIZ / "data_structures" / "problem_case_recovery.json").read_text(encoding="utf-8"))
@@ -845,6 +1013,8 @@ def main() -> None:
     prueba = generar(True, descripciones, rng)
     entrenamiento += generar_usos(False, rng)  # fallo 69
     prueba += generar_usos(True, rng)
+    entrenamiento += generar_despliegues(False, rng)  # fallo 70
+    prueba += generar_despliegues(True, rng, {f["state"] for f in entrenamiento if f["tarea"] == "despliegue"})
     rng.shuffle(entrenamiento)
     rng.shuffle(prueba)
 

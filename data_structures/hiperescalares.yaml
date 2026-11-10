@@ -67,6 +67,8 @@ proveedores:
     datos_ia: 5         # Microsoft Fabric, Azure Databricks, Azure Machine Learning, Azure AI Foundry, Power BI
     talento: 5          # 23 % del mercado mundial (Synergy, 2.º trimestre de 2024)
     formacion: {plataforma: Microsoft Learn, fundamentos: Azure Fundamentals (AZ-900), datos: Fabric Data Engineer Associate (DP-700)}
+    hibrido: Azure Local y Azure Arc   # fallo 70: sus servicios en el centro de datos del cliente
+
   aws:
     nombre: Amazon Web Services (AWS)
     claves: [aws, amazon web services, ec2, s3, redshift, sagemaker, aws lambda, amazon bedrock, aws glue]
@@ -76,6 +78,8 @@ proveedores:
     datos_ia: 5         # S3, Glue, Redshift, Databricks en AWS, SageMaker, Bedrock
     talento: 5          # 32 % del mercado mundial (Synergy, 2.º trimestre de 2024)
     formacion: {plataforma: AWS Skill Builder, fundamentos: AWS Certified Cloud Practitioner, datos: AWS Certified Data Engineer – Associate}
+    hibrido: AWS Outposts   # fallo 70: sus servicios en el centro de datos del cliente
+
   google:
     nombre: Google Cloud
     claves: [gcp, google cloud, bigquery, vertex ai, gke, dataflow, dataproc]
@@ -85,6 +89,8 @@ proveedores:
     datos_ia: 5         # BigQuery, Dataflow, Databricks en Google Cloud, Vertex AI, Looker
     talento: 4          # 12 % del mercado mundial (Synergy, 2.º trimestre de 2024)
     formacion: {plataforma: Google Cloud Skills Boost, fundamentos: Cloud Digital Leader, datos: Professional Data Engineer}
+    hibrido: Google Distributed Cloud (conectado o aislado)   # fallo 70: sus servicios en el centro de datos del cliente
+
   oracle:
     nombre: Oracle Cloud Infrastructure (OCI)
     claves: [oci, oracle cloud, autonomous database, exadata, oracle analytics]
@@ -94,6 +100,8 @@ proveedores:
     datos_ia: 3         # Autonomous Database, OCI Data Flow, OCI Data Science, OCI Generative AI; sin Databricks
     talento: 2          # 2,4 % del mercado mundial (Synergy, 2.º trimestre de 2024)
     formacion: {plataforma: Oracle University, fundamentos: OCI Foundations Associate, datos: certificación de datos de OCI}
+    hibrido: Oracle Compute Cloud@Customer y Exadata Cloud@Customer   # fallo 70: sus servicios en el centro de datos del cliente
+
   ibm:
     nombre: IBM Cloud
     claves: [ibm cloud, watsonx, cloud pak]
@@ -103,6 +111,8 @@ proveedores:
     datos_ia: 3         # watsonx, Db2, Cloud Pak for Data; sin Databricks
     talento: 2          # cuota pequeña; menos perfiles disponibles
     formacion: {plataforma: IBM Training, fundamentos: certificación de fundamentos de IBM Cloud, datos: certificación de datos de IBM}
+    hibrido: IBM Cloud Satellite   # fallo 70: sus servicios en el centro de datos del cliente
+
 
 # Lo que el informe recuerda siempre al hablar de cambiar de nube.
 notas:

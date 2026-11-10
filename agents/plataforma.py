@@ -39,6 +39,8 @@ _CAMBIO = re.compile(r"(?<![a-z])(no|ni|sin|nunca|nada de|ya no|dej\w*|abandon\w
                      r"replac\w*|instead of|former\w*|previous\w*|dropp\w*|leav\w*|phas\w* out)(?![a-z])"
                      r"|[a-z]+n't")
 NO_CUENTA = {"no_la_usa": "dice que no la usa", "la_deja": "la ha dejado o la va a dejar"}
+# Fallo 70: el modelo de despliegue que recomienda el modelo de decisión
+DESPLIEGUES = {"cloud": "En la nube", "hibrido": "Híbrido", "on_premises": "On-premises (en sus servidores)"}
 
 
 def _config() -> dict:
@@ -138,6 +140,16 @@ def senales(problem_case: dict, config: dict | None = None) -> dict:
             "personas": personas, "personas_del_caso": de_caso}
 
 
+def despliegue(problem_case: dict) -> dict | None:
+    """Fallo 70: el modelo de despliegue que conviene al cliente según el modelo de decisión ({opcion, confianza,
+    cliente}), o None si no lo sabe decir, no está seguro o no está disponible (entonces no se recomienda ninguno)."""
+    textos = _textos(problem_case, decisiones.CAMPOS_DESPLIEGUE)
+    resultado = decisiones.despliegue_recomendado(textos) if textos else None
+    if not resultado or resultado[0] not in DESPLIEGUES or resultado[1] < decisiones.CONFIANZA_MINIMA:
+        return None
+    return {"opcion": resultado[0], "confianza": resultado[1], "cliente": textos.get("modelo_de_despliegue", "")}
+
+
 def puntuar(problem_case: dict, config: dict | None = None) -> dict:
     """La nota de cada nube (de 0 a 100, repartida por criterios) y la decisión: mantener, cambiar o elegir."""
     config = config or _config()
@@ -235,6 +247,17 @@ def resumen(resultado: dict, config: dict) -> str:
     else:
         decision = f"**{rec['nombre']}.** El caso no dice que el cliente use o prefiera ninguna de las cinco."
     lineas = [f"**Plataforma recomendada:** {decision}", ""]
+    d = resultado.get("despliegue")
+    if d:  # fallo 70
+        local = rec.get("hibrido") or "su oferta para centros de datos propios"
+        como = {"cloud": f"toda la solución en {rec['nombre']}.",
+                "hibrido": f"lo que no puede salir de sus servidores se queda en ellos y el resto va a {rec['nombre']}; "
+                           f"para la parte local, {local}.",
+                "on_premises": f"toda la solución en sus servidores. {rec['nombre']} queda como opción si más adelante "
+                               f"sale a la nube ({local} lleva sus servicios a su centro de datos)."}[d["opcion"]]
+        dijo = f" El cliente dijo: «{d['cliente']}»." if d.get("cliente") else ""
+        lineas += [f"**Modelo de despliegue recomendado:** {DESPLIEGUES[d['opcion']]}: {como}{dijo}", ""]
+
     pistas = [f"ya usa o prefiere {', '.join(prov[c]['nombre'] for c in s['actuales'])}"] if s["actuales"] else []
     pistas += [f"{config['ecosistemas'][e]['nombre']} ({', '.join(p)})" for e, p in s["ecosistemas"].items()]
     if s["pide_ens"]:
@@ -327,10 +350,13 @@ def elegir_plataforma(problem_case: dict) -> dict:
     arquitectura, los costes y el roadmap. Devuelve el caso con ella."""
     config = _config()
     resultado = puntuar(problem_case, config)
+    resultado["despliegue"] = despliegue(problem_case)  # fallo 70
     prov = config["proveedores"]
     rec = prov[resultado["recomendado"]]
+    d = resultado["despliegue"]
     print(f"[plataforma] {rec['nombre']} ({resultado['decision']}); notas: "
-          + ", ".join(f"{prov[c]['nombre']} {_numero(resultado['puntos'][c]['total'])}" for c in resultado["orden"]))
+          + ", ".join(f"{prov[c]['nombre']} {_numero(resultado['puntos'][c]['total'])}" for c in resultado["orden"])
+          + (f"; despliegue: {d['opcion']} ({d['confianza']:.2f})" if d else ""))
     _inyectar(seccion(resultado, explicar(resultado, problem_case, config), config))
 
     if resultado["decision"] == "cambiar":
@@ -346,6 +372,8 @@ def elegir_plataforma(problem_case: dict) -> dict:
         "value": rec["nombre"], "motivo": motivo, "decision": resultado["decision"],
         "puntos": {prov[c]["nombre"]: resultado["puntos"][c]["total"] for c in resultado["orden"]},
     }
+    if d:  # fallo 70: lo leen contexto_cliente() y la tabla de precios
+        caso[utils.PLATAFORMA_OBJETIVO]["despliegue"] = d["opcion"]
     with open(utils.PROBLEM_CASE_PATH, "w", encoding="utf-8") as f:  # utils.: los tests cambian la ruta
         json.dump(caso, f, ensure_ascii=False, indent=2)
     return caso

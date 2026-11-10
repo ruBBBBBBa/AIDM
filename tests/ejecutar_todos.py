@@ -50,6 +50,7 @@ TESTS = [
     "test_plataforma.py",           # fallo 67
     "test_discovery_vaga.py",       # fallo 68
     "test_plataforma_usos.py",      # fallo 69
+    "test_plataforma_despliegue.py", # fallo 70
 
 
 ]

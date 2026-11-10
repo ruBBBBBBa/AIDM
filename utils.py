@@ -267,8 +267,18 @@ def contexto_cliente(problem_case: dict, con_costes: bool = False) -> str:
     partes = ["DATOS DEL CLIENTE (caso del discovery)"]
     plataforma = (problem_case or {}).get(PLATAFORMA_OBJETIVO)
     if isinstance(plataforma, dict) and plataforma.get("value"):  # fallo 67: manda sobre cloud_provider
-        partes.append(f"PLATAFORMA OBJETIVO: {plataforma['value']} ({plataforma.get('motivo', 'elegida por Inetum')}). "
-                      "Diseña la solución, sus servicios y sus costes en esta nube, aunque cloud_provider diga otra.")
+        despliegue = plataforma.get("despliegue")  # fallo 70: lo decide Inetum, aunque modelo_de_despliegue diga otro
+        if despliegue == "on_premises":
+            partes.append("PLATAFORMA OBJETIVO: los servidores del cliente (on-premises), por decisión de Inetum. "
+                          "Diseña la solución, sus servicios y sus costes para sus servidores, con software que pueda "
+                          f"instalar él mismo; si algo solo existe en la nube, propón {plataforma['value']}.")
+        else:
+            partes.append(f"PLATAFORMA OBJETIVO: {plataforma['value']} ({plataforma.get('motivo', 'elegida por Inetum')}). "
+                          "Diseña la solución, sus servicios y sus costes en esta nube, aunque cloud_provider diga otra.")
+        if despliegue == "hibrido":
+            partes.append("MODELO DE DESPLIEGUE: híbrido, por decisión de Inetum. Lo que no puede salir de sus servidores "
+                          "(sistemas que no se pueden mover, datos que no pueden salir, equipos de planta) se queda en "
+                          f"ellos y el resto va a {plataforma['value']}; diséñalo así aunque modelo_de_despliegue diga otro.")
     for estado, lineas in grupos.items():
         if lineas:
             partes.append(titulos[estado] + "\n" + "\n".join(lineas))
