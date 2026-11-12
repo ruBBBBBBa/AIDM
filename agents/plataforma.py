@@ -525,6 +525,8 @@ def elegir_plataforma(problem_case: dict) -> dict:
         "value": rec["nombre"], "motivo": motivo, "decision": resultado["decision"],
         "puntos": {prov[c]["nombre"]: resultado["puntos"][c]["total"] for c in resultado["orden"]},
     }
+    if rec.get("region_espana"):  # fallo 78: lo lee contexto_cliente(); el 12 nov los agentes usaron West Europe
+        caso[utils.PLATAFORMA_OBJETIVO]["region"] = rec["region_espana"]
     if d:  # fallo 70: lo leen contexto_cliente() y la tabla de precios
         caso[utils.PLATAFORMA_OBJETIVO]["despliegue"] = d["opcion"]
     caso[utils.PLATAFORMA_OBJETIVO]["mensaje"] = mensaje_chat(resultado, config, problem_case)  # fallo 72: para el chat
