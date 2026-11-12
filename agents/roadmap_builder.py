@@ -53,6 +53,12 @@ REFERENCIA = (
     "cambiar el diseño. No des por hecho lo que digan las otras fases: cuéntalo desde la propuesta.\n\n"
 )
 
+# Fallo 74: lo que tarda cada fase depende sobre todo de lo que escribe. El 12 nov, cada una escribió entre 14.000 y
+# 20.000 caracteres (5.700–8.300 tokens) y las dos más largas tardaron casi 4 min. Con None, sin tope.
+PALABRAS_POR_FASE = 700
+EXTENSION = (f"\nExtensión: {PALABRAS_POR_FASE} palabras como máximo. Ve a lo concreto de este cliente, sin introducción "
+             "ni repetir lo que ya dice la propuesta." if PALABRAS_POR_FASE else "")
+
 
 def inject_roadmap_into_html(
     data_sources_output: str,
@@ -158,7 +164,7 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
             "2. Evaluación de calidad y riesgos por fuente\n"
             "3. Dependencias y supuestos asumidos\n"
             "4. Recomendaciones prioritarias para la fase de ingesta"
-        ),
+        ) + EXTENSION,
         agent=fuentes_de_datos,
     )
 
@@ -183,7 +189,7 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
             "3. Conectores y configuraciones clave\n"
             "4. Cadencias y dependencias entre pipelines\n"
             "5. Riesgos identificados y recomendaciones de mitigación"
-        ),
+        ) + EXTENSION,
         agent=ingesta_de_datos,
     )
 
@@ -210,7 +216,7 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
             "4. Políticas de retención y tier de acceso\n"
             "5. Consideraciones de seguridad y gobierno de acceso\n"
             "6. Riesgos y recomendaciones operativas"
-        ),
+        ) + EXTENSION,
         agent=data_storage,
     )
 
@@ -237,7 +243,7 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
             "3. Estrategia de calidad de datos y validaciones\n"
             "4. Orquestación y scheduling de jobs\n"
             "5. Riesgos operativos y recomendaciones de mantenimiento"
-        ),
+        ) + EXTENSION,
         agent=procesamiento_etl,
     )
 
@@ -263,7 +269,7 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
             "4. Estrategia de actualización y latencia de datos\n"
             "5. Exposición de datos para BI, ML y APIs\n"
             "6. Consideraciones de rendimiento y escalabilidad"
-        ),
+        ) + EXTENSION,
         agent=modelado_y_serving,
     )
 
@@ -291,7 +297,7 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
             "4. Ciclo de vida del modelo: entrenamiento, despliegue y monitorización\n"
             "5. Métricas de evaluación técnicas y de negocio\n"
             "6. Hoja de ruta de madurez: qué es viable ahora y qué requiere una segunda fase"
-        ),
+        ) + EXTENSION,
         agent=ml_mlops,
     )
 
@@ -320,7 +326,7 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
             "3. Catálogo de informes y dashboards por perfil de usuario\n"
             "4. Plan de adopción: formación, rollout y métricas de éxito\n"
             "5. Riesgos de adopción y recomendaciones"
-        ),
+        ) + EXTENSION,
         agent=visualizacion,
     )
 
