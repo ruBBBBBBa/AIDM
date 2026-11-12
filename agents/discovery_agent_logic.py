@@ -218,6 +218,8 @@ def _pedir_estado(problem_case: dict[str, Any], user_prompt: str, chat_history: 
     por_decidir = _campo_por_decidir(problem_case)
     if not por_decidir:
         return None
+    if len(str(user_prompt).strip()) > decisiones.LARGO_MAXIMO_RESPUESTA:  # fallo 76: el turno no lo espera
+        return None
     campo, datos = por_decidir
     return _EN_PARALELO.submit(decisiones.estado_respuesta, campo, datos.get("description", ""),
                                _ultima_pregunta(chat_history), str(user_prompt))
