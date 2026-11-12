@@ -1,4 +1,5 @@
-"""Comprueba el arreglo del fallo 4: el roadmap recibe el caso y ETL ve lo que hizo la primera crew.
+"""Comprueba el arreglo del fallo 4 (el roadmap recibe el caso) y el 73: las 7 fases van a la vez, ninguna lee a
+otra y todas llevan la arquitectura de la propuesta como referencia común.
 
 No llama a ningún LLM: se sustituye Crew.kickoff por una versión que guarda el prompt
 de cada tarea y devuelve una salida simulada. Tampoco toca tu informe: el roadmap se
@@ -35,6 +36,7 @@ huella_antes = hashlib.md5(INFORME.read_bytes()).hexdigest()
 copia = Path(tempfile.mkdtemp()) / "informe.html"
 shutil.copy(INFORME, copia)
 rb.REPORT_PATH = copia  # el roadmap se inyecta en la copia, no en tu informe
+rb.HILOS = 1  # fallo 73: las fases en orden, para saber qué prompt es de cuál
 
 # Crew.kickoff simulado: guarda el prompt de cada tarea y devuelve "SALIDA n"
 prompts: list[str] = []
@@ -75,12 +77,16 @@ for n, prompt in enumerate(tareas, start=1):
     assert "🧭" not in prompt and "🚀" not in prompt, f"la tarea {n} recibió el resumen con emojis (fallo 65)"
 print("OK 2: las 7 tareas del roadmap reciben el resumen, sin emojis, y los datos del cliente")
 
-# 3) ETL (la primera de la segunda crew) ve las 3 salidas de la primera crew
-etl = tareas[3]
-for n in (1, 2, 3):
-    assert f"SALIDA {n} " in etl, f"ETL no ve la salida {n} de la primera crew"
-assert "ANÁLISIS DE LA PRIMERA CREW" in etl
-print("OK 3: ETL recibe fuentes, ingesta y almacenamiento")
+# 3) Fallo 73: ninguna fase lee lo que escribe otra; todas llevan la arquitectura de la propuesta como referencia
+prompts.clear()
+rb.roadmap_builder({"architecture": "ARQUITECTURA SIMULADA: lago en tres zonas"}, problem_case=caso)
+tareas = prompts[1:]
+assert len(tareas) == 7
+for n, prompt in enumerate(tareas, start=1):
+    assert "ARQUITECTURA SIMULADA: lago en tres zonas" in prompt, f"la fase {n} no lleva la arquitectura"
+    assert "CÓMO ENCAJA TU FASE" in prompt, f"la fase {n} no lleva la regla de seguir la propuesta"
+    assert "SALIDA" not in prompt and "PRIMERA CREW" not in prompt, f"la fase {n} lee lo que escribió otra"
+print("OK 3: las 7 fases son independientes y siguen la misma arquitectura")
 
 # 4) graph.py le pasa el caso al roadmap
 recibido = {}
@@ -90,4 +96,4 @@ assert recibido["caso"] is caso, "roadmap_node no pasa el problem_case"
 print("OK 4: graph.py pasa el caso del estado al roadmap")
 
 assert hashlib.md5(INFORME.read_bytes()).hexdigest() == huella_antes, "el informe real no debía cambiar"
-print("\nTodo bien: el fallo 4 está arreglado.")
+print("\nTodo bien: los fallos 4 y 73 están arreglados.")
