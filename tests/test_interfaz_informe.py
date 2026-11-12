@@ -32,7 +32,7 @@ INFORME = Path("data_structures/solution_builder_report.html")
 # Grafo simulado: devuelve lo que devolvería run_graph() en cada caso
 grafo = types.ModuleType("graph")
 grafo.completar = True
-grafo.run_graph = lambda prompt, chat_history=None: {
+grafo.run_graph = lambda prompt, chat_history=None, avisar=None: {  # fallo 72: avisar
     "assistant_response": "¿Qué volumen de datos manejáis?",
     "completion_reached": grafo.completar,
     "problem_case": {"nombre_del_cliente": {"value": "Farma Norte, S.L."}},

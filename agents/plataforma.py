@@ -22,7 +22,7 @@ from utils import _normalize_text, contexto_cliente, es_valor_de_relleno, md_to_
 
 CONFIG = Path("data_structures/hiperescalares.yaml")
 REPORT_PATH = Path("data_structures/solution_builder_report.html")
-TARIFAS = Path("bd/costes_perfiles.csv") #Fallo 71: La misma tabla de tarifas que usan los costes
+TARIFAS = Path("bd/costes_perfil.csv") #Fallo 71: La misma tabla de tarifas que usan los costes
 SECCION = "content-platform"
 CRITERIOS = ("continuidad", "ecosistema", "datos_ia", "cumplimiento", "talento")
 NOMBRES_CRITERIOS = {"continuidad": "Continuidad", "ecosistema": "Ecosistema", "datos_ia": "Datos e IA",
@@ -414,6 +414,68 @@ def seccion(resultado: dict, explicacion: str, config: dict) -> str:
                   "data_structures/hiperescalares.yaml.*")
     return "\n\n".join(partes)
 
+_PALABRAS_EN = {"the", "and", "we", "our", "is", "are", "it", "of", "to", "in", "for", "with", "have", "use", "using",
+                "they", "their", "no", "not", "all", "some", "data", "team", "people", "about"}
+_PALABRAS_ES = {"el", "la", "los", "las", "de", "del", "que", "y", "en", "un", "una", "por", "con", "para", "es", "son",
+                "lo", "se", "nos", "tenemos", "tiene", "usan", "usamos", "todo", "datos", "equipo", "personas"}
+
+
+def _idioma(problem_case: dict) -> str:
+    """'en' si los datos del cliente están sobre todo en inglés; si no, 'es'."""
+    palabras = re.findall(r"[a-záéíóúñ']+", " ".join(_textos(problem_case).values()).lower())
+    return "en" if sum(p in _PALABRAS_EN for p in palabras) > sum(p in _PALABRAS_ES for p in palabras) else "es"
+
+
+def mensaje_chat(resultado: dict, config: dict, problem_case: dict) -> str:
+    """Fallo 72: lo que ha decidido el agente de plataforma, en pocas líneas y en el idioma del cliente, para el chat:
+    sale antes de que empiecen los agentes del informe (que tardan unos minutos). Es informativo: el informe sigue."""
+    prov = config["proveedores"]
+    rec = prov[resultado["recomendado"]]["nombre"]
+    en = _idioma(problem_case) == "en"
+    actual = prov[resultado["actual"]]["nombre"] if resultado.get("actual") else ""
+    mejor = prov[resultado["mejor"]]["nombre"]
+    v = _numero(resultado.get("ventaja") or 0)
+    if resultado["decision"] == "mantener" and resultado["mejor"] != resultado["actual"]:
+        por = (f"you already use it; {mejor} scores {v} points more, but switching wouldn't pay off" if en else
+               f"ya la usáis; {mejor} saca {v} puntos más, pero no compensa cambiar")
+    elif resultado["decision"] == "mantener":
+        por = "you already use it and it's the best fit" if en else "ya la usáis y es la que mejor encaja"
+    elif resultado["decision"] == "cambiar":
+        por = (f"it scores {v} points more than {actual}, the one you use today" if en else
+               f"le saca {v} puntos a {actual}, la que usáis ahora")
+    else:
+        por = "it's the best fit for what you've told me" if en else "es la que mejor encaja con lo que me habéis contado"
+    lineas = ["Before I prepare the report, this is what I propose:" if en else
+              "Antes de preparar el informe, esto es lo que propongo:", "",
+              f"- **{'Platform' if en else 'Plataforma'}:** {rec}: {por}."]
+    for x in resultado.get("existentes") or []:
+        que = x["nombre"] + (f" ({', '.join(x['servicios'])})" if x["servicios"] else "")
+        coste = _miles(x["coste_migracion_eur"])
+        if x["decision"] == "migrar":
+            hacer = (f"I'd migrate it to {rec}" + (", as you asked" if x["lo_pide_el_cliente"] else
+                     f": about {coste} € of migration that pays off in {x['anios']} years") if en else
+                     f"lo migraría a {rec}" + (", como nos habéis pedido" if x["lo_pide_el_cliente"] else
+                     f": unos {coste} € de migración que se pagan en {x['anios']} años"))
+        else:
+            hacer = (f"I'd keep it and integrate it with {rec}" + (", as you asked" if x["lo_pide_el_cliente"] else
+                     f": migrating it (about {coste} €) wouldn't pay off") if en else
+                     f"lo mantendría y lo integraría con {rec}" + (", como nos habéis dicho" if x["lo_pide_el_cliente"]
+                     else f": migrarlo (unos {coste} €) no compensa"))
+        lineas.append(f"- **{('What you have in ' if en else 'Lo que tenéis en ') + que}:** {hacer}.")
+    d = resultado.get("despliegue")
+    if d:
+        nombres = {"cloud": "in the cloud", "hibrido": "hybrid", "on_premises": "on-premises"} if en else \
+                  {"cloud": "en la nube", "hibrido": "híbrido", "on_premises": "en vuestros servidores (on-premises)"}
+        lineas.append(f"- **{'Deployment' if en else 'Despliegue'}:** {nombres[d['opcion']]}.")
+    f = resultado.get("formacion")
+    if f:
+        lineas.append(f"- **{'Training' if en else 'Formación'}:** " + (
+            f"{f['personas']} people from your team, about {_miles(f['horas'])} hours in {rec}." if en else
+            f"{f['personas']} personas de vuestro equipo, unas {_miles(f['horas'])} horas en {rec}."))
+    lineas += ["", "Now I'll prepare the full report (architecture, costs and plan); it takes a few minutes." if en else
+               "Ahora preparo el informe completo con la arquitectura, los costes y el plan; tardará unos minutos."]
+    return "\n".join(lineas)
+
 
 def _inyectar(markdown: str) -> None:
     """Escribe la sección en el informe (div content-platform), como hacen las demás secciones."""
@@ -465,6 +527,7 @@ def elegir_plataforma(problem_case: dict) -> dict:
     }
     if d:  # fallo 70: lo leen contexto_cliente() y la tabla de precios
         caso[utils.PLATAFORMA_OBJETIVO]["despliegue"] = d["opcion"]
+    caso[utils.PLATAFORMA_OBJETIVO]["mensaje"] = mensaje_chat(resultado, config, problem_case)  # fallo 72: para el chat
     if resultado.get("existentes"):  # fallo 71: lo lee contexto_cliente()
         caso[utils.PLATAFORMA_OBJETIVO]["existentes"] = [
             {"nube": x["nombre"], "servicios": x["servicios"], "decision": x["decision"],

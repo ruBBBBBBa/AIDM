@@ -91,16 +91,26 @@ if st.session_state.solution_completed:
     st.stop()
 
 # ── User input ─────────────────────────────────────────────────────────────────
-prompt = st.chat_input("Describe tu proyecto de DATA & AI")
-
-if not prompt:
+# Fallo 72: mientras AIDM trabaja, la caja de mensajes está desactivada. El mensaje nuevo se guarda como pendiente y
+# la página se vuelve a pintar con la caja desactivada; esa ejecución lo procesa. Como se saca de la sesión al
+# empezar, si algo corta la ejecución no se vuelve a lanzar (fallo 48), y la caja vuelve a estar activa.
+pendiente = st.session_state.pop("pendiente", None)
+nuevo = st.chat_input("Describe tu proyecto de DATA & AI", disabled=pendiente is not None)
+if nuevo and pendiente is None:
+    st.session_state.messages.append({"role": "user", "content": nuevo})
+    st.session_state.pendiente = nuevo
+    st.rerun()
+if pendiente is None:
     st.stop()
+prompt = pendiente
+print(f"\n\n1. -----User prompt: {prompt}-----\n\n")
 
-# ── User message ───────────────────────────────────────────────────────────────
-st.session_state.messages.append({"role": "user", "content": prompt})
-with st.chat_message("user"):
-    st.markdown(prompt)
-    print(f"\n\n1. -----User prompt: {prompt}-----\n\n")
+
+def avisar_en_el_chat(texto: str) -> None:
+    """Fallo 72: lo que ha decidido el agente de plataforma, en el chat, mientras siguen los agentes del informe."""
+    st.session_state.messages.append({"role": "assistant", "content": texto})
+    with st.chat_message("assistant"):
+        st.markdown(texto)
 
 # ── Agent execution ────────────────────────────────────────────────────────────
 # El spinner cubre toda la ejecución del grafo. Si este turno completa el
@@ -112,7 +122,8 @@ assistant_response = ""
 
 with st.spinner("Procesando..."):
     try:
-        raw_response = run_graph(prompt, chat_history=st.session_state.messages)
+        # Una copia del historial: el aviso del chat no forma parte de la conversación que leen los agentes
+        raw_response = run_graph(prompt, chat_history=list(st.session_state.messages), avisar=avisar_en_el_chat)
         response = raw_response if isinstance(raw_response, dict) else {"assistant_response": str(raw_response)}
         assistant_response = response.get("assistant_response", "")
         if response.get("completion_reached", False):
@@ -128,10 +139,8 @@ completion_reached = response.get("completion_reached", False)
 
 # ── Turno normal de discovery: mostrar respuesta en el chat ───────────────────
 if not completion_reached:
-    with st.chat_message("assistant"):
-        st.markdown(assistant_response)
     st.session_state.messages.append({"role": "assistant", "content": assistant_response})
-    st.stop()
+    st.rerun()  # fallo 72: vuelve a pintar la página con la respuesta y la caja de mensajes activa
 
 # ── Fase de solución: el informe ya está guardado en la sesión (guardar_informe); se muestra en la página ─
 st.rerun()  # vuelve a pintar la página, ya en el estado "completado", que muestra el informe

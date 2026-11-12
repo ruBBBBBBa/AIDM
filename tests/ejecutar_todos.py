@@ -19,7 +19,7 @@ TESTS = [
     #"test_costes_equipo.py",        # fallo 5
     "test_md_to_html.py",           # fallo 11
     #"test_discovery_inventos.py",   # fallo 21
-    #"test_discovery_formato.py",    # fallo 22
+    "test_discovery_formato.py",    # fallo 22
     #"test_md_br.py",                # fallo 30
     #"test_costes_resumen.py",       # fallo 23
     #"test_discovery_respuestas.py", # fallo 33
@@ -39,7 +39,7 @@ TESTS = [
     #"test_costes_ceros.py",         # fallo 45 (C6)
     #"test_costes_json.py",          # fallo 46
     #"test_costes_json_envuelto.py", # fallo 47
-    #"test_interfaz_sin_relanzar.py",  # fallo 48
+    "test_interfaz_sin_relanzar.py",  # fallo 48
     #"test_estructura_sin_importes.py",  # refuerzo del 44
     #"test_costes_json_reparado.py", # fallo 50
     #"test_costes_justificacion.py", # fallo 51
@@ -53,6 +53,7 @@ TESTS = [
     "test_plataforma_despliegue.py", # fallo 70
     "test_datos_decision.py",       # modelo de decisión v2: datos al día
     "test_plataforma_existentes.py",  # fallo 71
+    "test_interfaz_aviso.py",      # fallo 72
 
 
 ]

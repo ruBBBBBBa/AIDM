@@ -63,7 +63,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 
 grafo = types.ModuleType("graph")
 
-def run_graph(prompt, chat_history=None):
+def run_graph(prompt, chat_history=None, avisar=None):  # fallo 72: avisar
     print("Raw output del agente de discovery: precisión ≥ 70 %")
     return {"assistant_response": "Respuesta normal del discovery", "completion_reached": False}
 

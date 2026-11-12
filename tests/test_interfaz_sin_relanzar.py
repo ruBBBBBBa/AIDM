@@ -31,7 +31,7 @@ from streamlit.testing.v1 import AppTest
 # Grafo simulado: cuenta cuántas veces se genera el informe
 grafo = types.ModuleType("graph")
 grafo.llamadas = []
-grafo.run_graph = lambda prompt, chat_history=None: grafo.llamadas.append(prompt) or {
+grafo.run_graph = lambda prompt, chat_history=None, avisar=None: grafo.llamadas.append(prompt) or {  # fallo 72: avisar
     "assistant_response": "Informe generado",
     "completion_reached": True,
     "problem_case": {"nombre_del_cliente": {"value": "Iberdrola"}},
