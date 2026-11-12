@@ -21,6 +21,29 @@ formacion:
   coste_hora_eur: 35          # coste interno de una hora de su equipo; cámbialo si se sabe
   personas_si_no_se_sabe: 2
 
+
+# Fallo 71: lo que el cliente ya tiene en una nube distinta de la recomendada (un módulo en AWS, un Redshift…). La
+# solución nueva va a la nube recomendada; lo que ya tiene se mantiene e integra, salvo que el cliente pida migrarlo o
+# que migrar compense mucho: la nube recomendada le saca muchos puntos a esa y lo que ahorra en el horizonte paga con
+# creces la migración. Lo que dice el cliente se busca por palabras en la frase donde nombra esa nube.
+existente:
+  horizonte_anios: 3
+  horas_migracion_por_servicio: 80   # de Inetum, por cada servicio que hay que mover (EC2, S3, Redshift…); 1 si no los nombra
+  perfil_migracion: Data Engineer    # su tarifa sale de bd/costes_perfil.csv
+  nivel_migracion: Middle
+  coste_hora_migracion_eur: 30       # si no está el CSV o el perfil
+  horas_operar_otra_nube_mes: 8      # de su equipo: cuentas, permisos, seguridad y facturación de una nube más (a formacion.coste_hora_eur)
+  ventaja_minima: 25                 # puntos que la nube recomendada tiene que sacarle a esa para plantear migrar
+  ahorro_sobre_coste: 1.5            # y el ahorro del horizonte tiene que ser al menos 1,5 veces lo que cuesta migrar
+  nombres_de_nube: [azure, aws, amazon web services, gcp, google cloud, oci, oracle cloud, ibm cloud]  # no son servicios
+  mantener: [no quieren migrar, no queremos migrar, no quiere migrar, no migrar, sin migrar, no quieren dejar,
+             no queremos dejar, no tocar, no lo toqu, sin tocar, mantener, mantenerlo, se queda, se quedan, seguir con,
+             no rehacer, ni rehacer, keep, stays, stay as, not migrate, don't want to migrate, leave it]
+  migrar: [migrarlo todo, migrar todo, migrarlo a, pasar todo, pasarlo todo, pasarlo a, llevar todo, llevarlo todo,
+           llevarlo a, unificar, consolidar, todo en una, migrando desde, migrar desde, salir de, saliendo de,
+           move everything, migrate everything, consolidate, moving away from, move it to]
+
+
 # Palabras del caso que delatan lo que ya usa el cliente, y cuánto acerca eso a cada nube (0 a 5). Un 0 quiere decir
 # que esa nube no lo admite: si el cliente lo usa, su nota de datos e IA en esa nube baja a 0.
 ecosistemas:

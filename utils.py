@@ -275,6 +275,16 @@ def contexto_cliente(problem_case: dict, con_costes: bool = False) -> str:
         else:
             partes.append(f"PLATAFORMA OBJETIVO: {plataforma['value']} ({plataforma.get('motivo', 'elegida por Inetum')}). "
                           "Diseña la solución, sus servicios y sus costes en esta nube, aunque cloud_provider diga otra.")
+        for x in plataforma.get("existentes") or []:  # fallo 71: lo que ya tiene en otra nube
+            servicios = f" ({', '.join(x['servicios'])})" if x.get("servicios") else ""
+            if x.get("decision") == "migrar":
+                partes.append(f"SE MIGRA A {plataforma['value']}: lo que el cliente tiene en {x['nube']}{servicios}. "
+                              "Inclúyelo en la arquitectura, en el plan y en los costes (unos "
+                              f"{x.get('coste_migracion_eur', 0):,} € de migración).".replace(",", "."))
+            else:
+                partes.append(f"SE MANTIENE: lo que el cliente ya tiene en {x['nube']}{servicios}. No lo migres ni lo "
+                              f"rehagas: intégralo con {plataforma['value']} y presupuesta esa integración (conectores y "
+                              "transferencia de datos entre nubes), aunque la solución nueva vaya en la plataforma objetivo.")
         if despliegue == "hibrido":
             partes.append("MODELO DE DESPLIEGUE: híbrido, por decisión de Inetum. Lo que no puede salir de sus servidores "
                           "(sistemas que no se pueden mover, datos que no pueden salir, equipos de planta) se queda en "

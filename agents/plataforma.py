@@ -7,6 +7,7 @@ de todo el informe: la arquitectura, los costes y el roadmap se diseñan para el
 La nota la pone Python con data_structures/hiperescalares.yaml (pesos, datos de cada nube y palabras que delatan lo
 que usa el cliente); el LLM solo la explica. Así la recomendación es la misma con cualquier modelo y se puede revisar.
 """
+import csv
 import json
 import re
 from pathlib import Path
@@ -21,6 +22,7 @@ from utils import _normalize_text, contexto_cliente, es_valor_de_relleno, md_to_
 
 CONFIG = Path("data_structures/hiperescalares.yaml")
 REPORT_PATH = Path("data_structures/solution_builder_report.html")
+TARIFAS = Path("bd/costes_perfiles.csv") #Fallo 71: La misma tabla de tarifas que usan los costes
 SECCION = "content-platform"
 CRITERIOS = ("continuidad", "ecosistema", "datos_ia", "cumplimiento", "talento")
 NOMBRES_CRITERIOS = {"continuidad": "Continuidad", "ecosistema": "Ecosistema", "datos_ia": "Datos e IA",
@@ -149,6 +151,63 @@ def despliegue(problem_case: dict) -> dict | None:
         return None
     return {"opcion": resultado[0], "confianza": resultado[1], "cliente": textos.get("modelo_de_despliegue", "")}
 
+def _tarifa_migracion(e: dict) -> float:
+    """Fallo 71: la tarifa (€/h) del perfil que migra, de bd/costes_perfil.csv; si no está, la del yaml."""
+    try:
+        with open(TARIFAS, encoding="utf-8-sig", newline="") as f:
+            for fila in csv.DictReader(f, skipinitialspace=True):
+                if _normalize_text(fila.get("Perfil") or "") == _normalize_text(e.get("perfil_migracion", "")):
+                    return float(fila[f"{e.get('nivel_migracion', 'Middle')} (€/h)"])
+    except (OSError, KeyError, ValueError):
+        pass
+    return float(e.get("coste_hora_migracion_eur", 30))
+
+
+def _frases(texto: str) -> list[str]:
+    return [f.strip() for f in re.split(r"[.;|\n]+", texto or "") if f.strip()]
+
+
+def existentes(problem_case: dict, resultado: dict, config: dict) -> list[dict]:
+    """Fallo 71: lo que el cliente ya tiene en una nube que no es la recomendada, y si se mantiene o se migra.
+
+    Se mantiene e integra salvo que el cliente pida migrarlo o que migrar compense mucho: la nube recomendada le saca
+    al menos existente.ventaja_minima puntos y el ahorro del horizonte (operar una nube menos) es al menos
+    existente.ahorro_sobre_coste veces lo que cuesta migrar. Lo que dice el cliente se busca por palabras
+    (existente.mantener y existente.migrar) en las frases donde nombra esa nube."""
+    e = config.get("existente") or {}
+    rec = resultado["recomendado"]
+    otras = [c for c in resultado["senales"]["actuales"] if c != rec]
+    if not otras:
+        return []
+    tarifa = _tarifa_migracion(e)
+    anios = e.get("horizonte_anios", 3)
+    ahorro = round(e.get("horas_operar_otra_nube_mes", 0) * 12 * anios
+                   * (config.get("formacion") or {}).get("coste_hora_eur", 35))
+    genericos = {_normalize_text(n) for n in e.get("nombres_de_nube", [])}
+    frases = [f for texto in _textos(problem_case).values() for f in _frases(texto)]
+    lista = []
+    for clave in otras:
+        claves = config["proveedores"][clave].get("claves", [])
+        suyas = [f for f in frases if any(re.search(_palabra(k), _normalize_text(f)) for k in claves)]
+        servicios = list(dict.fromkeys(_nombre_en(f, k) for f in suyas for k in claves
+                                       if _normalize_text(k) not in genericos and re.search(_palabra(k), _normalize_text(f))))
+        horas = max(len(servicios), 1) * e.get("horas_migracion_por_servicio", 0)
+        coste = round(horas * tarifa)
+        ventaja = round(resultado["puntos"][rec]["total"] - resultado["puntos"][clave]["total"], 1)
+        compensa = ventaja >= e.get("ventaja_minima", 25) and ahorro >= e.get("ahorro_sobre_coste", 1.5) * coste
+        dicho = " | ".join(_normalize_text(f) for f in suyas)
+        if any(_normalize_text(p) in dicho for p in e.get("mantener", [])):
+            dice = "mantener"
+        elif any(_normalize_text(p) in dicho for p in e.get("migrar", [])):
+            dice = "migrar"
+        else:
+            dice = None
+        lista.append({"clave": clave, "nombre": config["proveedores"][clave]["nombre"], "servicios": servicios,
+                      "decision": dice or ("migrar" if compensa else "mantener"), "lo_pide_el_cliente": bool(dice),
+                      "compensa": compensa, "ventaja": ventaja, "horas_migracion": horas, "tarifa": tarifa,
+                      "coste_migracion_eur": coste, "ahorro_eur": ahorro, "anios": anios})
+    return lista
+
 
 def puntuar(problem_case: dict, config: dict | None = None) -> dict:
     """La nota de cada nube (de 0 a 100, repartida por criterios) y la decisión: mantener, cambiar o elegir."""
@@ -194,9 +253,11 @@ def puntuar(problem_case: dict, config: dict | None = None) -> dict:
         formacion = {"personas": datos["personas"], "personas_del_caso": datos["personas_del_caso"],
                      "horas": horas, "coste_eur": round(horas * f.get("coste_hora_eur", 0)),
                      **(config["proveedores"][recomendado].get("formacion") or {})}
-    return {"puntos": puntos, "orden": orden, "senales": datos, "bloqueos": {k: v for k, v in bloqueos.items() if v},
-            "actual": actual, "mejor": mejor,
-            "recomendado": recomendado, "decision": decision, "ventaja": ventaja, "formacion": formacion}
+    resultado = {"puntos": puntos, "orden": orden, "senales": datos, "bloqueos": {k: v for k, v in bloqueos.items() if v},
+                 "actual": actual, "mejor": mejor,
+                 "recomendado": recomendado, "decision": decision, "ventaja": ventaja, "formacion": formacion}
+    resultado["existentes"] = existentes(problem_case, resultado, config)  # fallo 71
+    return resultado
 
 
 def _miles(n: float) -> str:
@@ -205,6 +266,30 @@ def _miles(n: float) -> str:
 
 def _numero(n: float) -> str:
     return f"{n:.1f}".replace(".", ",").replace(",0", "")
+
+
+
+def _existente(x: dict, rec: str, config: dict) -> str:
+    """Fallo 71: una línea por lo que el cliente ya tiene en otra nube: qué se hace y por qué, con las cuentas."""
+    e = config.get("existente") or {}
+    que = f"**{x['nombre']}**" + (f" ({', '.join(x['servicios'])})" if x["servicios"] else "")
+    migrar = (f"migrarlo costaría unos {_miles(x['coste_migracion_eur'])} € ({_miles(x['horas_migracion'])} h a "
+              f"{_numero(x['tarifa'])} €/h) y ahorraría unos {_miles(x['ahorro_eur'])} € en {x['anios']} años "
+              f"(operar una nube menos: {e.get('horas_operar_otra_nube_mes', 0)} h al mes de su equipo)")
+    if x["decision"] == "migrar" and x["lo_pide_el_cliente"]:
+        return f"{que}: se migra a {rec}, porque el cliente lo pide; {migrar}."
+    if x["decision"] == "migrar":
+        return (f"{que}: se migra a {rec}. {rec} le saca {_numero(x['ventaja'])} puntos y {migrar}: el ahorro paga "
+                "con creces la migración.")
+    if x["lo_pide_el_cliente"]:
+        aviso = f" Migrar compensaría ({migrar}): comentarlo con el cliente." if x["compensa"] else ""
+        return f"{que}: se mantiene e integra con {rec}, porque el cliente no quiere migrarlo.{aviso}"
+    if x["ventaja"] < e.get("ventaja_minima", 25):
+        porque = (f"{rec} solo le saca {_numero(x['ventaja'])} puntos (hacen falta {e.get('ventaja_minima', 25)} "
+                  "para plantear migrar)")
+    else:
+        porque = f"el ahorro no llega a {_numero(e.get('ahorro_sobre_coste', 1.5))} veces lo que cuesta migrar"
+    return f"{que}: se mantiene e integra con {rec}. {migrar[0].upper() + migrar[1:]}, pero {porque}."
 
 
 def tabla(resultado: dict, config: dict) -> str:
@@ -269,7 +354,9 @@ def resumen(resultado: dict, config: dict) -> str:
     if s.get("no_cuentan"):  # fallo 69: lo que nombra para decir que no lo usa no suma
         lineas += ["", "**No cuenta, aunque el cliente lo nombra:** " + "; ".join(
             f"{nombre} ({NO_CUENTA[opcion]})" for nombre, opcion in s["no_cuentan"].items()) + "."]
-
+    if resultado.get("existentes"):  # fallo 71
+        lineas += ["", "**Lo que ya tiene en otras nubes:**", ""] + [
+            f"- {_existente(x, rec['nombre'], config)}" for x in resultado["existentes"]]
     afectadas = [c for c in resultado["bloqueos"] if c in (resultado["actual"], resultado["recomendado"])]
     if afectadas:
         lineas += ["", "**No admite lo que ya usa el cliente:** " + "; ".join(
@@ -359,7 +446,11 @@ def elegir_plataforma(problem_case: dict) -> dict:
           + (f"; despliegue: {d['opcion']} ({d['confianza']:.2f})" if d else ""))
     _inyectar(seccion(resultado, explicar(resultado, problem_case, config), config))
 
-    if resultado["decision"] == "cambiar":
+    se_queda = {x["clave"] for x in resultado.get("existentes", []) if x["decision"] == "mantener"}
+    if resultado["decision"] == "cambiar" and resultado["actual"] in se_queda:  # fallo 71
+        motivo = (f"recomendada por Inetum; el cliente usa o prefiere {prov[resultado['actual']]['nombre']}: lo que ya "
+                  "tiene allí se mantiene e integra, la solución nueva va en esta nube y su equipo se forma en ella")
+    elif resultado["decision"] == "cambiar":
         motivo = (f"recomendada por Inetum; el cliente usa o prefiere {prov[resultado['actual']]['nombre']}: la propuesta "
                   "incluye migrar a ella y formar a su equipo")
     elif resultado["decision"] == "mantener":
@@ -374,6 +465,10 @@ def elegir_plataforma(problem_case: dict) -> dict:
     }
     if d:  # fallo 70: lo leen contexto_cliente() y la tabla de precios
         caso[utils.PLATAFORMA_OBJETIVO]["despliegue"] = d["opcion"]
+    if resultado.get("existentes"):  # fallo 71: lo lee contexto_cliente()
+        caso[utils.PLATAFORMA_OBJETIVO]["existentes"] = [
+            {"nube": x["nombre"], "servicios": x["servicios"], "decision": x["decision"],
+             "coste_migracion_eur": x["coste_migracion_eur"]} for x in resultado["existentes"]]
     with open(utils.PROBLEM_CASE_PATH, "w", encoding="utf-8") as f:  # utils.: los tests cambian la ruta
         json.dump(caso, f, ensure_ascii=False, indent=2)
     return caso

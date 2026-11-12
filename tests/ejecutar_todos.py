@@ -52,6 +52,7 @@ TESTS = [
     "test_plataforma_usos.py",      # fallo 69
     "test_plataforma_despliegue.py", # fallo 70
     "test_datos_decision.py",       # modelo de decisión v2: datos al día
+    "test_plataforma_existentes.py",  # fallo 71
 
 
 ]
