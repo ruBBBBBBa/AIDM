@@ -17,8 +17,8 @@ from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field, PrivateAttr, field_validator, ValidationError
 import gateway
 
-from utils import (_make_agent, _normalize_text, build_llm, contexto_cliente, es_valor_de_relleno,
-                   load_agents_config, md_to_html)
+from utils import (_CANTIDAD_RE, _IMPORTE as _IMPORTE_CLIENTE, _make_agent, _normalize_text, _valor_cantidad, build_llm,
+                   contexto_cliente, es_valor_de_relleno, load_agents_config, md_to_html)
 
 logger = logging.getLogger("aidm")
 
@@ -461,6 +461,51 @@ def _encaje_presupuesto(total_min: float, total_max: float, presupuesto: int) ->
                          f"({_eur(presupuesto)}); el alto ({_eur(total_max)}) lo supera.")
     return "bajo", f"Incluso el escenario bajo ({_eur(total_min)}) supera el presupuesto del cliente ({_eur(presupuesto)})."
 
+# Fallo 79: el 12 nov el cliente pidió 60.000–85.000 € para el arranque y «no pasar de 1.200 € – 1.500 € al mes» en
+# mantenimiento y nube; el informe solo comparaba el total con lo primero. Y el total cubría los 3–4 meses del MVP,
+# aunque el plazo era de 8–9 meses en total, sin decirlo.
+_MENSUAL = re.compile(r"\bal mes\b|\bmensual(?:es)?\b|/\s*mes\b|\bpor mes\b|\bcada mes\b|\ba month\b|\bper month\b|"
+                      r"\bmonthly\b|/\s*month\b", re.IGNORECASE)
+_MESES = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:(?:-|–|a|o|y|to|or)\s*(\d+(?:[.,]\d+)?)\s*)?"
+                    r"(mes(?:es)?|months?|años?|years?)\b", re.IGNORECASE)
+
+
+def _valor_del_caso(problem_case: dict | None, campo: str) -> str:
+    valor = ((problem_case or {}).get(campo) or {}).get("value")
+    return valor if isinstance(valor, str) and not es_valor_de_relleno(valor) else ""
+
+
+def _limite_mensual(problem_case: dict | None) -> tuple[float, float] | None:
+    """Fallo 79: el límite al mes que da el cliente en restriccion_presupuestaria (mínimo, máximo), o None."""
+    for trozo in re.split(r";|\.\s|\n", _valor_del_caso(problem_case, "restriccion_presupuestaria")):
+        importes = list(_IMPORTE_CLIENTE.finditer(trozo))
+        valores, fin, mensual = [], 0, False
+        for n, m in enumerate(importes):
+            antes = trozo[fin:m.start()]
+            despues = trozo[m.end():importes[n + 1].start() if n + 1 < len(importes) else len(trozo)]
+            # Es mensual si lleva la marca («1.500 €/mes»), si va justo antes («mensual … de 1.200 €») o justo después
+            # («1.200 € al mes»), o si cierra un rango que empieza con un importe mensual («1.200 € - 1.500 €»)
+            rango = n > 0 and re.fullmatch(r"\s*(?:-|–|a|to)\s*", antes)
+            mensual = bool(_MENSUAL.search(m.group(0)) or (not rango and _MENSUAL.search(antes))
+                           or re.match(r"\s*(?:" + _MENSUAL.pattern + ")", despues, re.IGNORECASE)
+                           or (rango and mensual))
+            if mensual:
+                valores += [v for q in _CANTIDAD_RE.findall(m.group(0)) if (v := _valor_cantidad(q))]
+            fin = m.end()
+        if valores:
+            return min(valores), max(valores)
+    return None
+
+
+def _meses_del_plazo(problem_case: dict | None) -> int:
+    """Fallo 79: los meses más largos que da el cliente en plazo_objetivo («MVP en 3-4 meses; todo en 8-9» → 9), o 0."""
+    maximo = 0.0
+    for m in _MESES.finditer(_valor_del_caso(problem_case, "plazo_objetivo")):
+        meses = float((m.group(2) or m.group(1)).replace(",", "."))
+        maximo = max(maximo, meses * 12 if m.group(3).lower().startswith(("a", "y")) else meses)
+    return int(-(-maximo // 1))
+
+
 # Bar colors reuse the template icon-section palette
 CATEGORIAS = {
     "infraestructura": ("Infraestructura cloud", "#0369a1"),       # sky
@@ -755,6 +800,18 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     if not equipo:
         motivo += " Ojo: el total no incluye el equipo, que no se pudo calcular."
 
+    # Fallo 79: lo que queda funcionando cada mes (infraestructura, licencias y soporte), frente al límite mensual
+    limite_mes = _limite_mensual(problem_case)
+    al_mes = sum(_coste_al_mes(c, meses_max) for c in sumados if c.periodicidad != "unico")
+    ya_tiene = [c.componente for c in componentes if not c.importe_eur and not c.tarifa and _ya_lo_tiene(c, tecnologias)]
+    if limite_mes:
+        motivo += (f" Al mes, lo que queda funcionando (infraestructura, licencias y soporte) cuesta unos {_eur(al_mes)}, "
+                   f"{'dentro del' if al_mes <= limite_mes[1] else 'por encima del'} límite mensual del cliente "
+                   f"({_rango(*limite_mes)}).")
+        if ya_tiene:
+            motivo += (f" No incluye lo que ya paga por {escape(_lista(ya_tiene))}: si su límite lo incluye, hay que "
+                       "sumarlo.")
+
     # Lo que no está en el total se avisa al lado del total y del encaje
     avisos = []
 
@@ -762,6 +819,15 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     if no_sumados:
         avisos.append(f"Ojo: el total no incluye las horas de {escape('; '.join(no_sumados))}, porque no tienen "
                       f"tarifa en la tabla de la empresa. El coste real será mayor, así que el encaje es provisional.")
+
+    # Fallo 79: el total cubre los meses que se valoran del equipo (el piloto o MVP), no un plazo más largo
+    plazo_max = _meses_del_plazo(problem_case)
+    if plazo_max > meses_max:
+        avisos.append(f"Ojo: el total cubre {meses_txt}, los que se han valorado del equipo. El cliente habla de un "
+                      f"plazo de hasta {plazo_max} meses: lo que va después no está valorado.")
+    if limite_mes and al_mes > limite_mes[1]:
+        avisos.append(f"Ojo: al mes, lo que queda funcionando cuesta unos {_eur(al_mes)}, por encima del límite "
+                      f"mensual del cliente ({_rango(*limite_mes)}).")
 
     def _en_gratuito(c: ComponenteCoste) -> bool:
         """Fallo 53: a 0 € porque el uso cabe en lo gratuito de su fila de la tabla."""
