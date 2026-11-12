@@ -275,6 +275,9 @@ def contexto_cliente(problem_case: dict, con_costes: bool = False) -> str:
         else:
             partes.append(f"PLATAFORMA OBJETIVO: {plataforma['value']} ({plataforma.get('motivo', 'elegida por Inetum')}). "
                           "Diseña la solución, sus servicios y sus costes en esta nube, aunque cloud_provider diga otra.")
+            if plataforma.get("region"):  # fallo 78: la región en España de esa nube
+                partes.append(f"REGIÓN: {plataforma['region']}, en España. Despliega ahí los servicios; si alguno no "
+                              "está en esa región, dilo y usa la región europea más cercana.")
         for x in plataforma.get("existentes") or []:  # fallo 71: lo que ya tiene en otra nube
             servicios = f" ({', '.join(x['servicios'])})" if x.get("servicios") else ""
             if x.get("decision") == "migrar":
