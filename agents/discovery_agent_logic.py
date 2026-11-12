@@ -102,7 +102,11 @@ def _parse_plan(raw_output: str, allowed_fields: set[str]) -> dict[str, Any]:
             if not isinstance(upd, dict):
                 continue
             field_key = upd.get("field_key")
-            operation = upd.get("operation", "replace")
+            # Fallo 75: una lista (evidencias) nunca se sustituye, se le añade. El 12 nov el modelo no puso operation en
+            # el turno del plazo, se aplicó replace y se perdieron las notas de los 13 turnos anteriores
+            operation = upd.get("operation") or ("merge" if field_key in LIST_FIELDS else "replace")
+            if field_key in LIST_FIELDS and operation == "replace":
+                operation = "merge"
             value = upd.get("value")
             if field_key not in allowed_fields:
                 continue
