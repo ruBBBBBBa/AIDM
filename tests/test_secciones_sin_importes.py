@@ -144,6 +144,7 @@ def kickoff_simulado(self, *args, **kwargs):
     return SimpleNamespace(raw="")
 
 Crew.kickoff = kickoff_simulado
+rb.HILOS = 1  # fallo 73: las fases en orden, para saber qué salida es de cuál
 roadmap = []
 rb.inject_roadmap_into_html = lambda *args: roadmap.extend(args)
 combinado = rb.roadmap_builder("PROPUESTA SIMULADA", problem_case=CASO)

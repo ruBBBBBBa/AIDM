@@ -1,4 +1,6 @@
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from crewai import Agent, Crew, Process, Task
@@ -36,6 +38,19 @@ PLATAFORMA = (
     "herramienta_de_visualizacion, stack_tecnologico_actual) y las que ya eligió la propuesta de arquitectura. "
     "Si el cliente no tiene preferencia, elige tú y justifícalo. Nombra los servicios concretos de esa plataforma; "
     "los ejemplos de esta tarea son solo orientativos.\n\n"
+)
+
+# Fallo 73: las 7 fases se escriben a la vez (antes, una detrás de otra: 11,6 min el 12 nov). Ninguna lee lo que
+# escribe otra: todas desarrollan la misma propuesta de arquitectura, que es la referencia común. Así tampoco se
+# contradicen con ella (el 12 nov, el almacenamiento descartó las tres zonas del lago que proponía la arquitectura).
+HILOS = 7  # fases a la vez; con 1 van en orden, una detrás de otra (los tests lo usan para saber qué salida es cuál)
+TITULOS = ["Fuentes de datos", "Ingesta", "Almacenamiento", "Procesamiento y ETL", "Modelado y serving",
+           "ML y MLOps", "Visualización"]
+REFERENCIA = (
+    "CÓMO ENCAJA TU FASE: las 7 fases del roadmap se escriben a la vez y cada una desarrolla su parte de la misma "
+    "propuesta de arquitectura. Usa sus servicios, sus capas, su región y sus decisiones tal cual: no propongas "
+    "otros ni cambies lo que ya está decidido. Si algo te parece un riesgo, dilo como riesgo y cómo mitigarlo, sin "
+    "cambiar el diseño. No des por hecho lo que digan las otras fases: cuéntalo desde la propuesta.\n\n"
 )
 
 
@@ -104,16 +119,6 @@ def resumir_solucion(propuesta_solucion: str, agents_config: dict) -> str:
 
 def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -> dict:
     agents_config = load_agents_config()
-    captured_outputs = []
-
-    def capture_output(task_output):
-        """Callback para capturar output de cada tarea en orden."""
-        if task_output is not None:
-            raw = getattr(task_output, "raw", str(task_output))
-            captured_outputs.append(raw)
-            print(f"[roadmap_builder] Capturado output #{len(captured_outputs)}: {len(raw)} chars")
-        return task_output
-
     # Gateway de modelos: cada fase pide el suyo (data_structures/modelos.yaml)
     fuentes_de_datos = _make_agent("data_sources_agent", agents_config, gateway.modelo("roadmap_fuentes"))
     ingesta_de_datos = _make_agent("ingestion_agent", agents_config, gateway.modelo("roadmap_ingesta"))
@@ -128,11 +133,15 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
     # Las 7 tareas reciben, además del resumen, los datos del cliente del discovery.
     if problem_case is None:
         problem_case = load_problem_case()
-    contexto = f"{resumen}\n\n{contexto_cliente(problem_case)}\n{PLATAFORMA}"
+    # Fallo 73: la arquitectura de la propuesta va entera, como referencia común de las 7 fases (ya sin importes)
+    arquitectura = combined_response.get("architecture", "") if isinstance(combined_response, dict) else ""
+    contexto = (f"{resumen}\n\n"
+                + (f"PROPUESTA DE ARQUITECTURA (la referencia común de las 7 fases):\n{sin_emojis(arquitectura)}\n\n"
+                   if arquitectura else "")
+                + f"{contexto_cliente(problem_case)}\n{PLATAFORMA}{REFERENCIA}")
 
     data_sources_task = Task(
         description=(
-            "Eres el primer agente en ejecutarse. Tu análisis sentará las bases para todos los agentes posteriores.\n\n"
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
             f"{contexto}"
             "Tu tarea es analizar la propuesta de solución e integración de un problema propuesto e identificar todas las fuentes de datos relevantes para el proyecto. "
@@ -141,7 +150,7 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
             "actualización estimada (batch diario, tiempo real, ad-hoc...), y los riesgos o dependencias que presenta "
             "(calidad de datos, accesibilidad, necesidad de acuerdos con terceros, etc.).\n"
             "Sé honesto sobre lo que no puedes saber con la información disponible y explicita los supuestos que estás haciendo. "
-            "Tu output será leído por el agente de ingesta, así que debe ser claro y accionable."
+            "Debe ser claro y accionable."
         ),
         expected_output=(
             "Un análisis estructurado de fuentes de datos con las siguientes secciones:\n"
@@ -155,10 +164,9 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
 
     ingestion_task = Task(
         description=(
-            "El agente de fuentes de datos ha completado su análisis. Úsalo como base para diseñar la estrategia de ingesta.\n\n"
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
             f"{contexto}"
-            "Basándote en las fuentes identificadas por el agente anterior y en el contexto del cliente, diseña la estrategia "
+            "Basándote en las fuentes de datos del caso y de la propuesta, y en el contexto del cliente, diseña la estrategia "
             "de ingesta con la herramienta de orquestación de la plataforma (por ejemplo, Azure Data Factory en Azure, AWS Glue "
             "en AWS o Cloud Data Fusion en Google Cloud). Define para cada fuente o grupo de fuentes: el patrón de ingesta más adecuado "
             "(batch, streaming, change data capture...), la estructura de pipelines recomendada, los conectores a utilizar "
@@ -181,23 +189,22 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
 
     storage_task = Task(
         description=(
-            "Los agentes de fuentes de datos e ingesta han completado sus análisis. Úsalos como base para diseñar la arquitectura de almacenamiento.\n\n"
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
             f"{contexto}"
-            "Basándote en las fuentes y la estrategia de ingesta definidas por los agentes anteriores, diseña la arquitectura "
-            "de almacenamiento en la plataforma. Define la estructura de capas del Data Lake (evalúa si aplica arquitectura medallion "
-            "completa Bronze/Silver/Gold o si una solución más simple es más adecuada para este cliente), los servicios de "
+            "Basándote en las fuentes y la ingesta de la propuesta, diseña la arquitectura de almacenamiento en la plataforma. "
+            "Concreta la estructura de capas del Data Lake que define la propuesta de arquitectura (si no define ninguna, "
+            "evalúa si aplica medallion completa Bronze/Silver/Gold o una solución más simple), los servicios "
             "recomendados (por ejemplo, ADLS Gen2 en Azure, Amazon S3 en AWS o Cloud Storage en Google Cloud, y el almacén "
             "analítico que corresponda) y la justificación de su elección, la estrategia de particionado "
             "y organización de carpetas, las políticas de retención y tier de acceso, y las consideraciones de seguridad y "
             "control de acceso.\n"
             "Parte siempre del volumen estimado, el equipo del cliente y su nivel de madurez para proponer algo que puedan "
-            "operar de forma sostenible, no solo implementar. Si la arquitectura medallion completa es excesiva para este "
-            "caso, dilo explícitamente y propón una alternativa justificada."
+            "operar de forma sostenible, no solo implementar. Si las capas de la propuesta te parecen excesivas para este "
+            "caso, dilo como riesgo, pero diseña con ellas."
         ),
         expected_output=(
             "Una propuesta, sin tablas, de arquitectura de almacenamiento con las siguientes secciones:\n"
-            "1. Decisión y justificación sobre la estructura de capas (medallion completa o simplificada)\n"
+            "1. Estructura de capas y su justificación\n"
             "2. Servicios recomendados y justificación\n"
             "3. Estructura de carpetas y estrategia de particionado\n"
             "4. Políticas de retención y tier de acceso\n"
@@ -207,41 +214,11 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
         agent=data_storage,
     )
 
-    first_crew = Crew(
-        agents=[fuentes_de_datos, ingesta_de_datos, data_storage],
-        tasks=[data_sources_task, ingestion_task, storage_task],
-        process=Process.sequential,
-        task_callback=capture_output,
-        cache=False,
-    )
-
-    print("\n\n[roadmap_builder] Ejecutando PRIMERA CREW: Ingesta y Almacenamiento...\n")
-    try:
-        first_crew.kickoff()
-    except Exception as exc:
-        print(f"[roadmap_builder] Error ejecutando primera crew: {exc}")
-        raise
-
-    print(f"\n\n[roadmap_builder] PRIMERA CREW completada. Outputs capturados: {len(captured_outputs)}\n")
-    
-    # La segunda crew no ve lo que escribió la primera: se lo pasamos a ETL, la tarea que la abre.
-    # Modelado, ML y BI lo reciben a través de la salida de ETL.
-    titulos = ["Fuentes de datos", "Ingesta", "Almacenamiento"]
-    analisis_primera_crew = (
-        "ANÁLISIS DE LA PRIMERA CREW (fuentes, ingesta y almacenamiento):\n"
-        + "\n\n".join(f"### {titulo}\n{texto}" for titulo, texto in zip(titulos, captured_outputs))
-        + "\n\n"
-    )
-
     etl_processing_task = Task(
         description=(
-            "La primera crew ha completado el análisis de fuentes, ingesta y almacenamiento. "
-            "Úsalo como base para diseñar la capa de procesamiento y ETL.\n\n"
-            f"{analisis_primera_crew}"
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
             f"{contexto}"
-            "Basándote en la arquitectura de almacenamiento y la estrategia de ingesta definidas "
-            "en el análisis previo, diseña la capa de procesamiento. Evalúa si el perfil del "
+            "Basándote en el almacenamiento y la ingesta de la propuesta de arquitectura, diseña la capa de procesamiento. Evalúa si el perfil del "
             "cliente requiere un motor distribuido como Spark (por ejemplo, Databricks) o si basta con el motor SQL del "
             "almacén analítico de la plataforma (por ejemplo, Synapse o Fabric en Azure, Redshift en AWS o BigQuery en "
             "Google Cloud), justificando "
@@ -256,7 +233,7 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
         expected_output=(
             "Una propuesta, sin tablas, de capa de procesamiento y ETL con las siguientes secciones:\n"
             "1. Decisión y justificación del motor de procesamiento (Spark, SQL o combinación)\n"
-            "2. Transformaciones principales por capa (Bronze→Silver, Silver→Gold)\n"
+            "2. Transformaciones principales entre las capas de la propuesta\n"
             "3. Estrategia de calidad de datos y validaciones\n"
             "4. Orquestación y scheduling de jobs\n"
             "5. Riesgos operativos y recomendaciones de mantenimiento"
@@ -266,11 +243,9 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
 
     modeling_serving_task = Task(
         description=(
-            "El análisis previo ha definido toda la cadena de datos hasta la capa de serving. "
-            "Úsalo como base para diseñar la capa de modelado y serving.\n\n"
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
             f"{contexto}"
-            "Basándote en los datos procesados disponibles en la capa Gold del Data Lake y en los "
+            "Basándote en los datos procesados de la última capa del Data Lake de la propuesta y en los "
             "casos de uso de negocio del cliente, diseña el modelo de datos analítico. Define si "
             "aplica un esquema en estrella clásico, un modelo más flexible o una capa semántica "
             "en la herramienta de BI del cliente o en un servicio de modelo semántico. Especifica las entidades principales "
@@ -294,15 +269,13 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
 
     ml_mlops_task = Task(
         description=(
-            "El análisis previo ha definido toda la cadena de datos hasta la capa de serving. "
-            "Úsalo como base para diseñar la estrategia de machine learning y MLOps.\n\n"
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
             f"{contexto}"
             "Basándote en los casos de uso de IA identificados en la propuesta de solución y en "
             "los datos disponibles en la capa de serving, define los modelos de ML más adecuados "
             "para el proyecto. Para cada caso de uso especifica: el tipo de modelo recomendado y "
             "su justificación (no siempre el más complejo es el mejor), los datos de entrenamiento "
-            "necesarios y su disponibilidad según lo definido en el análisis previo, la "
+            "necesarios y su disponibilidad según el caso y la propuesta, la "
             "infraestructura de ML necesaria en la plataforma (por ejemplo, Azure Machine Learning en Azure, Amazon "
             "SageMaker en AWS o Vertex AI en Google Cloud: cómputo, entornos y endpoints), el ciclo "
             "de vida del modelo (entrenamiento, validación, despliegue, monitorización y "
@@ -324,12 +297,10 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
 
     bi_visualization_roadmap_task = Task(
         description=(
-            "Eres el último agente de la cadena. Todos los componentes técnicos han sido definidos por los análisis previos. "
-            "Tu tarea es diseñar la capa de visualización que hará que todo ese trabajo sea visible "
-            "y útil para el cliente.\n\n"
+            "Tu tarea es diseñar la capa de visualización que hará que la solución sea visible y útil para el cliente.\n\n"
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
             f"{contexto}"
-            "Basándote en el modelo de datos de la capa de serving y en los perfiles de usuario "
+            "Basándote en el modelo de datos de la propuesta y en los perfiles de usuario "
             "del cliente, diseña la arquitectura de la herramienta de BI del cliente (herramienta_de_visualizacion), o de la "
             "que recomiende la propuesta si no tiene ninguna, con las licencias que ya tiene; si algo necesita otras, dilo "
             "como coste por confirmar. Define el modo de conexión más adecuado (por ejemplo, Import, DirectQuery o "
@@ -353,22 +324,38 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
         agent=visualizacion,
     )
 
-    second_crew = Crew(
-        agents=[procesamiento_etl, modelado_y_serving, ml_mlops, visualizacion],
-        tasks=[etl_processing_task, modeling_serving_task, ml_mlops_task, bi_visualization_roadmap_task],
-        process=Process.sequential,
-        task_callback=capture_output,
-        cache=False,
-    )
+    tareas = [data_sources_task, ingestion_task, storage_task, etl_processing_task, modeling_serving_task,
+              ml_mlops_task, bi_visualization_roadmap_task]
+    salidas = [""] * len(tareas)
 
-    print("\n\n[roadmap_builder] Ejecutando SEGUNDA CREW: Procesamiento, Modelado, ML y BI...\n")
-    try:
-        second_crew.kickoff()
-    except Exception as exc:
-        print(f"[roadmap_builder] Error ejecutando segunda crew: {exc}")
-        raise
+    def ejecutar(n: int, tarea: Task) -> None:
+        """Una fase en su propia crew. Si falla, las demás siguen y su sección del informe sale vacía."""
+        def guardar(task_output):
+            if task_output is not None:
+                salidas[n] = getattr(task_output, "raw", str(task_output))
+            return task_output
 
-    print(f"\n\n[roadmap_builder] SEGUNDA CREW completada. Outputs capturados: {len(captured_outputs)}\n")
+        crew = Crew(agents=[tarea.agent], tasks=[tarea], process=Process.sequential, task_callback=guardar, cache=False)
+        inicio = time.monotonic()
+        try:
+            crew.kickoff()
+        except Exception as exc:
+            print(f"[roadmap_builder] La fase «{TITULOS[n]}» ha fallado ({type(exc).__name__}: {exc}); su sección sale vacía")
+            return
+        if not salidas[n]:  # sin callback, la salida de la tarea
+            salidas[n] = getattr(getattr(tarea, "output", None), "raw", "") or ""
+        print(f"[roadmap_builder] {TITULOS[n]}: {len(salidas[n])} caracteres · {time.monotonic() - inicio:.0f} s")
+
+    print(f"\n\n[roadmap_builder] Ejecutando las {len(tareas)} fases del roadmap"
+          + (" a la vez" if HILOS > 1 else " en orden") + "...\n")
+    inicio = time.monotonic()
+    with ThreadPoolExecutor(max_workers=max(1, HILOS), thread_name_prefix="roadmap") as hilos:
+        list(hilos.map(ejecutar, range(len(tareas)), tareas))
+    vacias = [TITULOS[n] for n, texto in enumerate(salidas) if not texto.strip()]
+    print(f"\n[roadmap_builder] Roadmap: {len(tareas) - len(vacias)} de {len(tareas)} fases en "
+          f"{time.monotonic() - inicio:.0f} s" + (f"; sin texto: {', '.join(vacias)}" if vacias else "") + "\n")
+    captured_outputs = salidas
+
     # Fallo 44: los importes salen solo en la sección de costes, donde se suman en Python
     captured_outputs[:] = [sin_importes(texto, problem_case, f"roadmap {n}") for n, texto in enumerate(captured_outputs, 1)]
 
