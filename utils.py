@@ -7,7 +7,7 @@ from typing import List, Literal, Optional
 
 import litellm
 from bs4 import BeautifulSoup, FeatureNotFound
-from crewai import Agent, LLM
+from crewai import Agent
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from pydantic import BaseModel, Field
@@ -278,9 +278,9 @@ def contexto_cliente(problem_case: dict, con_costes: bool = False) -> str:
         for x in plataforma.get("existentes") or []:  # fallo 71: lo que ya tiene en otra nube
             servicios = f" ({', '.join(x['servicios'])})" if x.get("servicios") else ""
             if x.get("decision") == "migrar":
+                coste = f"{x.get('coste_migracion_eur', 0):,}".replace(",", ".")  # 4.800, sin tocar las comas del texto
                 partes.append(f"SE MIGRA A {plataforma['value']}: lo que el cliente tiene en {x['nube']}{servicios}. "
-                              "Inclúyelo en la arquitectura, en el plan y en los costes (unos "
-                              f"{x.get('coste_migracion_eur', 0):,} € de migración).".replace(",", "."))
+                   f"Inclúyelo en la arquitectura, en el plan y en los costes (unos {coste} € de migración).")
             else:
                 partes.append(f"SE MANTIENE: lo que el cliente ya tiene en {x['nube']}{servicios}. No lo migres ni lo "
                               f"rehagas: intégralo con {plataforma['value']} y presupuesta esa integración (conectores y "
