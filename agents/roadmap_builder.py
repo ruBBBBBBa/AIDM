@@ -4,7 +4,8 @@ from pathlib import Path
 from crewai import Agent, Crew, Process, Task
 from dotenv import load_dotenv
 import gateway
-from utils import _make_agent, contexto_cliente, load_agents_config, load_problem_case, parse_html, md_to_html, sin_importes
+from utils import (_make_agent, contexto_cliente, load_agents_config, load_problem_case, parse_html, md_to_html,
+                   sin_importes, sin_emojis)
 
 load_dotenv(".env")
 
@@ -28,8 +29,10 @@ _ROADMAP_IDS = [
 REPORT_PATH = Path("data_structures/solution_builder_report.html")
 
 # Las tareas del roadmap no dan por hecha ninguna nube ni herramienta: usan las del cliente o las de la propuesta.
+# Fallo 67: si el agente de plataforma ha elegido una nube (PLATAFORMA OBJETIVO en los datos del cliente), manda esa.
 PLATAFORMA = (
-    "PLATAFORMA: usa la nube y las herramientas que indica el caso (cloud_provider, modelo_de_despliegue, "
+    "PLATAFORMA: si los datos del cliente traen una PLATAFORMA OBJETIVO, diseña en esa nube; si no, en la que indica "
+    "el caso (cloud_provider). Usa además las herramientas que indica el caso (modelo_de_despliegue, "
     "herramienta_de_visualizacion, stack_tecnologico_actual) y las que ya eligió la propuesta de arquitectura. "
     "Si el cliente no tiene preferencia, elige tú y justifícalo. Nombra los servicios concretos de esa plataforma; "
     "los ejemplos de esta tarea son solo orientativos.\n\n"
@@ -91,8 +94,10 @@ def resumir_solucion(propuesta_solucion: str, agents_config: dict) -> str:
         print(f"[roadmap_builder] Error ejecutando crew de resumen: {exc}")
         raise
 
-    print(f"\n\n\n=========================================================================================\n RESUMEN DE LA SOLUCIÓN: {result}\n ========================================================================================= \n\n\n")
-    return getattr(result, "raw", str(result)) if result else ""
+    # Fallo 65: sin emojis, para que las 7 fases del roadmap no copien el estilo
+    resumen = sin_emojis(getattr(result, "raw", str(result))) if result else ""
+    print(f"\n\n\n=========================================================================================\n RESUMEN DE LA SOLUCIÓN: {resumen}\n ========================================================================================= \n\n\n")
+    return resumen
 
 
 

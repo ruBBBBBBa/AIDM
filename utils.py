@@ -1,4 +1,5 @@
 import json
+import base64
 import yaml
 from pathlib import Path
 from typing import Any
@@ -6,7 +7,7 @@ from typing import List, Literal, Optional
 
 import litellm
 from bs4 import BeautifulSoup, FeatureNotFound
-from crewai import Agent, LLM
+from crewai import Agent
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from pydantic import BaseModel, Field
@@ -55,6 +56,9 @@ TEXT_FIELDS = {
     "kpis_de_exito",
 }
 VALID_STATUSES = {"pending fields", "completed"}
+# Fallo 67: la nube en la que se diseña la solución. La pone el agente de plataforma después del discovery; no es un
+# campo que pregunte el discovery, así que no está en TEXT_FIELDS.
+PLATAFORMA_OBJETIVO = "plataforma_objetivo"
 PROBLEM_CASE_PATH = Path("data_structures/problem_case.json")
 AGENTS_FILE = Path("data_structures/agents.yaml")
 logger = logging.getLogger("aidm")
@@ -245,7 +249,7 @@ def contexto_cliente(problem_case: dict, con_costes: bool = False) -> str:
     grupos: dict[str, list[str]] = {"confirmado": [], "no_lo_sabe": [], "no_aplica": [], "sin_dato": []}
     notas: list[str] = []
     for campo, datos in (problem_case or {}).items():
-        if campo == "status" or not isinstance(datos, dict):
+        if campo in ("status", PLATAFORMA_OBJETIVO) or not isinstance(datos, dict):
             continue
         valor = datos.get("value")
         if campo == "evidencias":
@@ -261,6 +265,30 @@ def contexto_cliente(problem_case: dict, con_costes: bool = False) -> str:
         "sin_dato": "Sin dato (no se preguntó o no se respondió):",
     }
     partes = ["DATOS DEL CLIENTE (caso del discovery)"]
+    plataforma = (problem_case or {}).get(PLATAFORMA_OBJETIVO)
+    if isinstance(plataforma, dict) and plataforma.get("value"):  # fallo 67: manda sobre cloud_provider
+        despliegue = plataforma.get("despliegue")  # fallo 70: lo decide Inetum, aunque modelo_de_despliegue diga otro
+        if despliegue == "on_premises":
+            partes.append("PLATAFORMA OBJETIVO: los servidores del cliente (on-premises), por decisión de Inetum. "
+                          "Diseña la solución, sus servicios y sus costes para sus servidores, con software que pueda "
+                          f"instalar él mismo; si algo solo existe en la nube, propón {plataforma['value']}.")
+        else:
+            partes.append(f"PLATAFORMA OBJETIVO: {plataforma['value']} ({plataforma.get('motivo', 'elegida por Inetum')}). "
+                          "Diseña la solución, sus servicios y sus costes en esta nube, aunque cloud_provider diga otra.")
+        for x in plataforma.get("existentes") or []:  # fallo 71: lo que ya tiene en otra nube
+            servicios = f" ({', '.join(x['servicios'])})" if x.get("servicios") else ""
+            if x.get("decision") == "migrar":
+                coste = f"{x.get('coste_migracion_eur', 0):,}".replace(",", ".")  # 4.800, sin tocar las comas del texto
+                partes.append(f"SE MIGRA A {plataforma['value']}: lo que el cliente tiene en {x['nube']}{servicios}. "
+                   f"Inclúyelo en la arquitectura, en el plan y en los costes (unos {coste} € de migración).")
+            else:
+                partes.append(f"SE MANTIENE: lo que el cliente ya tiene en {x['nube']}{servicios}. No lo migres ni lo "
+                              f"rehagas: intégralo con {plataforma['value']} y presupuesta esa integración (conectores y "
+                              "transferencia de datos entre nubes), aunque la solución nueva vaya en la plataforma objetivo.")
+        if despliegue == "hibrido":
+            partes.append("MODELO DE DESPLIEGUE: híbrido, por decisión de Inetum. Lo que no puede salir de sus servidores "
+                          "(sistemas que no se pueden mover, datos que no pueden salir, equipos de planta) se queda en "
+                          f"ellos y el resto va a {plataforma['value']}; diséñalo así aunque modelo_de_despliegue diga otro.")
     for estado, lineas in grupos.items():
         if lineas:
             partes.append(titulos[estado] + "\n" + "\n".join(lineas))
@@ -434,7 +462,7 @@ def update_problem_scope_tool(request: ProblemScopeUpdateRequest) -> dict:
     with open(PROBLEM_CASE_PATH, "r", encoding="utf-8") as f:
         problem_case = json.load(f)
 
-    #TODO: cambiar la funcion y las listas por una base de datos???
+    #DONE: cambiar la funcion y las listas por una base de datos???
     updated_fields: list[str] = []
     rejected: list[dict[str, str]] = []
 
@@ -513,7 +541,47 @@ def _br_como_salto(inline: Token) -> None:
                 hijos.append(texto)
     inline.children = hijos
 
+# Fallo 65: los modelos (Gemini sobre todo) adornan títulos y celdas con emojis («## 🧭 Panorama general», «📊 Bizkaia -
+# Operaciones»), que no pegan en un informe para un cliente. ✅ y ❌ pasan a ser ✓ y ✗, para que una tabla de sí y no
+# conserve su sentido; los demás pictogramas y símbolos de emoji (⚠️ ⭐ 🚀…) se quitan, con el espacio que los sigue, y
+# un número de tecla («1️⃣») se queda en «1.». Las flechas (→ ▼), las estrellas (★ ☆) y ✓ ✔ ✗ ✘ no se tocan.
+_MARCAS = str.maketrans({"\u2705": "\u2713", "\u2611": "\u2713",                    # ✅ ☑ → ✓
+                         "\u274C": "\u2717", "\u274E": "\u2717", "\u2716": "\u2717"})  # ❌ ❎ ✖ → ✗
+_TECLA = re.compile("([0-9])\uFE0F?\u20E3")
+_EMOJI = re.compile(
+    "(?:[\U0001F000-\U0001FAFF\u2600-\u2604\u2607-\u26FF\u2B05-\u2B07\u2B1B\u2B1C\u2B50\u2B55\u231A\u231B"
+    "\u23E9-\u23FA\u2702\u2708-\u270D\u270F\u2712\u271D\u2721\u2728\u2733\u2734\u2744\u2747\u2753-\u2755"
+    "\u2757\u2763\u2764\u2795-\u2797\u27A1\u27B0\u27BF\u200D\u20E3])+[ \t]*")
+_VARIANTE = re.compile("[\uFE0E\uFE0F]")  # el selector de «dibújalo como emoji»: fuera, y el espacio se queda
+
+
+def sin_emojis(texto: str) -> str:
+    """El texto de un LLM sin emojis (fallo 65). Lo usan md_to_html(), para todo lo que va al informe, y el resumen
+    de la propuesta, que llega como contexto a las 7 fases del roadmap."""
+    texto = _VARIANTE.sub("", _TECLA.sub(r"\1.", (texto or "").translate(_MARCAS)))
+    return _EMOJI.sub("", texto)
+
+# Fallo 66: la fuente del informe (Space Mono) va dentro del propio HTML, desde assets/fonts/, en vez de pedirla a
+# Google Fonts cada vez que se abre: el informe se ve igual sin conexión y no avisa a Google de quién lo abre.
+FUENTES = Path("assets/fonts")
+_GOOGLE_FONTS = re.compile(r'<link[^>]*fonts\.(?:googleapis|gstatic)\.com[^>]*>\s*')
+
+
+def fuentes_locales(html: str) -> str:
+    """Cambia los <link> a Google Fonts por un @font-face con la fuente en base64. Si falta algún archivo de la
+    fuente, el HTML se queda como estaba (con Google Fonts)."""
+    archivos = {peso: FUENTES / f"space-mono-{peso}.woff2" for peso in (400, 700)}
+    if not _GOOGLE_FONTS.search(html or "") or not all(a.exists() for a in archivos.values()):
+        return html
+    caras = "".join(
+        "@font-face{font-family:'Space Mono';font-style:normal;font-display:swap;"
+        f"font-weight:{peso};src:url(data:font/woff2;base64,{base64.b64encode(a.read_bytes()).decode('ascii')})"
+        " format('woff2');}" for peso, a in archivos.items())
+    html = _GOOGLE_FONTS.sub("", html)
+    return html.replace("</head>", f"<style>{caras}</style>\n</head>", 1)
+
 def md_to_html(text: str) -> str:
+    text = sin_emojis(text)
     if not text or not text.strip():
         return "<p>No se ha generado contenido.</p>"
     tokens = _MD.parse(text)

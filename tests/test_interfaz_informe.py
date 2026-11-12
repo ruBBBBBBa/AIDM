@@ -22,6 +22,8 @@ import webbrowser
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+from utils import fuentes_locales
+
 if not hasattr(st, "iframe"):
     sys.exit(f"Tu Streamlit es {st.__version__}; st.iframe necesita 1.56 o superior: pip install -U streamlit")
 
@@ -30,7 +32,7 @@ INFORME = Path("data_structures/solution_builder_report.html")
 # Grafo simulado: devuelve lo que devolvería run_graph() en cada caso
 grafo = types.ModuleType("graph")
 grafo.completar = True
-grafo.run_graph = lambda prompt, chat_history=None: {
+grafo.run_graph = lambda prompt, chat_history=None, avisar=None: {  # fallo 72: avisar
     "assistant_response": "¿Qué volumen de datos manejáis?",
     "completion_reached": grafo.completar,
     "problem_case": {"nombre_del_cliente": {"value": "Farma Norte, S.L."}},
@@ -68,7 +70,9 @@ iframe = at.get("iframe")
 assert len(iframe) == 1, "falta la vista previa del informe"
 assert iframe[0].proto.src.startswith("data:text/html;base64,"), "el informe debe ir como data: URL"
 
-assert at.session_state["report_html"] == INFORME.read_text(encoding="utf-8")
+informe = at.session_state["report_html"]
+assert informe == fuentes_locales(INFORME.read_text(encoding="utf-8"))
+assert "fonts.googleapis.com" not in informe and informe.count("@font-face") == 2, "fallo 66: la fuente va dentro"
 nombre = at.session_state["report_filename"]
 assert nombre.startswith("informe_aidm_Farma_Norte_S_L_") and nombre.endswith(".html"), nombre
 print(f"OK 2: el informe se ve en la página y se descarga como {nombre}")

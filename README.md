@@ -1,159 +1,213 @@
 # AIDM — AI Discovery Manager
 
-Sistema inteligente de propuesta y toma de decisión de soluciones para proyectos de Data & AI. Es una PoC conversacional que captura requisitos de cliente mediante una entrevista guiada por IA y genera automáticamente una propuesta técnica detallada en formato HTML, incluyendo arquitectura, gobernanza, roadmap, costos y perfiles de equipo.
+Asistente de Inetum para proyectos de Data & AI. Tiene dos fases:
+
+1. **Discovery:** un chat (Streamlit) entrevista al cliente y va rellenando `data_structures/problem_case.json`, campo a campo.
+2. **Informe:** cuando el caso está completo, unos agentes (LangGraph + CrewAI) eligen la nube y generan un informe HTML con la estructura, la propuesta (arquitectura, gobernanza, estrategia y BI), los costes y el equipo, y el roadmap. El informe se ve en la propia página y se descarga con un botón.
+
+Cada tarea usa su propio modelo, con reservas de otros proveedores (el *gateway*, `gateway.py`). Todos los modelos que vienen configurados tienen plan gratuito.
 
 ---
 
-## Requisitos previos
+## Requisitos
 
+- **Python 3.12 o 3.13** y **Git**.
+- **Claves de API** de los proveedores de modelos. Todas tienen plan gratuito (ver [Claves](#2-el-archivo-env)).
+- Opcional: **llama.cpp** para el modelo de decisión ([más abajo](#modelo-de-decisión-opcional)).
 
-- **Python** - 3.12 (Probado con 3.12.6)
-- **pip**
-- **Git**
-- **Cuenta Groq** - Para obtener la API key gratuita
-
-> El proyecto usa **Groq** como proveedor de LLMs (gratuito con límites generosos). Crea una cuenta en [console.groq.com](https://console.groq.com) y genera una API key antes de continuar.
+Versiones con las que está probado: Streamlit 1.66, CrewAI 1.15, LiteLLM 1.106. Streamlit tiene que ser **1.56 o superior** (el informe usa `st.iframe`).
 
 ---
 
-## Instalación paso a paso
+## Instalación
 
-### 1. Clonar el repositorio
+### 1. Clonar y crear el entorno
 
 ```bash
-git clone <URL-del-repositorio>
+git clone https://github.com/ruBBBBBBa/AIDM.git
 cd AIDM
-```
-
-### 2. Crear y activar el entorno virtual
-
-**Windows (PowerShell):**
-```powershell
-python -m venv aidmenv
-.\aidmenv\Scripts\Activate.ps1
+git checkout pruebas-rubengs
 ```
 
 **Windows (CMD):**
 ```cmd
-python -m venv aidmenv
-aidmenv\Scripts\activate.bat
+python -m venv aidmENV
+aidmENV\Scripts\activate.bat
+pip install -r requirements.txt
+```
+
+**Windows (PowerShell):**
+```powershell
+python -m venv aidmENV
+.\aidmENV\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
 **Linux / macOS:**
 ```bash
-python3.12 -m venv aidmenv
-source aidmenv/bin/activate
-```
-
-Cuando el entorno está activado, verás `(aidmenv)` al inicio del prompt.
-
-### 3. Instalar dependencias
-
-Con el entorno virtual activado:
-
-```bash
+python3 -m venv aidmENV
+source aidmENV/bin/activate
 pip install -r requirements.txt
 ```
 
-Las librerías que se instalan son:
+Con el entorno activado, el prompt empieza por `(aidmENV)`. Si `lxml` no se instala, prueba `pip install lxml --only-binary :all:`.
 
-| Librería | Propósito |
-|---|---|
-| `streamlit` | Interfaz de chat web |
-| `crewai` | Orquestación de equipos multi-agente |
-| `langgraph` | Grafo de flujo de agentes (LangGraph) |
-| `litellm >= 1.67.0` | Capa de abstracción para LLMs (Groq, OpenAI, etc.) |
-| `crewai-tools` | Herramientas auxiliares de CrewAI |
-| `python-dotenv` | Carga de variables de entorno desde `.env` |
-| `pydantic` | Validación de schemas de datos |
-| `beautifulsoup4` | Inyección de contenido en el reporte HTML |
-| `lxml` | Parser HTML para BeautifulSoup |
-| `pyyaml` | Lectura del fichero `agents.yaml` |
-| `mcp` | Protocolo de contexto de modelos |
+### 2. El archivo `.env`
 
-> **Nota sobre `lxml`:** En algunos sistemas puede requerir compiladores C. Si la instalación falla, prueba: `pip install lxml --only-binary :all:`
-
----
-
-## Configuración del entorno (.env)
-
-En la raíz del proyecto, crea un fichero llamado **`.env`** con el siguiente contenido:
+En la raíz del proyecto, crea un archivo `.env` **solo con las claves**. Los modelos ya no van aquí: están en `data_structures/modelos.yaml`.
 
 ```env
-# ── Modelos ─────────────────────────────────────────────────────────────────
-BIG_MODEL=groq/meta-llama/llama-4-scout-17b-16e-instruct
-REASONING_MODEL=groq/openai/gpt-oss-120b
-REASONING_RIGOROUS_MODEL=groq/llama-3.3-70b-versatile
-SMALL_REASONING_MODEL=groq/openai/gpt-oss-20b
-
-# ── API Keys ─────────────────────────────────────────────────────────────────
-GROQ_API_KEY=gsk_TU_CLAVE_AQUI
+MISTRAL_API_KEY=...
+GEMINI_API_KEY=...
+GROQ_API_KEY=...
+CLOUDFLARE_API_KEY=...
+CLOUDFLARE_ACCOUNT_ID=...
+SAMBANOVA_API_KEY=...
+NVIDIA_NIM_API_KEY=...
 ```
 
-**Cómo obtener la `GROQ_API_KEY`:**
+| Clave | Dónde se saca | Para qué |
+|---|---|---|
+| `MISTRAL_API_KEY` | [console.mistral.ai](https://console.mistral.ai) (plan Experiment) | Discovery, redacción y Terraform |
+| `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com) | Costes, roadmap y resumen |
+| `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) | Reserva del discovery |
+| `CLOUDFLARE_API_KEY` y `CLOUDFLARE_ACCOUNT_ID` | Panel de Cloudflare → Workers AI | Reserva de costes, redacción y roadmap |
+| `SAMBANOVA_API_KEY` | [cloud.sambanova.ai](https://cloud.sambanova.ai) | Última reserva de costes |
+| `NVIDIA_NIM_API_KEY` | [build.nvidia.com](https://build.nvidia.com) | Solo para comparar modelos (`pruebas_modelos/comparar.py`) |
 
-1. Ve a [console.groq.com](https://console.groq.com) y crea una cuenta (gratuita).
-2. En el menú lateral, haz clic en **API Keys**.
-3. Haz clic en **Create API Key**, ponle un nombre y copia la clave.
-4. Pega la clave en el `.env` sustituyendo `gsk_TU_CLAVE_AQUI`.
+Con **Mistral y Gemini** ya funciona todo. Las demás son reservas: sin ellas, si un modelo da 429 o falla, no hay a quién pasar la llamada.
 
-> **Importante:** Nunca subas el fichero `.env` a un repositorio público. Contiene credenciales privadas.
+> **El `.env` nunca se sube al repo ni se comparte** (está en el `.gitignore`). Si pasas el proyecto en un zip, va sin él.
+
+Variables opcionales del `.env`:
+
+| Variable | Qué hace |
+|---|---|
+| `AIDM_DECISION_URL=http://127.0.0.1:8090` | Usa el modelo de decisión (ver [más abajo](#modelo-de-decisión-opcional)). Sin ella, AIDM funciona igual. |
+| `MODELO_<TAREA>=proveedor/modelo` | Pone ese modelo delante para una tarea (por ejemplo, `MODELO_COSTES=gemini/gemini-3.6-flash`); las reservas del perfil siguen detrás. |
+| `GRABAR_LLAMADAS=1` | Guarda el prompt y la respuesta de cada llamada en `pruebas_modelos/grabaciones/`, para comparar modelos después. **Llevan datos del cliente.** |
+| `INFRACOST_API_KEY=ico-...` | Precios con Infracost (opcional; ver [más abajo](#infracost-opcional)). |
+
+### 3. Comprobar que todo está bien
+
+```bash
+python tests/ejecutar_todos.py
+python pruebas_modelos/comparar.py --comprobar
+```
+
+- `ejecutar_todos.py` pasa los tests de `tests/`. Ninguno llama a un modelo, así que no gastan cupo. Al final dice cuántos pasan: tienen que pasar todos. Los tests que ejecuta son los que no están comentados en la lista `TESTS` del propio archivo.
+- `comparar.py --comprobar` pregunta a cada proveedor si existen los modelos de `modelos.yaml` y avisa de los que no. Si sale `CERTIFICATE_VERIFY_FAILED`, es la red de la empresa: prueba desde otra.
 
 ---
 
-## Preparar el caso de problema antes de cada sesión
+## Usar AIDM
 
-El fichero `data_structures/problem_case.json` actúa como estado persistente de la entrevista. **Antes de empezar un nuevo discovery, hay que vaciar el anterior.**
+### Antes de cada discovery: vaciar el caso
 
-Reemplaza el contenido de `data_structures/problem_case.json` con la plantilla en blanco `data_structures/problem_case_recovery.json`.
+`data_structures/problem_case.json` guarda la entrevista. **Antes de empezar con un cliente nuevo**, cópiale encima la plantilla vacía `data_structures/problem_case_recovery.json`:
 
+```cmd
+copy /Y data_structures\problem_case_recovery.json data_structures\problem_case.json
+```
 
----
+(en Linux o macOS: `cp data_structures/problem_case_recovery.json data_structures/problem_case.json`)
 
-## Ejecutar la aplicación
+Si no lo vacías, AIDM sigue con el cliente anterior, y si ese caso ya estaba completo, genera su informe otra vez.
 
-Con el entorno virtual activado y el `.env` configurado, lanza la interfaz de chat:
+### Arrancar
 
 ```bash
 streamlit run interface.py
 ```
 
-Streamlit abrirá automáticamente el navegador en `http://localhost:8501`. Si no se abre, accede tú directamente a esa URL.
+Se abre en `http://localhost:8501`. La primera vez tarda unos segundos en cargar los módulos; la consola dice cuántos (`[aidm] Carga de los módulos…`).
+
+Para guardar la salida de la consola en un archivo:
+
+- **CMD:** `streamlit run interface.py > ejecucion.log 2>&1`
+- **PowerShell:** `streamlit run interface.py *> ejecucion.log`
+
+> **Los logs llevan datos del cliente:** no se suben al repo (están en el `.gitignore`) ni a ningún otro sitio.
+
+### Qué pasa en una sesión
+
+```
+El cliente describe su proyecto en el chat
+        │
+        ▼
+Discovery: una pregunta por turno, hasta completar todos los campos del caso
+  · «no lo sé» / «no aplica» se guardan como tales
+  · con el modelo de decisión: una respuesta vaga («bastantes datos») se vuelve a preguntar una vez
+        │
+        ▼ (caso completo)
+Agente de plataforma (agents/plataforma.py)
+  · compara AWS, Azure, Google Cloud, Oracle e IBM Cloud y decide en qué nube se diseña;
+    lo que el cliente ya tiene en otra nube se mantiene, salvo que pida migrarlo o que compense mucho
+  · el chat enseña lo que ha decidido; el informe sigue solo
+        │
+        ▼
+Estructura de la solución
+        │
+        ▼
+Propuesta (4 agentes en paralelo: arquitectura, gobernanza, estrategia y BI)
+y costes (componentes con la tabla de precios, perfiles y equipo)
+        │
+        ▼
+Roadmap (7 fases: fuentes, ingesta, almacenamiento, ETL, modelado, ML y BI) y resumen
+        │
+        ▼
+Informe en la página, con el botón «Descargar informe (HTML)»
+```
+
+- Mientras AIDM trabaja, la caja de mensajes está desactivada. El informe tarda unos 10–15 minutos.
+- Cuando el informe está hecho, la sesión se queda en ese cliente: los mensajes nuevos no lo vuelven a generar. Para otro cliente, vacía el caso (arriba), para Streamlit (Ctrl+C) y arráncalo otra vez.
+- Al terminar, la consola dice lo que ha gastado la ejecución (`[gateway] Consumo de la ejecución: …`): llamadas, tokens y cuánto costaría pagando.
+- Cada llamada a un modelo deja una línea `[gateway] tarea · modelo · tokens · segundos`. Si responde una reserva, lo dice (`pedido → reserva X`).
 
 ---
 
-## Flujo de uso
+## Configuración (sin tocar el código)
 
-```
-Usuario escribe el primer mensaje describiendo su proyecto
-         │
-         ▼
-  Agente Discovery (LLM) realiza preguntas iterativas
-  y va rellenando problem_case.json campo a campo
-         │
-         ▼ (cuando todos los campos están completos)
-  Agente Structure Proposal — propuesta arquitectónica inicial
-         │
-         ▼
-  Solution Building Crew — 4 agentes en paralelo:
-    · Arquitecto de Datos
-    · Data Governance
-    · Data & AI Strategist
-    · BI Specialist
-         │
-         ▼
-  Roadmap Builder — 7 agentes secuenciales:
-    Fuentes → Ingesta (ADF) → Almacenamiento (Medallion)
-    → ETL → Modelado → ML/MLOps → Power BI
-         │
-         ▼
-  Resume Agent — resumen ejecutivo
-         │
-         ▼
-  Reporte HTML generado → se abre automáticamente en el navegador
+| Archivo | Qué se cambia ahí |
+|---|---|
+| `data_structures/modelos.yaml` | Qué modelo usa cada tarea. Las tareas se agrupan en **perfiles** (`extraccion`, `calculo`, `redaccion`, `tecnico`, `contexto_largo`, `codigo`). En cada perfil, el primer modelo es el que se usa y los demás, sus reservas. También van las reglas por proveedor y por modelo (timeouts, reintentos, `max_tokens`), los precios para el contador y los cupos gratuitos. |
+| `data_structures/hiperescalares.yaml` | Cómo elige nube el agente de plataforma: pesos de cada criterio, datos de cada nube (región en España, ENS, soberanía, oferta híbrida, formación), palabras que delatan lo que usa el cliente y la valoración de mantener o migrar lo que ya tiene (`existente:`). |
+| `data_structures/agents.yaml` | Rol, objetivo y contexto de cada agente de CrewAI. |
+| `bd/costes_perfil.csv` | Tarifas por hora de cada perfil (Junior, Middle y Senior). |
+| `bd/precios_cloud.csv` | Precios de los servicios de la nube (de momento, Azure) que usan los costes. Se actualiza con `python bd/actualizar_precios.py` (con `--probar`, solo dice qué cambiaría). |
+| `data_structures/solution_builder_report_recovery.html` | Plantilla limpia del informe. La de trabajo, `solution_builder_report.html`, se sobrescribe en cada ejecución. |
+
+---
+
+## Comparar modelos
+
+`pruebas_modelos/comparar.py` repite las llamadas de una ejecución grabada (`GRABAR_LLAMADAS=1`) con otros modelos y deja `resumen.md` y `comparacion.html` en `pruebas_modelos/resultados/`:
+
+```bash
+python pruebas_modelos/comparar.py --listar mistral                     # los modelos que da un proveedor
+python pruebas_modelos/comparar.py pruebas_modelos/grabaciones/<archivo>.jsonl --tareas costes,equipo
 ```
 
-Al finalizar el discovery, el sistema genera la propuesta técnica y abre automáticamente el fichero `data_structures/solution_builder_report.html` en el navegador.
+Las grabaciones y los resultados llevan datos del cliente y están en el `.gitignore`.
+
+---
+
+## Modelo de decisión (opcional)
+
+Un modelo pequeño (Qwen3.5-0.8B ajustado con Unsloth) que contesta preguntas cerradas en unos 4 s, en CPU y en el mismo ordenador, sin que los datos salgan de él. Lo usan:
+
+- **El discovery:** si la respuesta del cliente es un «no lo sé», un «no aplica» o una respuesta vaga.
+- **El agente de plataforma:** qué dice el cliente de cada herramienta o nube que nombra, y qué modelo de despliegue le conviene.
+
+Se entrena en Colab y se sirve con `llama-server`. Todo está en `modelo_decision/README.md`. Sin `AIDM_DECISION_URL` en el `.env`, AIDM hace lo mismo con reglas más simples.
+
+> El código usa la **v2** del modelo, que contesta las tres preguntas. La v1 solo conoce la primera: mientras `llama-server` tenga la v1, deja `AIDM_DECISION_URL` fuera del `.env`.
+
+---
+
+## Infracost (opcional)
+
+Con `INFRACOST_API_KEY` en el `.env` (gratis en [dashboard.infracost.io](https://dashboard.infracost.io)) e `infracost.exe` (CLI 0.10) en la raíz o en el PATH, AIDM escribe un Terraform de la propuesta y le pide los precios a Infracost. Sin él, los precios salen de `bd/precios_cloud.csv` y, si un servicio no está, los estima el modelo; las tarjetas del informe dicen de dónde sale cada uno.
 
 ---
 
@@ -161,64 +215,49 @@ Al finalizar el discovery, el sistema genera la propuesta técnica y abre autom�
 
 ```
 AIDM/
-├── interface.py                        # Frontend Streamlit (punto de entrada)
-├── graph.py                            # Grafo LangGraph (orquestación del flujo)
-├── utils.py                            # Utilidades, schemas Pydantic, herramientas JSON/HTML
-├── requirements.txt                    # Dependencias Python
-├── .env                                # Variables de entorno (NO subir a git)
-│
+├── interface.py                  # La página de Streamlit (punto de entrada)
+├── graph.py                      # El grafo: discovery → plataforma → estructura → propuesta → roadmap
+├── gateway.py                    # Qué modelo usa cada tarea, con sus reservas, y el registro de llamadas
+├── decisiones.py                 # Llamadas al modelo de decisión (llama-server)
+├── utils.py                      # Esquemas, lectura y escritura del caso, contexto del cliente, markdown → HTML
+├── requirements.txt
+├── .streamlit/config.toml        # Sin estadísticas de uso de Streamlit
 ├── agents/
-│   ├── discovery_agent_logic.py        # Agente de entrevista iterativa
-│   ├── structure_proposal_agent_logic.py # Propuesta arquitectónica inicial
-│   ├── solution_builder_crew.py        # Crew de 4 agentes (propuesta técnica)
-│   ├── proposal_crew.py                # Sub-crew de la propuesta
-│   ├── estimation_crew.py              # Sub-crew de estimación de costos
-│   └── roadmap_builder.py              # Crew de 7 agentes (roadmap técnico)
-│
-├── data_structures/
-│   ├── agents.yaml                     # Roles, goals y backstories de los 15 agentes
-│   ├── problem_case.json               # Estado de la entrevista (resetear entre sesiones)
-│   └── solution_builder_report.html    # Template HTML del reporte de salida
-│
-└── bd/
-    └── costes_perfil.csv               # Tabla de costos por hora y perfil (Junior/Middle/Senior)
+│   ├── discovery_agent_logic.py
+│   ├── plataforma.py             # Agente de plataforma (elige el hiperescalar)
+│   ├── structure_proposal_agent_logic.py
+│   ├── solution_builder_crew.py  # Propuesta y costes
+│   ├── proposal_crew.py
+│   ├── estimation_crew.py        # Costes, perfiles y equipo
+│   └── roadmap_builder.py        # Las 7 fases del roadmap y el resumen
+├── data_structures/              # YAML de configuración, caso, plantillas del informe
+├── bd/                           # Tarifas, precios de la nube y su actualizador
+├── assets/fonts/                 # La fuente del informe (va dentro del HTML, sin Google Fonts)
+├── modelo_decision/              # Datos, cuaderno de Colab y README del modelo de decisión
+├── pruebas_modelos/comparar.py   # Comparación de modelos con llamadas grabadas
+└── tests/                        # Tests de cada arreglo (sin llamar a modelos) y ejecutar_todos.py
 ```
 
 ---
 
-## Mejoras opcionales
+## Cómo trabajamos
 
-### Infracost CLI (precios cloud reales)
-
-El agente de estimación de costos puede enriquecerse con precios reales de Azure/AWS/GCP usando el CLI de Infracost. **Sin él, el sistema funciona igualmente** — el LLM estima los costos por cuenta propia.
-
-Si quieres activar los precios reales:
-
-1. Descarga el CLI desde [infracost.io/docs/#quick-start](https://www.infracost.io/docs/#quick-start) y ponlo en el PATH, **o** coloca el binario `infracost.exe` directamente en la raíz del proyecto.
-2. Añade tu clave al `.env`:
-   ```env
-   INFRACOST_API_KEY=ico-TU_CLAVE_AQUI
-   ```
-3. Regístrate en [dashboard.infracost.io](https://dashboard.infracost.io) para obtener la clave gratuita.
-
-Cuando el binario está disponible, el sistema genera automáticamente Terraform HCL desde la propuesta y ejecuta `infracost breakdown` para obtener precios reales antes de que el LLM redacte la sección de costos.
+- **Una rama y un PR por fallo**, con su número en el commit («Fallo 71: …»). `main` está protegida: no se hace push directo.
+- **Cada arreglo lleva su test** en `tests/`, sin llamar a ningún modelo (se simulan `Crew.kickoff` o `litellm.completion`). Se añade a la lista `TESTS` de `tests/ejecutar_todos.py`. `test_modelos.py` y `test_fallback*.py` sí llaman a los modelos y no van en la lista.
+- **Nunca se suben** el `.env`, los logs, las grabaciones ni los `.gguf`.
+- Los fallos y su estado están en la revisión «AIDM: revisión para deploy» (pídele el enlace a Rubba).
 
 ---
 
-## Limitaciones conocidas
+## Problemas frecuentes
 
-- **Una sesión por discovery:** Una vez completado el discovery, el chat queda bloqueado. Para un nuevo cliente hay que: (1) resetear `problem_case.json` a la plantilla vacía y (2) reiniciar la aplicación (`Ctrl+C` + `streamlit run interface.py`).
-- **Los modelos de Groq tienen límites de tokens por minuto** en el plan gratuito. Si aparecen errores `RateLimitError`, espera unos segundos y vuelve a intentarlo.
-- **El reporte HTML se sobreescribe** en cada ejecución. Si quieres conservar una propuesta, copia el fichero `solution_builder_report.html` antes de lanzar un nuevo discovery.
-
----
-
-## Resolución de problemas comunes
-
-| Síntoma | Causa probable | Solución |
+| Qué pasa | Por qué | Qué hacer |
 |---|---|---|
-| `ModuleNotFoundError` al arrancar | Entorno virtual no activado o dependencias no instaladas | Activa el entorno con `Activate.ps1` y ejecuta `pip install -r requirements.txt` |
-| `GROQ_API_KEY not found` o error de autenticación | Fichero `.env` ausente o clave incorrecta | Revisa que existe `.env` en la raíz y que la clave empieza por `gsk_` |
-| El chat no responde o da error 500 | Modelo no disponible en Groq o rate limit | Espera unos segundos; comprueba el estado en [status.groq.com](https://status.groq.com) |
-| El HTML no se abre al finalizar | El navegador por defecto no está configurado en el sistema | Abre manualmente `data_structures/solution_builder_report.html` desde el explorador de archivos |
-| `lxml` falla al instalar | Faltan compiladores C en el sistema | Usa `pip install lxml --only-binary :all:` |
+| `ModuleNotFoundError` al arrancar | El entorno no está activado o faltan dependencias | Activa `aidmENV` y `pip install -r requirements.txt` |
+| `AttributeError: module 'streamlit' has no attribute 'iframe'` | Streamlit anterior a 1.56 | `pip install -U streamlit` |
+| En la consola, `429` o `RateLimitError` | Cupo del plan gratuito (Mistral y Groq lo agotan pronto) | Nada: responde una reserva (`pedido → reserva X`). Si fallan todas, espera un rato o añade más claves de reserva |
+| Una tarea falla con `AuthenticationError` | Falta su clave en el `.env` o está mal | Revisa el `.env`; `comparar.py --comprobar` dice qué proveedor falla |
+| `CERTIFICATE_VERIFY_FAILED` | La red o el proxy de la empresa | Prueba desde otra red |
+| AIDM empieza preguntando por otro cliente, o genera un informe nada más escribir | `problem_case.json` es el del discovery anterior | Vacíalo con la plantilla (ver [Usar AIDM](#usar-aidm)) |
+| El informe ha terminado en la consola (`ROADMAP COMPLETADO`) pero la página no lo enseña | El navegador perdió la conexión durante la generación (portátil suspendido, VPN…) | Antes de nada, copia `data_structures/solution_builder_report.html` a otra carpeta: es el informe. No recargues la página. Si mandas un mensaje y la consola vuelve a lanzar la plataforma, la sesión se perdió: para con Ctrl+C |
+| `[decisiones] El modelo de decisión no responde` | `llama-server` no está en marcha | Arráncalo (ver `modelo_decision/README.md`) o quita `AIDM_DECISION_URL` del `.env`; AIDM sigue sin él |

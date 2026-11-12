@@ -2,11 +2,12 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from agents.discovery_agent_logic import run_agent
+from agents.plataforma import elegir_plataforma
 from agents.structure_proposal_agent_logic import build_structure_proposal
 from agents.solution_builder_crew import propose_solution
 from agents.roadmap_builder import roadmap_builder
 
-from utils import load_problem_case
+from utils import PLATAFORMA_OBJETIVO, load_problem_case
 
 import gateway
 
@@ -37,6 +38,23 @@ def discovery_node(state: AgentState) -> AgentState:
         "problem_case": problem_case,
         "completion_reached": completion_reached,
     }
+
+# Fallo 72: run_graph() pone aquí la función de la interfaz que escribe en el chat (None fuera de Streamlit)
+_avisar = None
+
+
+def plataforma_node(state: AgentState) -> AgentState:
+    """Fallo 67: después del discovery se elige el hiperescalar; su nube manda en todo el informe.
+    Fallo 72: lo que ha decidido sale en el chat antes de que empiecen los agentes del informe."""
+    problem_case = elegir_plataforma(state.get("problem_case", {}))
+    mensaje = (problem_case.get(PLATAFORMA_OBJETIVO) or {}).get("mensaje")
+    if _avisar and mensaje:
+        try:
+            _avisar(mensaje)
+        except Exception as exc:  # el mensaje es informativo: si falla, el informe sigue
+            print(f"[plataforma] No se pudo escribir el mensaje en el chat: {type(exc).__name__}: {exc}")
+    return {**state, "problem_case": problem_case}
+
 
 def structure_proposal_node(state: AgentState) -> AgentState:
     print("DISCOVERY COMPLETADO\n\n\n")
@@ -83,7 +101,7 @@ def route_after_discovery(state: AgentState) -> str:
     En cualquier otro caso termina — la interfaz espera el siguiente mensaje.
     """
     if state.get("completion_reached"):
-        return "structure_proposal"
+        return "plataforma"
     return END
 
 
@@ -91,12 +109,14 @@ def build_graph():
     builder = StateGraph(AgentState)
     
     builder.add_node("discovery", discovery_node)
+    builder.add_node("plataforma", plataforma_node)
     builder.add_node("structure_proposal", structure_proposal_node)
     builder.add_node("solution_building", solution_building_node)
     builder.add_node("roadmap", roadmap_node)
 
     builder.add_edge(START, "discovery")
     builder.add_conditional_edges("discovery", route_after_discovery)
+    builder.add_edge("plataforma", "structure_proposal")
     builder.add_edge("structure_proposal", "solution_building")
     builder.add_edge("solution_building", "roadmap")
     builder.add_edge("roadmap", END)
@@ -109,7 +129,10 @@ aidm_graph = build_graph()
 # Agent run function
 
 
-def run_graph(user_prompt: str, chat_history: list[dict[str, str]] | None = None) -> dict:
+def run_graph(user_prompt: str, chat_history: list[dict[str, str]] | None = None, avisar=None) -> dict:
+    """avisar (fallo 72): función que recibe un texto y lo escribe en el chat mientras sigue el grafo."""
+    global _avisar
+    _avisar = avisar
     initial_state: AgentState = {
         "user_prompt": user_prompt,
         "chat_history": chat_history or [],
@@ -118,7 +141,10 @@ def run_graph(user_prompt: str, chat_history: list[dict[str, str]] | None = None
         "completion_reached": False,
         "roadmap": "",
     }
-    resultado = aidm_graph.invoke(initial_state)
+    try:
+        resultado = aidm_graph.invoke(initial_state)
+    finally:
+        _avisar = None
     if resultado.get("completion_reached"):
         gateway.resumen_consumo()  # lo que ha gastado la ejecución, al acabar el informe
     return resultado

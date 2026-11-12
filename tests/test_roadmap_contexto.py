@@ -42,7 +42,7 @@ prompts: list[str] = []
 def kickoff_simulado(self, *args, **kwargs):
     if self.task_callback is None:  # la crew del resumen
         prompts.append(self.tasks[0].description)
-        return SimpleNamespace(raw="RESUMEN SIMULADO")
+        return SimpleNamespace(raw="## 🧭 RESUMEN SIMULADO 🚀")  # fallo 65: con emojis, como lo escribió Gemini
     for task in self.tasks:
         prompts.append(task.description)
         self.task_callback(SimpleNamespace(raw=f"SALIDA {len(prompts) - 1} ({task.agent.role})"))
@@ -72,8 +72,8 @@ assert len(prompts) == 8, f"se esperaban 8 prompts (resumen + 7 tareas) y hay {l
 tareas = prompts[1:]
 for n, prompt in enumerate(tareas, start=1):
     assert "DATOS DEL CLIENTE" in prompt and "2 TB de histórico" in prompt, f"la tarea {n} no lleva el caso"
-    assert "RESUMEN SIMULADO" in prompt, f"la tarea {n} perdió el resumen"
-print("OK 2: las 7 tareas del roadmap reciben el resumen y los datos del cliente")
+    assert "🧭" not in prompt and "🚀" not in prompt, f"la tarea {n} recibió el resumen con emojis (fallo 65)"
+print("OK 2: las 7 tareas del roadmap reciben el resumen, sin emojis, y los datos del cliente")
 
 # 3) ETL (la primera de la segunda crew) ve las 3 salidas de la primera crew
 etl = tareas[3]

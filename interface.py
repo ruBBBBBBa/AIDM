@@ -1,5 +1,6 @@
 import base64
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -7,7 +8,12 @@ import sys
 
 import streamlit as st
 
+_inicio = time.perf_counter()
 from graph import run_graph
+from utils import fuentes_locales
+_carga = time.perf_counter() - _inicio  # fallo 66: solo la primera vez; en cada rerun los módulos ya están cargados
+if _carga > 1:
+    print(f"[aidm] Carga de los módulos (LiteLLM, CrewAI, agentes): {_carga:.1f} s")
 
 REPORT_PATH = Path("data_structures/solution_builder_report.html")
 
@@ -44,7 +50,8 @@ def guardar_informe(response: dict) -> None:
     # Se guarda una copia en la sesión para que siga visible aunque otra ejecución sobrescriba el archivo.
     cliente = response.get("problem_case", {}).get("nombre_del_cliente", {}).get("value", "")
     cliente = re.sub(r"[^\w-]+", "_", cliente).strip("_") or "cliente"
-    st.session_state.report_html = REPORT_PATH.read_text(encoding="utf-8") if REPORT_PATH.exists() else ""
+    html = REPORT_PATH.read_text(encoding="utf-8") if REPORT_PATH.exists() else ""
+    st.session_state.report_html = fuentes_locales(html)  # fallo 66: la fuente va dentro, sin Google Fonts
     st.session_state.report_filename = f"informe_aidm_{cliente}_{datetime.now():%Y%m%d_%H%M}.html"
     st.session_state.solution_completed = True
 
@@ -84,16 +91,26 @@ if st.session_state.solution_completed:
     st.stop()
 
 # ── User input ─────────────────────────────────────────────────────────────────
-prompt = st.chat_input("Describe tu proyecto de DATA & AI")
-
-if not prompt:
+# Fallo 72: mientras AIDM trabaja, la caja de mensajes está desactivada. El mensaje nuevo se guarda como pendiente y
+# la página se vuelve a pintar con la caja desactivada; esa ejecución lo procesa. Como se saca de la sesión al
+# empezar, si algo corta la ejecución no se vuelve a lanzar (fallo 48), y la caja vuelve a estar activa.
+pendiente = st.session_state.pop("pendiente", None)
+nuevo = st.chat_input("Describe tu proyecto de DATA & AI", disabled=pendiente is not None)
+if nuevo and pendiente is None:
+    st.session_state.messages.append({"role": "user", "content": nuevo})
+    st.session_state.pendiente = nuevo
+    st.rerun()
+if pendiente is None:
     st.stop()
+prompt = pendiente
+print(f"\n\n1. -----User prompt: {prompt}-----\n\n")
 
-# ── User message ───────────────────────────────────────────────────────────────
-st.session_state.messages.append({"role": "user", "content": prompt})
-with st.chat_message("user"):
-    st.markdown(prompt)
-    print(f"\n\n1. -----User prompt: {prompt}-----\n\n")
+
+def avisar_en_el_chat(texto: str) -> None:
+    """Fallo 72: lo que ha decidido el agente de plataforma, en el chat, mientras siguen los agentes del informe."""
+    st.session_state.messages.append({"role": "assistant", "content": texto})
+    with st.chat_message("assistant"):
+        st.markdown(texto)
 
 # ── Agent execution ────────────────────────────────────────────────────────────
 # El spinner cubre toda la ejecución del grafo. Si este turno completa el
@@ -105,7 +122,8 @@ assistant_response = ""
 
 with st.spinner("Procesando..."):
     try:
-        raw_response = run_graph(prompt, chat_history=st.session_state.messages)
+        # Una copia del historial: el aviso del chat no forma parte de la conversación que leen los agentes
+        raw_response = run_graph(prompt, chat_history=list(st.session_state.messages), avisar=avisar_en_el_chat)
         response = raw_response if isinstance(raw_response, dict) else {"assistant_response": str(raw_response)}
         assistant_response = response.get("assistant_response", "")
         if response.get("completion_reached", False):
@@ -121,10 +139,8 @@ completion_reached = response.get("completion_reached", False)
 
 # ── Turno normal de discovery: mostrar respuesta en el chat ───────────────────
 if not completion_reached:
-    with st.chat_message("assistant"):
-        st.markdown(assistant_response)
     st.session_state.messages.append({"role": "assistant", "content": assistant_response})
-    st.stop()
+    st.rerun()  # fallo 72: vuelve a pintar la página con la respuesta y la caja de mensajes activa
 
 # ── Fase de solución: el informe ya está guardado en la sesión (guardar_informe); se muestra en la página ─
 st.rerun()  # vuelve a pintar la página, ya en el estado "completado", que muestra el informe

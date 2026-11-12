@@ -1,12 +1,14 @@
-"""Genera los ejemplos inventados para entrenar el modelo de decisión del estado de la respuesta (fallo 36).
+"""Genera los ejemplos inventados para entrenar el modelo de decisión de AIDM.
 
-Cada ejemplo es un turno del discovery: el campo por el que pregunta el asistente, su pregunta y la respuesta
-del cliente. La etiqueta dice qué hace la respuesta con ese campo:
+Tarea «estado» (fallos 36 y 68). Cada ejemplo es un turno del discovery: el campo por el que pregunta el asistente,
+su pregunta y la respuesta del cliente. La etiqueta dice qué hace la respuesta con ese campo:
     dato         da el dato, aunque sea aproximado o negativo («no tenemos», «ninguno», «solo Excel»)
     no_lo_sabe   dice que no lo sabe, sin dar ningún valor
     no_aplica    dice que ese tema no aplica a su proyecto o que no lo necesita
     no_responde  no contesta a lo preguntado: cambia de tema, da un dato de otro campo o lo deja para luego
+    vaga         habla del dato sin concretar nada («bastantes», «lo normal», «depende»): se vuelve a preguntar
 
+    
 Nada sale de clientes reales. Las respuestas de prueba (las listas *_PRUEBA) no aparecen en el entrenamiento,
 así que la prueba mide si el modelo generaliza a frases que no ha visto.
 
@@ -17,6 +19,8 @@ Unsloth (state, questions, gold).
 """
 import json
 import random
+import re
+
 import sys
 import unicodedata
 from collections import Counter
@@ -24,7 +28,9 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ))
-from decisiones import PREGUNTA_ESTADO, texto_estado  # noqa: E402  la misma pregunta y el mismo texto que AIDM
+from decisiones import (  # noqa: E402  las mismas preguntas y los mismos textos que AIDM
+    PREGUNTA_DESPLIEGUE, PREGUNTA_ESTADO, USOS_POR_LLAMADA, pregunta_uso, texto_despliegue, texto_estado, texto_uso,
+)
 
 SALIDA = RAIZ / "modelo_decision" / "datos"
 SEMILLA = 3407
@@ -36,7 +42,7 @@ SEMILLA = 3407
 # --------------------------------------------------------------------------------------------------------
 CAMPOS = {
     "nombre_del_cliente": {
-        "grupo": "empresa", "no_lo_sabe": False, "no_aplica": False,
+        "grupo": "empresa", "no_lo_sabe": False, "no_aplica": False, "vaga": False,
         "tema": ("el nombre de la empresa", "the company name"),
         "preguntas": {
             "es": ["¿Cómo se llama tu empresa?", "¿Para qué empresa sería el proyecto?",
@@ -81,7 +87,7 @@ CAMPOS = {
         },
     },
     "sector": {
-        "grupo": "empresa", "no_lo_sabe": False, "no_aplica": False,
+        "grupo": "empresa", "no_lo_sabe": False, "no_aplica": False, "vaga": False,
         "tema": ("el sector", "your industry"),
         "preguntas": {
             "es": ["¿A qué sector se dedica la empresa?", "¿En qué sector trabajáis?",
@@ -525,6 +531,59 @@ NO_RESPONDE_PRUEBA = {
            "Hmm, sigamos con otra cosa."],
     "en": ["Can I tell you later?", "What do other clients usually do?"],
 }
+# Fallo 68: respuestas vagas. Hablan del dato pero no dan nada con que estimar: ni cifra, ni rango, ni nombre.
+# Ojo: «Poca cosa, unos cuantos gigas» o «Lo normal, protección de datos» SÍ son datos (llevan una magnitud o un
+# nombre); por eso VAGO_ANTES pone a veces una de estas muletillas delante de un dato, que sigue siendo «dato».
+VAGA = {
+    "es": ["Bastante.", "Depende.", "Lo normal.", "Lo típico.", "Un poco de todo.", "Lo de siempre.", "Algo hay.",
+           "Más o menos lo habitual.", "Como cualquier empresa.", "De todo un poco.", "Pues lo normal, ¿no?",
+           "Lo estándar.", "Normalito.", "Ni mucho ni poco.", "Lo que tiene cualquiera.", "Pues depende un poco.",
+           "Lo habitual en {tema}.", "Lo normal en {tema}, nada raro.", "Pues lo típico, ya sabes."],
+    "en": ["Quite a lot.", "It depends.", "The usual.", "A bit of everything.", "Some.", "Like any company.",
+           "The standard stuff.", "Pretty normal, I'd say.", "The usual for {tema}."],
+}
+VAGA_PRUEBA = {
+    "es": ["Pues regular, como todos.", "Bueno, lo que viene siendo lo normal.", "Tirando a bastante.", "Uf, de todo.",
+           "Lo corriente."],
+    "en": ["Fairly standard, I guess.", "A fair amount.", "Nothing out of the ordinary."],
+}
+VAGAS_PROPIAS = {  # las de cada campo (solo entrenamiento)
+    "tamaño_empresa": {"es": ["Bastante gente.", "Somos unos cuantos."], "en": ["Quite a few people."]},
+    "tiene_equipo_datos": {"es": ["Algo hay, sí.", "Hay gente que toca datos.", "Más o menos."], "en": ["Sort of."]},
+    "tipo_de_servicio": {"es": ["Lo que haga falta.", "Lo que se suele hacer."], "en": ["Whatever's needed."]},
+    "objetivo_del_proyecto": {"es": ["Mejorar.", "Ser más eficientes, lo típico.", "Sacar más partido a los datos."],
+                              "en": ["Just to improve things."]},
+    "modelo_de_despliegue": {"es": ["Lo que se lleve ahora.", "Algo moderno."], "en": ["Whatever's modern."]},
+    "cloud_provider": {"es": ["Alguna tenemos.", "La de siempre.", "Una de las grandes."], "en": ["One of the big ones."]},
+    "tipo_de_arquitectura": {"es": ["Algo moderno.", "Algo que funcione.", "Lo que se usa ahora."],
+                             "en": ["Something that works."]},
+    "herramienta_de_visualizacion": {"es": ["La de siempre.", "Una de esas de gráficos.", "Alguna tenemos por ahí."],
+                                     "en": ["One of those charting tools."]},
+    "enfoque_ai": {"es": ["Lo que se lleva ahora.", "Algo de IA, lo típico.", "Que sea inteligente."],
+                   "en": ["Some AI, the usual."]},
+    "integration_scope": {"es": ["Varios sistemas.", "Unos cuantos.", "Lo que tenemos."], "en": ["A few systems."]},
+    "volumen_de_datos": {"es": ["Bastantes datos.", "Muchos.", "Un montón."], "en": ["Lots of data.", "Quite a bit."]},
+    "madurez_analitica_actual": {"es": ["Normalito.", "Regular.", "Como todo el mundo."], "en": ["Average, I guess."]},
+    "tamano_equipo_tecnico": {"es": ["Algunos.", "Gente hay.", "Los de siempre."], "en": ["Some people."]},
+    "stack_tecnologico_actual": {"es": ["Lo típico.", "Varios programas.", "Lo normal de una empresa."],
+                                 "en": ["The usual stuff."]},
+    "restriccion_presupuestaria": {"es": ["Lo razonable.", "No mucho.", "Ajustado."],
+                                   "en": ["Something reasonable.", "Not much."]},
+    "plazo_objetivo": {"es": ["Pronto.", "En breve.", "Más bien pronto."], "en": ["Soon.", "Fairly soon."]},
+    "regulacion_y_compliance": {"es": ["Lo de siempre.", "Las normales.", "Lo que toque."], "en": ["The usual ones."]},
+    "kpis_de_exito": {"es": ["Que funcione bien.", "Que se note.", "Mejorar en general."], "en": ["That it works."]},
+}
+VAGAS_PROPIAS_PRUEBA = {
+    "volumen_de_datos": {"es": ["Una barbaridad de datos."], "en": ["Tons."]},
+    "restriccion_presupuestaria": {"es": ["Lo que veamos sensato."], "en": []},
+    "plazo_objetivo": {"es": ["Para dentro de poco."], "en": []},
+    "tamano_equipo_tecnico": {"es": ["Algo de gente tenemos."], "en": []},
+}
+VAGO_ANTES = {  # muletilla vaga delante de un dato: sigue siendo un dato
+    "es": ["Lo normal: ", "Pues lo típico, ", "Bastante: ", "Un poco de todo: ", "Lo de siempre, "],
+    "en": ["The usual: ", "Quite a lot, "],
+}
+
 
 # Lo que se pone delante de la pregunta del asistente y de la respuesta del cliente, para variar.
 INICIO_PREGUNTA = {
@@ -580,6 +639,11 @@ def _respuestas(nombre: str, etiqueta: str, idioma: str, prueba: bool) -> list[s
         base = (NO_APLICA_PRUEBA if prueba else NO_APLICA)[idioma]
         propias = [] if prueba else campo.get("no_aplica_propio", {}).get(idioma, [])
         return [_con_tema(r, campo, idioma) for r in base] + propias
+    if etiqueta == "vaga":
+        base = (VAGA_PRUEBA if prueba else VAGA)[idioma]
+        propias = (VAGAS_PROPIAS_PRUEBA if prueba else VAGAS_PROPIAS).get(nombre, {}).get(idioma, [])
+        return [_con_tema(r, campo, idioma) for r in base] + propias
+
     # no_responde: frases que no contestan y, tantas como esas, datos de campos de otro grupo
     base = list((NO_RESPONDE_PRUEBA if prueba else NO_RESPONDE)[idioma])
     base += [] if prueba else campo.get("no_responde_propio", {}).get(idioma, [])
@@ -602,6 +666,9 @@ def _ejemplo(rng: random.Random, nombre: str, etiqueta: str, idioma: str, prueba
     respuesta = rng.choice(_respuestas(nombre, etiqueta, idioma, prueba))
     if etiqueta == "dato" and campo["grupo"] != "empresa" and rng.random() < 0.2:
         respuesta = rng.choice(DUDA[idioma]) + _minuscula_inicial(respuesta)
+    elif etiqueta == "dato" and campo.get("vaga", True) and rng.random() < 0.1:
+        # fallo 68: «Lo normal: Power BI» lleva el dato aunque empiece vago
+        respuesta = rng.choice(VAGO_ANTES[idioma]) + _minuscula_inicial(respuesta)    
     elif etiqueta == "dato" and rng.random() < 0.1:
         # un dato con otro dato detrás sigue siendo un dato del campo preguntado
         respuesta += " " + rng.choice(_datos_de_otros(nombre, idioma, prueba))
@@ -614,19 +681,21 @@ def _ejemplo(rng: random.Random, nombre: str, etiqueta: str, idioma: str, prueba
         "state": texto_estado(nombre, descripciones[nombre], pregunta, respuesta),
         "questions": {"estado": PREGUNTA_ESTADO},
         "gold": {"estado": etiqueta},
+        "tarea": "estado",
         "campo": nombre,
         "idioma": idioma,
     }
 
 
 # Ejemplos por campo y etiqueta (entrenamiento, prueba). El español pesa más: es el idioma de casi todos los clientes.
-CUANTOS = {"dato": (40, 4), "no_lo_sabe": (26, 3), "no_aplica": (24, 3), "no_responde": (30, 3)}
+CUANTOS = {"dato": (40, 4), "no_lo_sabe": (26, 3), "no_aplica": (24, 3), "no_responde": (30, 3), "vaga": (24, 3)}
 PARTE_EN_INGLES = 0.25
 
 
 def _etiquetas(campo: dict) -> list[str]:
-    """dato y no_responde valen para todos los campos; no_lo_sabe y no_aplica, solo donde tienen sentido."""
-    return [e for e in CUANTOS if e in ("dato", "no_responde") or campo[e]]
+    """dato y no_responde valen para todos los campos; no_lo_sabe y no_aplica, solo donde tienen sentido; vaga, en
+    todos salvo el nombre y el sector."""
+    return [e for e in CUANTOS if e in ("dato", "no_responde") or campo.get(e, e == "vaga")]
 
 
 def generar(prueba: bool, descripciones: dict, rng: random.Random) -> list[dict]:
@@ -648,6 +717,289 @@ def generar(prueba: bool, descripciones: dict, rng: random.Random) -> list[dict]
     rng.shuffle(filas)
     return filas
 
+# --------------------------------------------------------------------------------------------------------
+# Tarea «uso» (fallo 69): qué dice el cliente de cada herramienta o nube que nombra en un campo del caso. El estado
+# es el texto del campo (como lo guarda el discovery: a menudo en tercera persona) y hay una pregunta por
+# herramienta (uso_1, uso_2…), con su nombre tal como sale en el texto. Las plantillas *_PRUEBA no se entrenan.
+# --------------------------------------------------------------------------------------------------------
+HERRAMIENTAS = ["Power BI", "Microsoft 365", "Excel", "SharePoint", "Teams", "Dynamics 365", "Office 365", "Azure",
+                "AWS", "Google Cloud", "Oracle Cloud", "IBM Cloud", "Databricks", "SAP", "S/4HANA", "Oracle Database",
+                "JD Edwards", "AS/400", "Db2", "Cognos", "Google Workspace", "BigQuery", "Looker", "Synapse",
+                "Redshift", "S3", "Tableau", "Qlik", "Snowflake", "Salesforce", "Odoo", "SQL Server", "Navision",
+                "HubSpot", "MySQL", "Microsoft Fabric", "Azure Data Factory", "SageMaker", "NetSuite", "Mainframe"]
+CAMPOS_USO = ["stack_tecnologico_actual", "cloud_provider", "herramienta_de_visualizacion", "madurez_analitica_actual",
+              "tamano_equipo_tecnico", "evidencias"]
+USO = {
+    "la_usa": {
+        "es": ["usamos {h}", "usan {h}", "tenemos {h}", "tienen {h}", "trabajamos con {h}", "trabajan con {h}",
+               "todo está en {h}", "en finanzas usan {h}", "{h} para los informes", "algo de {h}", "estamos con {h}",
+               "tienen licencias de {h}", "el ERP va sobre {h}", "los datos están en {h}", "{h} en toda la empresa",
+               "usan {h} aunque poco", "IT conoce {h}"],
+        "en": ["we use {h}", "they use {h}", "we have {h}", "we're on {h}", "{h} for reporting",
+               "everything runs on {h}", "some {h}"],
+    },
+    "quiere_usarla": {
+        "es": ["queremos empezar con {h}", "nos gustaría usar {h}", "preferimos {h} para esto", "estamos pensando en {h}",
+               "quieren probar {h}", "les interesa {h}", "la idea es pasar a {h}", "preferirían {h}",
+               "quieren montarlo en {h}"],
+        "en": ["we'd like to use {h}", "we're thinking about {h}", "we'd prefer {h}", "they want to try {h}"],
+    },
+    "no_la_usa": {
+        "es": ["no usamos {h}", "no usan {h}", "no tenemos {h}", "no tienen {h}", "nada de {h}", "{h} no lo usamos",
+               "sin {h}", "no tienen licencias de {h}", "{h} no, nunca lo han usado", "no quieren {h}",
+               "nunca hemos tenido {h}", "{h} no lo conocen"],
+        "en": ["we don't use {h}", "they don't have {h}", "no {h}", "we've never used {h}", "we don't want {h}",
+               "without {h}"],
+    },
+    "la_deja": {
+        "es": ["dejamos {h} el año pasado", "antes usábamos {h}", "estamos saliendo de {h}", "vamos a dejar {h}",
+               "tenían {h} pero lo quitaron", "están migrando desde {h}", "{h} lo van a sustituir",
+               "{h}, hasta el año pasado", "abandonaron {h}", "dejaron {h} en 2025"],
+        "en": ["we used to use {h}", "we're moving away from {h}", "they dropped {h} last year",
+               "we're replacing {h}", "{h} until last year"],
+    },
+}
+USO_PRUEBA = {
+    "la_usa": {"es": ["tiramos de {h} para casi todo", "el equipo se apaña con {h}"], "en": ["we rely on {h}"]},
+    "quiere_usarla": {"es": ["nos han recomendado {h} y queremos verlo"], "en": ["we're keen on {h}"]},
+    "no_la_usa": {"es": ["de {h}, nada", "{h} ni lo hemos probado"], "en": ["{h}? not at all"]},
+    "la_deja": {"es": ["{h} lo jubilamos en marzo", "nos estamos quitando de {h}"], "en": ["we're phasing out {h}"]},
+}
+PARES = {  # dos herramientas con la misma relación en una frase: «no usan Power BI ni Microsoft 365»
+    "la_usa": {"es": ["usan {h1} y {h2}", "tenemos {h1} y {h2}"], "en": ["we use {h1} and {h2}"]},
+    "no_la_usa": {"es": ["no usan {h1} ni {h2}", "ni {h1} ni {h2}", "no tenemos ni {h1} ni {h2}",
+                         "nada de {h1} ni de {h2}"],
+                  "en": ["we don't use {h1} or {h2}", "neither {h1} nor {h2}"]},
+    "la_deja": {"es": ["dejaron {h1} y {h2}"], "en": ["we dropped {h1} and {h2}"]},
+}
+PARES_PRUEBA = {"no_la_usa": {"es": ["ni rastro de {h1} ni de {h2}"], "en": ["no {h1}, no {h2}"]},
+                "la_usa": {"es": ["se apañan con {h1} y {h2}"], "en": []}, "la_deja": {"es": [], "en": []}}
+NEUTRAS = {"es": ["ERP propio", "algo de Python", "un CRM hecho a medida", "todo a mano en los almacenes"],
+           "en": ["a custom ERP", "some Python", "a home-grown CRM"]}
+UNIONES = {"es": ["; ", ", ", ". ", " y ", ", pero "], "en": ["; ", ", ", ". ", " and ", ", but "]}
+CUANTOS_USO = (1000, 100)  # filas de entrenamiento y de prueba
+
+
+def _clausula(rng: random.Random, idioma: str, prueba: bool, libres: list[str]) -> tuple[str, dict[str, str]]:
+    """Una frase con una herramienta (o dos, con la misma relación) y lo que dice de cada una."""
+    relacion = rng.choice(list(USO))
+    pares = (PARES_PRUEBA if prueba else PARES).get(relacion, {}).get(idioma, [])
+    if pares and len(libres) >= 2 and rng.random() < 0.3:
+        h1, h2 = libres.pop(), libres.pop()
+        return rng.choice(pares).format(h1=h1, h2=h2), {h1: relacion, h2: relacion}
+    plantillas = (USO_PRUEBA if prueba else USO)[relacion][idioma] or USO[relacion][idioma]
+    h = libres.pop()
+    return rng.choice(plantillas).format(h=h), {h: relacion}
+
+
+def _ejemplo_uso(rng: random.Random, idioma: str, prueba: bool) -> dict | None:
+    libres = rng.sample(HERRAMIENTAS, k=4)
+    frases, etiquetas = [], {}
+    for _ in range(rng.choice([1, 1, 2, 2, 3])):
+        if len(etiquetas) >= USOS_POR_LLAMADA - 1 or not libres:
+            break
+        frase, nuevas = _clausula(rng, idioma, prueba, libres)
+        frases.append(frase)
+        etiquetas.update(nuevas)
+    if rng.random() < 0.3:
+        frases.insert(rng.randrange(len(frases) + 1), rng.choice(NEUTRAS[idioma]))
+    texto = frases[0]
+    for frase in frases[1:]:
+        texto += rng.choice(UNIONES[idioma]) + frase
+    texto = texto[:1].upper() + texto[1:] + ("." if rng.random() < 0.6 else "")
+    texto = _escrita_a_mano(rng, texto)
+    nombres = list(etiquetas)
+    rng.shuffle(nombres)  # en AIDM el orden es el del yaml, no el del texto
+    preguntas, gold = {}, {}
+    for i, h in enumerate(nombres, 1):
+        m = re.search(re.escape(h), texto, re.IGNORECASE)
+        if not m:
+            return None
+        preguntas[f"uso_{i}"] = pregunta_uso(m.group(0))  # el nombre como sale en el texto (a veces en minúsculas)
+        gold[f"uso_{i}"] = etiquetas[h]
+    campo = rng.choice(CAMPOS_USO)
+    return {"state": texto_uso(campo, texto), "questions": preguntas, "gold": gold, "tarea": "uso",
+            "campo": campo, "idioma": idioma}
+
+
+def generar_usos(prueba: bool, rng: random.Random) -> list[dict]:
+    filas, vistos = [], set()
+    objetivo = CUANTOS_USO[1 if prueba else 0]
+    while len(filas) < objetivo:
+        fila = _ejemplo_uso(rng, "en" if rng.random() < PARTE_EN_INGLES else "es", prueba)
+        if fila and fila["state"] not in vistos:
+            vistos.add(fila["state"])
+            filas.append(fila)
+    return filas
+
+# --------------------------------------------------------------------------------------------------------
+# Tarea «despliegue» (fallo 70): qué modelo de despliegue conviene al cliente con lo que ha contado. Cada ejemplo es
+# un caso inventado hecho de hechos sueltos (cada uno en su campo); la etiqueta la pone la regla de Inetum en
+# despliegue_correcto(). Para cambiar el criterio, se cambia esa función y se vuelve a entrenar.
+# --------------------------------------------------------------------------------------------------------
+HECHOS = {  # tipo de hecho: (campos donde puede ir, {"es": [...], "en": [...]}, {"es": [...], "en": [...]} de prueba)
+    "prohibe_todo": (("regulacion_y_compliance", "evidencias"), {
+        "es": ["Por contrato con Defensa, ningún dato puede salir de nuestras instalaciones.",
+               "Normativa interna: los datos no pueden salir de nuestro CPD bajo ningún concepto.",
+               "Datos clasificados: todo tiene que quedarse en casa.",
+               "El cliente final nos prohíbe guardar sus datos fuera de nuestros servidores.",
+               "La dirección no quiere ni un dato fuera de la empresa, nada en la nube.",
+               "Los datos de los pacientes no pueden salir del hospital, y aquí todo son datos de pacientes."],
+        "en": ["Under our defence contract, no data may leave our premises.",
+               "Nothing can go to the cloud: it's classified data.",
+               "Our client forbids storing their data outside our data centre."]},
+        {"es": ["Ni un byte fuera de nuestras instalaciones: lo exige el contrato con el ministerio.",
+                "Todo lo que manejamos es confidencial y tiene que quedarse dentro."],
+         "en": ["Every record must stay on-site, contractually."]}),
+    "parte_sensible": (("regulacion_y_compliance", "evidencias"), {
+        "es": ["Las nóminas tienen que quedarse en local; el resto da igual.",
+               "Los historiales clínicos se quedan en el hospital, pero los datos de gestión pueden ir fuera.",
+               "Los datos de I+D no pueden salir; las ventas y el marketing, sí.",
+               "Los datos personales de clientes no queremos sacarlos; lo demás, sí.",
+               "Los planos de los productos se quedan en nuestros servidores, el resto no importa."],
+        "en": ["Payroll must stay on-site; the rest can go anywhere.",
+               "Patient records stay in the hospital, but operational data can go to the cloud."]},
+        {"es": ["Lo de recursos humanos se queda aquí; para lo demás no hay problema."],
+         "en": ["R&D data stays in-house, everything else is fine."]}),
+    "no_se_mueve": (("stack_tecnologico_actual", "integration_scope", "evidencias"), {
+        "es": ["El ERP corre en un AS/400 que no se puede tocar.", "La facturación está en un mainframe que no vamos a mover.",
+               "Los SCADA de la planta no pueden ir a la nube.", "Un SAP en nuestros servidores con contrato hasta 2030.",
+               "La aplicación de producción es antigua y solo funciona en nuestros servidores."],
+        "en": ["Our ERP runs on an AS/400 we can't touch.", "Billing is on a mainframe that isn't moving."]},
+        {"es": ["El sistema de almacén es de los 90 y no hay forma de migrarlo."],
+         "en": ["The plant control system can't be moved."]}),
+    "planta": (("evidencias", "volumen_de_datos", "integration_scope"), {
+        "es": ["Las máquinas de la planta necesitan respuesta en milisegundos.",
+               "Los sensores de la línea paran la máquina si algo falla, y eso no puede depender de internet.",
+               "En la mina la conexión es muy mala.", "Los barcos pasan semanas sin conexión.",
+               "La planta está en una zona sin fibra."],
+        "en": ["The plant machines need millisecond responses.", "Our ships go weeks without a connection."]},
+        {"es": ["En las granjas apenas hay cobertura."], "en": ["The factory floor can't rely on the internet."]}),
+    "servidores_nuevos": (("stack_tecnologico_actual", "evidencias"), {
+        "es": ["Renovamos los servidores del CPD el año pasado.", "Acabamos de comprar servidores nuevos para el CPD.",
+               "Hemos invertido mucho en el CPD en 2025."],
+        "en": ["We refreshed our data centre servers last year.", "We just bought new servers."]},
+        {"es": ["El CPD lo estrenamos hace seis meses."], "en": ["Our server room is brand new."]}),
+    # señales de nube: no hay nada que obligue a quedarse en sus servidores
+    "servidores_viejos": (("stack_tecnologico_actual", "evidencias"), {
+        "es": ["Tenemos un par de servidores viejos en la oficina que queremos jubilar.",
+               "El servidor del ERP tiene 10 años y hay que cambiarlo.",
+               "El CPD se nos queda pequeño y no queremos invertir más en él."],
+        "en": ["We have two old servers we want to retire.", "Our server room is end-of-life."]},
+        {"es": ["Los servidores están para tirarlos."], "en": ["Our hardware is ancient and due for replacement."]}),
+    "saas": (("stack_tecnologico_actual",), {
+        "es": ["Todo es SaaS: Microsoft 365, Salesforce y Holded.", "No tenemos servidores, todo está en la nube.",
+               "Google Workspace y HubSpot, nada instalado.", "Odoo en la nube y Microsoft 365."],
+        "en": ["Everything is SaaS: Microsoft 365 and Salesforce.", "We don't have any servers, it's all cloud."]},
+        {"es": ["Ni un servidor: todo son aplicaciones web."], "en": ["All our tools are online services."]}),
+    "nube": (("cloud_provider",), {
+        "es": ["Azure.", "AWS, con casi todo allí.", "Google Cloud.", "Tenemos casi todo en Azure.", "AWS desde hace años.",
+               "Azure como prioridad, con un módulo en AWS que no quieren migrar.",
+               "Google Cloud, y una parte en AWS que se queda como está."],
+        "en": ["Azure.", "Mostly AWS.", "Google Cloud.", "Azure first, with an AWS module that stays as it is."]},
+        {"es": ["Estamos en Azure desde 2022.", "Casi todo en Azure; lo de los sensores sigue en AWS."],
+         "en": ["We've been on AWS for years."]}),
+    "sin_sistemas": (("tamano_equipo_tecnico",), {
+        "es": ["Nadie de sistemas; un proveedor nos lleva el correo.", "Solo el responsable de IT, que no da abasto.",
+               "No hay nadie que pueda mantener servidores."],
+        "en": ["Nobody in IT, an external provider handles email."]},
+        {"es": ["Una persona de IT a media jornada."], "en": ["Just a part-time IT person."]}),
+    "pide_nube": (("modelo_de_despliegue",), {
+        "es": ["En la nube.", "Preferimos cloud.", "Todo en cloud.", "Queremos ir a la nube."],
+        "en": ["Cloud.", "We'd prefer cloud."]},
+        {"es": ["Que sea en la nube."], "en": ["Cloud, please."]}),
+    # neutros: por sí solos no deciden nada (una preferencia sin motivo tampoco: decide Inetum)
+    "pide_local": (("modelo_de_despliegue",), {
+        "es": ["On-premises.", "Preferimos nuestros servidores.", "En local."], "en": ["On-premises."]},
+        {"es": ["En casa, mejor."], "en": ["On our own kit."]}),
+    "pide_hibrido": (("modelo_de_despliegue",), {"es": ["Híbrido.", "Una mezcla."], "en": ["Hybrid."]},
+                     {"es": ["Mitad y mitad."], "en": ["A mix."]}),
+    "le_da_igual": (("modelo_de_despliegue",), {"es": ["Nos da igual.", "Lo que recomendéis."], "en": ["We don't mind."]},
+                    {"es": ["Lo que veáis."], "en": ["Up to you."]}),
+    "no_lo_sabe": (("modelo_de_despliegue", "cloud_provider", "volumen_de_datos"), {
+        "es": ["Confirmado por el usuario: no lo sabe"], "en": ["Confirmado por el usuario: no lo sabe"]},
+        {"es": ["Confirmado por el usuario: no lo sabe"], "en": ["Confirmado por el usuario: no lo sabe"]}),
+    "normativa": (("regulacion_y_compliance",), {
+        "es": ["RGPD, tenemos datos de clientes.", "ISO 27001.", "Nada especial más allá del RGPD.",
+               "ENS, trabajamos con la administración."], "en": ["GDPR.", "ISO 27001."]},
+        {"es": ["Lo normal, protección de datos."], "en": ["GDPR, nothing else."]}),
+    "con_sistemas": (("tamano_equipo_tecnico",), {
+        "es": ["Tres de sistemas que llevan los servidores.", "IT son 8 personas."], "en": ["Five people in IT."]},
+        {"es": ["Un equipo de sistemas de cuatro personas."], "en": ["Our IT team is six people."]}),
+    "sector": (("sector",), {
+        "es": ["Logística.", "Hospital privado.", "Fabricación de piezas de automoción.", "Retail.", "Banca."],
+        "en": ["Logistics.", "Retail.", "Manufacturing."]},
+        {"es": ["Una cadena de gimnasios."], "en": ["Insurance."]}),
+    "volumen": (("volumen_de_datos",), {
+        "es": ["Unos 2 TB.", "Unos 50.000 pedidos al mes.", "Pocos datos."], "en": ["About 2 TB."]},
+        {"es": ["Unos 300 GB."], "en": ["Roughly 1 TB."]}),
+    "fuentes": (("integration_scope",), {"es": ["El ERP y el CRM.", "SAP y unos Excel."], "en": ["ERP and CRM."]},
+                {"es": ["La web y el ERP."], "en": ["Salesforce and the ERP."]}),
+}
+OBLIGAN_A_LOCAL = {"parte_sensible", "no_se_mueve", "planta", "servidores_nuevos"}
+SENALES_DE_NUBE = {"servidores_viejos", "saas", "nube", "sin_sistemas", "pide_nube"}
+NEUTROS = {"pide_local", "pide_hibrido", "le_da_igual", "no_lo_sabe", "normativa", "con_sistemas", "sector", "volumen",
+           "fuentes"}
+CUANTOS_DESPLIEGUE = (200, 25)  # por opción: entrenamiento y prueba
+
+
+def despliegue_correcto(tipos: set[str]) -> str:
+    """La regla de Inetum (fallo 70): manda lo que obliga, no lo que el cliente dice preferir.
+    1. Si una norma, un contrato o el cliente prohíben que salga ningún dato: on-premises.
+    2. Si una parte no puede salir o moverse (datos sensibles, sistemas antiguos, planta, servidores nuevos): híbrido.
+    3. Si hay alguna señal de nube (ya usa la nube o SaaS, servidores viejos, nadie que los mantenga, pide nube): cloud.
+    4. Si solo hay datos que no deciden (sector, volumen, normativa general, una preferencia sin motivo): sin_datos."""
+    if "prohibe_todo" in tipos:
+        return "on_premises"
+    if tipos & OBLIGAN_A_LOCAL:
+        return "hibrido"
+    if tipos & SENALES_DE_NUBE:
+        return "cloud"
+    return "sin_datos"
+
+
+def _tipos_para(rng: random.Random, opcion: str) -> set[str]:
+    """Hechos al azar que, con la regla, dan esa opción."""
+    neutros = set(rng.sample(sorted(NEUTROS), k=rng.randint(0 if opcion != "sin_datos" else 1, 3)))
+    if opcion == "on_premises":
+        extra = set(rng.sample(sorted(OBLIGAN_A_LOCAL | {"con_sistemas", "pide_local"}), k=rng.randint(0, 2)))
+        return {"prohibe_todo"} | extra | neutros
+    if opcion == "hibrido":
+        locales = set(rng.sample(sorted(OBLIGAN_A_LOCAL), k=rng.randint(1, 2)))
+        return locales | set(rng.sample(sorted(SENALES_DE_NUBE), k=rng.randint(0, 2))) | neutros
+    if opcion == "cloud":
+        return set(rng.sample(sorted(SENALES_DE_NUBE), k=rng.randint(1, 2))) | neutros
+    return neutros
+
+
+def _ejemplo_despliegue(rng: random.Random, opcion: str, idioma: str, prueba: bool) -> dict:
+    tipos = _tipos_para(rng, opcion)
+    datos: dict[str, list[str]] = {}
+    for tipo in sorted(tipos):
+        campos, frases, frases_prueba = HECHOS[tipo]
+        lista = (frases_prueba if prueba else frases)[idioma] or frases[idioma]
+        datos.setdefault(rng.choice(campos), []).append(rng.choice(lista))
+    juntos = {campo: (" | " if campo == "evidencias" else "; ").join(frases) for campo, frases in datos.items()}
+    assert despliegue_correcto(tipos) == opcion, (tipos, opcion)
+    return {"state": texto_despliegue(juntos), "questions": {"despliegue": PREGUNTA_DESPLIEGUE},
+            "gold": {"despliegue": opcion}, "tarea": "despliegue", "campo": "", "idioma": idioma}
+
+
+def generar_despliegues(prueba: bool, rng: random.Random, excluir: set[str] = frozenset()) -> list[dict]:
+    """Con excluir (los estados del entrenamiento), la prueba no repite ningún caso: con pocos hechos neutros,
+    dos casos pueden salir iguales."""
+    filas, vistos = [], set(excluir)
+    for opcion in PREGUNTA_DESPLIEGUE["criteria"]:
+        hechos, intentos = 0, 0
+        while hechos < CUANTOS_DESPLIEGUE[1 if prueba else 0] and intentos < 5000:
+            intentos += 1
+            fila = _ejemplo_despliegue(rng, opcion, "en" if rng.random() < PARTE_EN_INGLES else "es", prueba)
+            if fila["state"] not in vistos:
+                vistos.add(fila["state"])
+                filas.append(fila)
+                hechos += 1
+    return filas
+
 
 def main() -> None:
     plantilla = json.loads((RAIZ / "data_structures" / "problem_case_recovery.json").read_text(encoding="utf-8"))
@@ -659,6 +1011,13 @@ def main() -> None:
     rng = random.Random(SEMILLA)
     entrenamiento = generar(False, descripciones, rng)
     prueba = generar(True, descripciones, rng)
+    entrenamiento += generar_usos(False, rng)  # fallo 69
+    prueba += generar_usos(True, rng)
+    entrenamiento += generar_despliegues(False, rng)  # fallo 70
+    prueba += generar_despliegues(True, rng, {f["state"] for f in entrenamiento if f["tarea"] == "despliegue"})
+    rng.shuffle(entrenamiento)
+    rng.shuffle(prueba)
+
     solapadas = {f["state"] for f in entrenamiento} & {f["state"] for f in prueba}
     if solapadas:
         raise SystemExit(f"{len(solapadas)} ejemplos de prueba están también en el entrenamiento")
@@ -668,10 +1027,12 @@ def main() -> None:
         with open(SALIDA / f"{nombre}.jsonl", "w", encoding="utf-8") as f:
             for fila in filas:
                 f.write(json.dumps(fila, ensure_ascii=False) + "\n")
-        reparto = Counter(fila["gold"]["estado"] for fila in filas)
         idiomas = Counter(fila["idioma"] for fila in filas)
-        print(f"{nombre}: {len(filas)} ejemplos · " + ", ".join(f"{k} {v}" for k, v in sorted(reparto.items()))
-              + f" · es {idiomas['es']}, en {idiomas['en']}")
+        print(f"{nombre}: {len(filas)} ejemplos (es {idiomas['es']}, en {idiomas['en']})")
+        for tarea in sorted({fila["tarea"] for fila in filas}):
+            # una fila puede llevar varias preguntas (uso_1, uso_2…): se cuentan las respuestas, no las filas
+            reparto = Counter(v for fila in filas if fila["tarea"] == tarea for v in fila["gold"].values())
+            print(f"  {tarea}: " + ", ".join(f"{k} {v}" for k, v in sorted(reparto.items())))
 
 
 if __name__ == "__main__":

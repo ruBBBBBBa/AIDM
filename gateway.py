@@ -25,6 +25,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# Fallo 66: nada de red al arrancar ni en cada ejecución. Van antes de importar LiteLLM y CrewAI, que los leen al cargarse.
+# LiteLLM bajaba de GitHub su tabla de modelos en cada arranque (hasta 5 s, más con el proxy de la empresa); la que trae
+# instalada tiene todos los del yaml. CrewAI mandaba sus trazas a telemetry.crewai.com en cada crew.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+
 import litellm
 import yaml
 from crewai import LLM
