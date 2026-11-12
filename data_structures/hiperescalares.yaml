@@ -38,7 +38,10 @@ existente:
   nombres_de_nube: [azure, aws, amazon web services, gcp, google cloud, oci, oracle cloud, ibm cloud]  # no son servicios
   mantener: [no quieren migrar, no queremos migrar, no quiere migrar, no migrar, sin migrar, no quieren dejar,
              no queremos dejar, no tocar, no lo toqu, sin tocar, mantener, mantenerlo, se queda, se quedan, seguir con,
-             no rehacer, ni rehacer, keep, stays, stay as, not migrate, don't want to migrate, leave it]
+             no rehacer, ni rehacer, keep, stays, stay as, not migrate, don't want to migrate, leave it,
+             # fallo 77: el discovery reescribe lo que dice el cliente («no tocarlo» → «que no se tocará»)
+             no se toca, no se modific, sin modificar, no modificar, tal cual, intact, sin cambios,
+             as is, untouched]
   migrar: [migrarlo todo, migrar todo, migrarlo a, pasar todo, pasarlo todo, pasarlo a, llevar todo, llevarlo todo,
            llevarlo a, unificar, consolidar, todo en una, migrando desde, migrar desde, salir de, saliendo de,
            move everything, migrate everything, consolidate, moving away from, move it to]
