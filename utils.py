@@ -564,6 +564,20 @@ def sin_emojis(texto: str) -> str:
     texto = _VARIANTE.sub("", _TECLA.sub(r"\1.", (texto or "").translate(_MARCAS)))
     return _EMOJI.sub("", texto)
 
+# Fallo 80: a veces un modelo mete una palabra en otro alfabeto: «paneles limpios, con filtros intuitivos,少量 de
+# gráficos» (Mistral Large 4, sección de BI, 12 nov). Si son pocos caracteres, se quitan; si el texto está escrito en
+# ese alfabeto (más de 20 caracteres y más del 2 % del texto), se queda como está.
+_OTRO_ALFABETO = re.compile("[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]+")
+
+
+def sin_otros_alfabetos(texto: str) -> str:
+    """El texto sin las palabras sueltas en chino, japonés o coreano que se le escapan a un modelo (fallo 80)."""
+    ajenos = sum(len(m.group()) for m in _OTRO_ALFABETO.finditer(texto or ""))
+    if not ajenos or (ajenos > 20 and ajenos > 0.02 * len(texto)):
+        return texto
+    logger.warning("Se quitan %d caracteres de otro alfabeto que ha escrito el modelo", ajenos)
+    return _OTRO_ALFABETO.sub("", texto)
+
 # Fallo 66: la fuente del informe (Space Mono) va dentro del propio HTML, desde assets/fonts/, en vez de pedirla a
 # Google Fonts cada vez que se abre: el informe se ve igual sin conexión y no avisa a Google de quién lo abre.
 FUENTES = Path("assets/fonts")
@@ -584,7 +598,7 @@ def fuentes_locales(html: str) -> str:
     return html.replace("</head>", f"<style>{caras}</style>\n</head>", 1)
 
 def md_to_html(text: str) -> str:
-    text = sin_emojis(text)
+    text = sin_otros_alfabetos(sin_emojis(text))
     if not text or not text.strip():
         return "<p>No se ha generado contenido.</p>"
     tokens = _MD.parse(text)
