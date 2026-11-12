@@ -23,6 +23,13 @@ logger = logging.getLogger("aidm")
 # modelo y no se le vuelve a llamar hasta pasada la pausa, para no frenar cada turno del discovery.
 TIEMPO_MAXIMO = 30  # s
 PAUSA_TRAS_FALLO = 300  # s
+# Fallo 76: en el portátil va a 25–55 tokens por segundo según la carga (el 12 nov, grabando la pantalla, 11–23 s por
+# respuesta del discovery). Las preguntas de la plataforma son más largas (la de despliegue llevó 795 tokens y tardó
+# 30,2 s), y ahí unos segundos más no se notan: el informe tarda minutos.
+TIEMPO_PLATAFORMA = 90  # s
+# Fallo 76: en el discovery solo se le pregunta por respuestas cortas. Una larga casi nunca es «no lo sé» ni vaga, y
+# esperar al modelo hacía que cada turno tardara lo que él (11–23 s) y no lo que el LLM (3–8 s).
+LARGO_MAXIMO_RESPUESTA = 300  # caracteres
 CONFIANZA_MINIMA = 0.7
 _sin_respuesta_hasta = 0.0
 
@@ -105,8 +112,8 @@ def texto_estado(campo: str, descripcion: str, pregunta: str, respuesta: str) ->
     )
 
 
-def decidir(estado: str, preguntas: dict) -> dict | None:
-    """Las respuestas del modelo ({nombre: respuesta}) o None si no está configurado o no responde."""
+def decidir(estado: str, preguntas: dict, tiempo: float = TIEMPO_MAXIMO) -> dict | None:
+    """Las respuestas del modelo ({nombre: respuesta}) o None si no está configurado o no responde a tiempo."""
     global _sin_respuesta_hasta
     url = os.getenv("AIDM_DECISION_URL", "").strip().rstrip("/")
     if not url or time.monotonic() < _sin_respuesta_hasta:
@@ -120,10 +127,15 @@ def decidir(estado: str, preguntas: dict) -> dict | None:
             f"{url}/v1/systemone",
             json={"state": estado, "questions": preguntas},
             headers=cabeceras,
-            timeout=httpx.Timeout(TIEMPO_MAXIMO, connect=10),
+            timeout=httpx.Timeout(tiempo, connect=10),
         )
         respuesta.raise_for_status()
         respuestas = respuesta.json().get("answers")
+    except httpx.ReadTimeout:
+        # Fallo 76: está en marcha pero va lento; esta vez se sigue sin él, sin apagarlo. El 12 nov, la pausa de 5 min
+        # tras un timeout dejó a la plataforma sin el modelo (sin modelo de despliegue en el informe)
+        logger.warning("[decisiones] El modelo de decisión ha tardado más de %.0f s; esta vez se sigue sin él", tiempo)
+        return None
     except Exception as exc:
         # Ni el estado ni la respuesta van al log: llevan datos del cliente.
         _sin_respuesta_hasta = time.monotonic() + PAUSA_TRAS_FALLO
@@ -161,7 +173,7 @@ def despliegue_recomendado(datos: dict[str, str]) -> tuple[str, float] | None:
     """Fallo 70: ('cloud' | 'hibrido' | 'on_premises' | 'sin_datos', confianza) con los datos del cliente
     ({campo: texto}), o None si el modelo no está disponible."""
     inicio = time.monotonic()
-    respuestas = decidir(texto_despliegue(datos), {"despliegue": PREGUNTA_DESPLIEGUE})
+    respuestas = decidir(texto_despliegue(datos), {"despliegue": PREGUNTA_DESPLIEGUE}, tiempo=TIEMPO_PLATAFORMA)
     resultado = _eleccion((respuestas or {}).get("despliegue"), PREGUNTA_DESPLIEGUE["criteria"])
     if resultado:
         print(f"[decisiones] despliegue · {resultado[0]} ({resultado[1]:.2f}) · {time.monotonic() - inicio:.1f} s")
@@ -176,7 +188,7 @@ def usos(campo: str, texto: str, nombres: list[str]) -> dict[str, tuple[str, flo
         grupo = nombres[desde:desde + USOS_POR_LLAMADA]
         preguntas = {f"uso_{i}": pregunta_uso(nombre) for i, nombre in enumerate(grupo, 1)}
         inicio = time.monotonic()
-        respuestas = decidir(texto_uso(campo, texto), preguntas)
+        respuestas = decidir(texto_uso(campo, texto), preguntas, tiempo=TIEMPO_PLATAFORMA)
         if respuestas is None:
             return None
         for clave, nombre in zip(preguntas, grupo):

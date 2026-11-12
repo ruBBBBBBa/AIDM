@@ -49,7 +49,7 @@ def caso(**campos) -> dict:
 def simular(opcion, confianza=0.9):
     llamadas = []
 
-    def decidir(estado, preguntas):
+    def decidir(estado, preguntas, tiempo=None):  # fallo 76: la plataforma pasa su tope de tiempo
         llamadas.append((estado, preguntas))
         if opcion is None:
             return None

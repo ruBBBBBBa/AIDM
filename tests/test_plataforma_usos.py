@@ -37,7 +37,7 @@ def simular(respuestas: dict[str, tuple[str, float]] | None):
     """El modelo contesta a cada herramienta por su nombre; guarda lo que se le pregunta."""
     llamadas = []
 
-    def decidir(estado, preguntas):
+    def decidir(estado, preguntas, tiempo=None):  # fallo 76: la plataforma pasa su tope de tiempo
         llamadas.append((estado, {k: v["instructions"] for k, v in preguntas.items()}))
         if respuestas is None:
             return None
