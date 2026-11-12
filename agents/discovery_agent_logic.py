@@ -134,11 +134,74 @@ _CIFRA = re.compile(r"\d+(?:[.,]\d+)*")
 _ENUMERACION = re.compile(r"\(\d{1,2}\)|(?:^|(?<=\s))\d{1,2}[.)](?=\s)")  # (1)  1.  2)
 _TODO = re.compile(r"\b100\s?%")  # «100 %» es otra forma de decir «todo»
 
+
+# Interpretación conservadora de números escritos en español para el filtro antifabricación.
+# Solo valida equivalencias numéricas: no cambia el texto guardado en los campos.
+_UNIDADES_ES = {
+    "cero": 0, "un": 1, "uno": 1, "una": 1, "dos": 2, "tres": 3,
+    "cuatro": 4, "cinco": 5, "seis": 6, "siete": 7, "ocho": 8,
+    "nueve": 9, "diez": 10, "once": 11, "doce": 12, "trece": 13,
+    "catorce": 14, "quince": 15, "dieciseis": 16, "diecisiete": 17,
+    "dieciocho": 18, "diecinueve": 19, "veinte": 20, "veintiuno": 21,
+    "veintiun": 21, "veintiuna": 21, "veintidos": 22,
+    "veintitres": 23, "veinticuatro": 24, "veinticinco": 25,
+    "veintiseis": 26, "veintisiete": 27, "veintiocho": 28,
+    "veintinueve": 29, "treinta": 30, "cuarenta": 40,
+    "cincuenta": 50, "sesenta": 60, "setenta": 70,
+    "ochenta": 80, "noventa": 90, "cien": 100,
+}
+_DECENAS_ES = {"treinta", "cuarenta", "cincuenta", "sesenta", "setenta", "ochenta", "noventa"}
+_CENTENAS_ES = {
+    "ciento": 100, "doscientos": 200, "doscientas": 200,
+    "trescientos": 300, "trescientas": 300, "cuatrocientos": 400,
+    "cuatrocientas": 400, "quinientos": 500, "quinientas": 500,
+    "seiscientos": 600, "seiscientas": 600, "setecientos": 700,
+    "setecientas": 700, "ochocientos": 800, "ochocientas": 800,
+    "novecientos": 900, "novecientas": 900,
+}
+
+def _numeros_escritos(texto: str) -> set[str]:
+    """Reconoce números españoles 0-999, sin inferir cantidades no expresadas."""
+    import unicodedata
+    normal = unicodedata.normalize("NFD", texto or "")
+    normal = "".join(c for c in normal if unicodedata.category(c) != "Mn").lower()
+    palabras = re.findall(r"(?<!\w)[a-zñ]+(?!\w)", normal)
+    hallados = set()
+    i = 0
+    while i < len(palabras):
+        palabra = palabras[i]
+        valor = None
+        avance = 1
+        if palabra in _CENTENAS_ES:
+            valor = _CENTENAS_ES[palabra]
+            j = i + 1
+            if j < len(palabras) and palabras[j] in _DECENAS_ES:
+                valor += _UNIDADES_ES[palabras[j]]
+                avance += 1
+                if j + 2 < len(palabras) and palabras[j + 1] == "y" and palabras[j + 2] in _UNIDADES_ES and _UNIDADES_ES[palabras[j + 2]] < 10:
+                    valor += _UNIDADES_ES[palabras[j + 2]]
+                    avance += 2
+            elif j < len(palabras) and palabras[j] in _UNIDADES_ES:
+                valor += _UNIDADES_ES[palabras[j]]
+                avance += 1
+        elif palabra in _UNIDADES_ES:
+            valor = _UNIDADES_ES[palabra]
+            if palabra in _DECENAS_ES and i + 2 < len(palabras) and palabras[i + 1] == "y" and palabras[i + 2] in _UNIDADES_ES and _UNIDADES_ES[palabras[i + 2]] < 10:
+                valor += _UNIDADES_ES[palabras[i + 2]]
+                avance = 3
+        if valor is not None:
+            hallados.add(str(valor))
+            i += avance
+        else:
+            i += 1
+    return hallados
+
 def _cifras(texto: str) -> set[str]:
     """Números que aparecen en un texto, sin separadores: '90.000' y '90000' cuentan igual.
     No cuentan los de una enumeración ni el «100 %»."""
     limpio = _TODO.sub("", _ENUMERACION.sub("", texto or ""))
-    return {c.replace(".", "").replace(",", "") for c in _CIFRA.findall(limpio)}
+    cifras = {c.replace(".", "").replace(",", "") for c in _CIFRA.findall(limpio)}
+    return cifras | _numeros_escritos(limpio)
 
 
 def _sin_cifras_inventadas(updates: list[dict[str, Any]], textos_usuario: str) -> list[dict[str, Any]]:
