@@ -225,4 +225,82 @@ grabada = json.loads(gateway._archivo.read_text(encoding="utf-8").splitlines()[-
 assert grabada["tarea"] == "gobernanza" and grabada["cortada"] is True
 print("OK 8: una respuesta cortada por el límite de tokens lo dice en el log y en la grabación")
 
+# 9) Fallo 82: el detector de respuestas degeneradas. El 12 nov la fase de BI fueron 8.192 «!»; las tablas markdown,
+#    los separadores y las listas largas no son degenerados
+parrafo = ("La capa de ingesta recoge los pedidos del ERP cada noche y los deja en la zona de datos sin procesar; "
+           "después se limpian, se deduplican y se cruzan con el inventario para los cuadros de mando de ventas. ")
+tabla = ("| Servicio | Uso | Justificación |\n|" + "-" * 40 + "|" + "-" * 40 + "|" + "-" * 60 + "|\n"
+         + "".join(f"| Servicio {i} | Ingesta del sistema {i} | Se elige por coste y porque el equipo lo conoce ({i}) |\n"
+                   for i in range(200)))
+normales = {
+    "párrafos": parrafo * 40,
+    "tabla markdown con separadores largos": parrafo + tabla,
+    "separador de 2.000 guiones": parrafo + "\n" + "-" * 2000 + "\n" + parrafo,
+    "fila de separación de 150 columnas": "|" + "---|" * 150 + "\n" + parrafo * 3,
+    "lista larga": "".join(f"- Paso {i}: revisar la tabla de pedidos del día {i} y avisar si faltan filas.\n"
+                           for i in range(300)),
+    "texto corto repetido": "ok " * 30,
+    "JSON": json.dumps({"componentes": [{"componente": f"Servicio {i}", "unidades": i, "precio_unitario_eur": 0.5}
+                                        for i in range(100)]}, ensure_ascii=False),
+}
+for nombre, texto in normales.items():
+    assert gateway.motivo_degenerada(texto) == "", (nombre, gateway.motivo_degenerada(texto))
+assert gateway.motivo_degenerada("!" * 8192) == "«!» repetido 8.192 veces seguidas"
+assert gateway.motivo_degenerada(parrafo + "!" * 500) != ""            # basura detrás de un texto bueno
+assert gateway.motivo_degenerada("datos " * 500) != ""                  # una palabra en bucle
+assert gateway.motivo_degenerada("ab" * 1000 + parrafo) != ""
+assert gateway.motivo_degenerada(("!?" * 7 + " ") * 200) != ""          # pocos caracteres distintos, sin trozo repetido largo
+print("OK 9: el detector marca los 8.192 «!» y las repeticiones, y no las tablas, los separadores ni las listas")
+
+
+# 10) Fallo 82: una respuesta degenerada pasa a la siguiente reserva, con sus reglas; si ninguna da una buena, la
+#     sección lleva un aviso, nunca la basura. El log dice qué modelo la dio y a qué reserva pasa
+def respuesta_de(modelo: str, texto: str):
+    proveedor, _, nombre = modelo.partition("/")
+    return SimpleNamespace(model=nombre, _hidden_params={"custom_llm_provider": proveedor},
+                           choices=[SimpleNamespace(message=SimpleNamespace(content=texto), finish_reason="length")],
+                           usage=SimpleNamespace(prompt_tokens=5000, completion_tokens=8192))
+
+
+llamadas = []
+
+
+def completion_degenerada(*args, **kwargs):
+    llamadas.append(kwargs)
+    return respuesta_de(kwargs["model"], textos.get(kwargs["model"], "!" * 8192))
+
+
+tecnico = PERFILES["tecnico"]
+original, gateway._completion_registrada.original = gateway._completion_registrada.original, completion_degenerada
+try:
+    textos = {tecnico[1]: parrafo * 10}  # el primero da basura y la primera reserva da un texto bueno
+    log = io.StringIO()
+    with contextlib.redirect_stdout(log):
+        r = litellm.completion(model=str(bi := gateway.modelo("roadmap_bi")), **gateway.parametros(bi),
+                               messages=[{"role": "user", "content": "Fase de BI"}])
+    assert r.choices[0].message.content == parrafo * 10
+    assert [k["model"] for k in llamadas] == tecnico[:2], llamadas
+    assert llamadas[1]["metadata"] == {"aidm_tarea": "roadmap_bi"} and llamadas[1]["max_tokens"] == 8192  # su regla
+    assert [f["model"] for f in llamadas[1]["fallbacks"]] == tecnico[2:]  # las que quedan detrás
+    assert (f"[gateway] roadmap_bi · {tecnico[0]} ha dado una respuesta degenerada (" in log.getvalue()
+            and f"pasa a la reserva {tecnico[1]}" in log.getvalue()), log.getvalue()
+
+    llamadas.clear(); textos = {}  # ninguna da un texto bueno: aviso, y se han probado todas una vez
+    log = io.StringIO()
+    with contextlib.redirect_stdout(log):
+        r = litellm.completion(model=str(bi := gateway.modelo("roadmap_bi")), **gateway.parametros(bi),
+                               messages=[{"role": "user", "content": "Fase de BI"}])
+    assert r.choices[0].message.content == gateway.AVISO_DEGENERADA and "!!!" not in r.choices[0].message.content
+    assert [k["model"] for k in llamadas] == tecnico, llamadas
+    assert f"[gateway] roadmap_bi · {tecnico[-1]} ha dado una respuesta degenerada" in log.getvalue()
+    assert "no quedan reservas: la sección sale vacía, con un aviso" in log.getvalue(), log.getvalue()
+
+    llamadas.clear(); textos = {tecnico[0]: parrafo * 10}  # una respuesta buena no se toca
+    with contextlib.redirect_stdout(io.StringIO()):
+        r = litellm.completion(model=str(bi := gateway.modelo("roadmap_bi")), **gateway.parametros(bi), messages=[])
+    assert r.choices[0].message.content == parrafo * 10 and len(llamadas) == 1
+finally:
+    gateway._completion_registrada.original = original
+print("OK 10: una respuesta degenerada pasa a la siguiente reserva y, si ninguna vale, la sección lleva un aviso")
+
 print("\nTodo bien: el gateway de modelos funciona (en la parte que se puede comprobar sin el LLM real).")

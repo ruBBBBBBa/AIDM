@@ -22,6 +22,7 @@ import re
 import sys
 import threading
 import time
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -281,6 +282,49 @@ def _modelo_usado(respuesta, kwargs: dict) -> str:
     return pedido
 
 
+# Fallo 82: el 12 nov, la fase de BI del roadmap fueron 8.192 «!» (gpt-oss-120b en Cloudflare, reserva de Gemini sin
+# cupo), y se dio por buena: solo se avisaba de que estaba cortada. Ahora una respuesta degenerada cuenta como fallo y
+# se pide a la siguiente reserva. Es degenerada si un mismo trozo de 1–30 caracteres se repite 20 veces o más seguidas
+# y ocupa 400 caracteres o más, o si un texto largo usa casi un solo carácter. Las tablas markdown, los separadores
+# (|---|, ----) y las listas no cuentan: un trozo hecho solo de esos signos tiene que ocupar 3.000 caracteres.
+_SIGNOS_MARKDOWN = set("|-:=*_#~`+.>/\\ \t\r\n")
+_TROZO_REPETIDO = re.compile(r"(.{1,30}?)\1{19,}", re.DOTALL)
+AVISO_DEGENERADA = ("**No se ha podido generar esta sección.** Los modelos disponibles han devuelto un texto no "
+                    "válido (por ejemplo, un mismo carácter repetido miles de veces). Hay que volver a generarla.")
+
+
+def motivo_degenerada(texto: str) -> str:
+    """Fallo 82: por qué una respuesta es degenerada («"!" repetido 8.192 veces seguidas»), o "" si es normal."""
+    texto = (texto or "").strip()
+    if len(texto) < 200:
+        return ""
+    for m in _TROZO_REPETIDO.finditer(texto):
+        trozo, largo = m.group(1), len(m.group(0))
+        if not trozo.strip():
+            continue  # espacios y saltos de línea
+        if largo >= (3000 if set(trozo) <= _SIGNOS_MARKDOWN else 400):
+            return f"«{trozo.strip()[:20]}» repetido {_miles(largo // len(trozo))} veces seguidas"
+    if len(texto) >= 1000:
+        visibles = [c for c in texto if not c.isspace()]
+        distintos = set(visibles)
+        if len(distintos) <= 10:
+            return f"solo {len(distintos)} caracteres distintos en {_miles(len(texto))}"
+        letras = Counter(c for c in visibles if c not in _SIGNOS_MARKDOWN)
+        if letras:
+            caracter, veces = letras.most_common(1)[0]
+            if veces > 0.5 * len(visibles):
+                return f"«{caracter}» es el {round(100 * veces / len(visibles))} % del texto"
+    return ""
+
+
+def _reservas_que_quedan(respuesta, kwargs: dict) -> tuple[str, list[dict]]:
+    """Fallo 82: el modelo que ha respondido y las reservas que van detrás de él en la lista de la llamada."""
+    usado = _modelo_usado(respuesta, kwargs).rpartition(" → reserva ")[2]
+    reservas = [r if isinstance(r, dict) else {"model": str(r)} for r in kwargs.get("fallbacks") or []]
+    nombres = [str(kwargs.get("model", ""))] + [str(r.get("model", "")) for r in reservas]
+    return usado, reservas[nombres.index(usado):] if usado in nombres else reservas
+
+
 def _completion_registrada(*args, **kwargs):
     """litellm.completion, y si la llamada viene del gateway (lleva su tarea), se registra. La usan tanto CrewAI como
     completar(), así que sale una línea por llamada, con el modelo que de verdad ha respondido. Antes se registraba
@@ -301,6 +345,7 @@ def _completion_registrada(*args, **kwargs):
         except Exception:
             pass  # el registro nunca puede romper la llamada
         raise
+    texto = ""
     try:
         uso = getattr(respuesta, "usage", None)
         uso = {"prompt_tokens": getattr(uso, "prompt_tokens", None),
@@ -311,7 +356,29 @@ def _completion_registrada(*args, **kwargs):
                    time.monotonic() - inicio, cortada=cortada)
     except Exception:
         pass  # una respuesta en streaming, por ejemplo: se devuelve igual, sin registrar
-    return respuesta
+    # Fallo 82: una respuesta degenerada no llega al informe. Se pide a la siguiente reserva (con sus reglas y las que
+    # quedan detrás); si no queda ninguna, se devuelve un aviso en lugar de la basura. No se lanza una excepción:
+    # CrewAI repetiría la tarea (más peticiones del cupo) y, en la propuesta, tiraría las cuatro secciones.
+    try:
+        motivo = motivo_degenerada(texto) if isinstance(texto, str) else ""
+    except Exception:
+        motivo = ""  # la comprobación nunca puede romper la llamada
+    if not motivo:
+        return respuesta
+    usado, quedan = _reservas_que_quedan(respuesta, kwargs)
+    if not quedan:
+        _escribir(f"[gateway] {tarea} · {usado} ha dado una respuesta degenerada ({motivo}) y no quedan reservas: "
+                  "la sección sale vacía, con un aviso")
+        respuesta.choices[0].message.content = AVISO_DEGENERADA
+        return respuesta
+    siguiente, resto = quedan[0], quedan[1:]
+    _escribir(f"[gateway] {tarea} · {usado} ha dado una respuesta degenerada ({motivo}); pasa a la reserva "
+              f"{siguiente.get('model')}")
+    nuevos = {k: v for k, v in kwargs.items() if k not in ("num_retries", "timeout", "max_tokens", "fallbacks")}
+    nuevos.update(siguiente)  # el modelo de la reserva y sus reglas
+    if resto:
+        nuevos["fallbacks"] = resto
+    return _completion_registrada(*args, **nuevos)
 
 
 if not getattr(litellm.completion, "aidm_gateway", False):  # una sola vez, aunque el módulo se importe de nuevo
