@@ -69,13 +69,13 @@ assert "ningún objeto JSON tiene los campos" not in motivo
 print("OK 2b: si tras repararlo sigue sin valer, el motivo dice el campo que falla y dónde estaba el error de sintaxis")
 
 # 3) Con el bucle de reintentos real: se repara a la primera; si no se puede, la repetición pide revisar la sintaxis
-pendientes: list[str] = []
+pendientes: dict[str, list[str]] = {}  # fallo 93: una lista por tarea, porque costes y perfiles van a la vez
 contextos: list[str] = []
 
 
 def execute_task(self, task, context=None, tools=None):
     contextos.append(context or "")
-    return pendientes.pop(0)
+    return pendientes[task.name].pop(0)
 
 
 Agent.execute_task = execute_task
@@ -85,7 +85,7 @@ respuestas: dict[str, list[str]] = {}
 def kickoff_simulado(self, *args, **kwargs):
     for task in self.tasks:
         primera, *resto = respuestas[task.name]
-        pendientes[:] = resto
+        pendientes[task.name] = resto
         salida = TaskOutput(description=task.description, raw=primera, agent=task.agent.role)
         task.output = task._invoke_guardrail_function(salida, task.agent, [], task._guardrail)
     return SimpleNamespace(raw="")

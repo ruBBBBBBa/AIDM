@@ -69,13 +69,13 @@ assert "ningún objeto JSON tiene los campos de la raíz" in otras and "['costes
 print("OK 2: el motivo distingue un JSON cortado, el esquema sin rellenar y un JSON con otras claves")
 
 # 3) run_estimation_crew con el bucle de reintentos real
-pendientes: list[str] = []
+pendientes: dict[str, list[str]] = {}  # fallo 93: una lista por tarea, porque costes y perfiles van a la vez
 contextos: list[str] = []
 
 
 def execute_task(self, task, context=None, tools=None):  # la repetición que pide el guardrail
     contextos.append(context or "")
-    return pendientes.pop(0)
+    return pendientes[task.name].pop(0)
 
 
 Agent.execute_task = execute_task
@@ -85,7 +85,7 @@ respuestas: dict[str, list[str]] = {}
 def kickoff_simulado(self, *args, **kwargs):
     for task in self.tasks:
         primera, *resto = respuestas[task.name]
-        pendientes[:] = resto
+        pendientes[task.name] = resto
         salida = TaskOutput(description=task.description, raw=primera, agent=task.agent.role)
         task.output = task._invoke_guardrail_function(salida, task.agent, [], task._guardrail)
     return SimpleNamespace(raw="")

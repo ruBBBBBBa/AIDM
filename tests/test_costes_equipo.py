@@ -136,4 +136,31 @@ assert "Parcial: lo valorado, 3–4 de 12 meses, se lleva el" in ec._format_cost
 assert ">Alto (provisional)<" in ec._format_cost_report(informe_simulado, "", _calcular_equipo(equipo, tarifas), caso)
 print("OK 6: con 3–4 de 10 meses valorados el encaje es 'Parcial' (41–58 %), o 'Bajo' si ya no cabe")
 
+# 7) Fallo 93: costes va a la vez que perfiles → equipo, en dos crews, y perfiles no lee el JSON de costes. La barrera
+#    solo se abre si las dos crews están dentro de kickoff a la vez: en secuencia, el test se queda esperando y falla
+import threading
+
+barrera = threading.Barrier(2, timeout=10)
+crews_vistas = []
+
+
+contextos = {}
+
+
+def kickoff_a_la_vez(self, *args, **kwargs):
+    barrera.wait()
+    crews_vistas.append([t.name for t in self.tasks])
+    contextos.update({t.name: t.context for t in self.tasks})
+    return kickoff_simulado(self, *args, **kwargs)
+
+
+Crew.kickoff = kickoff_a_la_vez
+resultado = ec.run_estimation_crew("PROPUESTA SIMULADA", "groq/openai/gpt-oss-20b", problem_case=caso)
+Crew.kickoff = kickoff_simulado
+assert sorted(crews_vistas) == [["costes"], ["perfiles", "equipo"]], crews_vistas
+assert contextos["perfiles"] == [], contextos["perfiles"]  # sin el JSON de costes
+assert [t.name for t in contextos["equipo"]] == ["perfiles"]  # equipo sigue leyendo los perfiles
+assert "79.600 € – 112.800 €" in resultado.cost_estimation  # el total sigue juntando costes y equipo
+print("OK 7: costes va a la vez que perfiles → equipo, perfiles no lee costes, y el total junta los dos")
+
 print("\nTodo bien: el fallo 5 está arreglado.")
