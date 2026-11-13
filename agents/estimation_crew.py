@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from html import escape
 from pathlib import Path
 from typing import Any, Literal, get_args, get_origin
@@ -1602,6 +1603,9 @@ def run_estimation_crew(
         expected_output="Los perfiles necesarios para el alcance pedido, con las responsabilidades, las habilidades y la dedicación (completa o parcial) de cada uno.",
         name="perfiles",
         agent=profiles_writer,
+        # Fallo 93: sin la salida de costes como contexto (CrewAI se la daba por ir detrás: unos 8.000 tokens de JSON
+        # que no usa; no da cifras). Lo que necesita, la propuesta y los datos del cliente, va en la descripción
+        context=[],
         # Fallo 40 (C14): si la descripción llega cortada, se repite una vez antes de pasar a la tarea del coste
         guardrail=_guardrail_perfiles() if PERFILES_CON_TARIFA else None,
         guardrail_max_retries=1,
@@ -1644,22 +1648,25 @@ def run_estimation_crew(
         guardrail_max_retries=1,
     ) if team_costs_table else None
 
-    crew_tasks: list[Task] = [cost_report_task, team_building_task]
-    if team_cost_task:
-        crew_tasks.append(team_cost_task)
+    # Fallo 93: los costes van a la vez que perfiles → equipo. Ninguno usa lo que escribe el otro: costes lee la
+    # arquitectura y los datos del cliente; perfiles, la propuesta; equipo, los perfiles. El 12 nov, en secuencia,
+    # tardaron 150 + 117 + 26 s; a la vez, lo que tarde el más lento de los dos caminos.
+    equipo_tasks: list[Task] = [team_building_task] + ([team_cost_task] if team_cost_task else [])
+    crews = {
+        "costes": Crew(agents=[report_writer_agent], tasks=[cost_report_task], process=Process.sequential, cache=False),
+        "perfiles y equipo": Crew(agents=[profiles_writer] + ([team_builder] if team_cost_task else []),
+                                  tasks=equipo_tasks, process=Process.sequential, cache=False),
+    }
 
-    crew = Crew(
-        agents=[report_writer_agent, profiles_writer, team_builder],
-        tasks=crew_tasks,
-        process=Process.sequential,
-        cache=False,
-    )
-    
-    # Fallo 46: un fallo de la crew de costes no para el informe; lo que no llegue se avisa en su sección
-    try:
-        crew.kickoff()
-    except Exception as exc:
-        logger.error("[estimation_crew] La crew de costes falló con el modelo %s: %s", model_name, exc)
+    def lanzar(nombre: str) -> None:
+        # Fallo 46: un fallo de una crew no para el informe; lo que no llegue se avisa en su sección
+        try:
+            crews[nombre].kickoff()
+        except Exception as exc:
+            logger.error("[estimation_crew] La crew de %s falló (modelo de costes: %s): %s", nombre, model_name, exc)
+
+    with ThreadPoolExecutor(max_workers=len(crews), thread_name_prefix="costes") as hilos:
+        list(hilos.map(lanzar, crews))
 
     # Coste del equipo: el LLM elige perfiles, nivel, horas y meses; las cuentas se hacen aquí
     equipo_pydantic = _leer_salida(team_cost_task, EquipoEstimado) if team_cost_task else None
