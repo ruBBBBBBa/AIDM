@@ -112,6 +112,17 @@ def avisar_en_el_chat(texto: str) -> None:
     with st.chat_message("assistant"):
         st.markdown(texto)
 
+_barra = {}
+
+
+def pintar_progreso(fraccion: float, texto: str) -> None:
+    """Fallo 94: la barra de progreso del informe. La crea el primer paso (en un turno normal del discovery no sale) y
+    solo la llama el hilo de la sesión: los hilos del roadmap y de costes dejan su avance en progreso.py."""
+    if "barra" not in _barra:
+        _barra["barra"] = st.progress(0.0, text=texto)
+    _barra["barra"].progress(min(max(fraccion, 0.0), 1.0), text=texto)
+
+
 # ── Agent execution ────────────────────────────────────────────────────────────
 # El spinner cubre toda la ejecución del grafo. Si este turno completa el
 # discovery y lanza los 6 agentes, el usuario ve el spinner durante todo
@@ -123,7 +134,8 @@ assistant_response = ""
 with st.spinner("Procesando..."):
     try:
         # Una copia del historial: el aviso del chat no forma parte de la conversación que leen los agentes
-        raw_response = run_graph(prompt, chat_history=list(st.session_state.messages), avisar=avisar_en_el_chat)
+        raw_response = run_graph(prompt, chat_history=list(st.session_state.messages), avisar=avisar_en_el_chat,
+                                 pintar_progreso=pintar_progreso)
         response = raw_response if isinstance(raw_response, dict) else {"assistant_response": str(raw_response)}
         assistant_response = response.get("assistant_response", "")
         if response.get("completion_reached", False):

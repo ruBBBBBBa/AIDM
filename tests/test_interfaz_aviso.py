@@ -98,14 +98,27 @@ with contextlib.redirect_stdout(io.StringIO()):
 assert orden[-1] == "roadmap", "si el chat falla, el informe sigue"
 print("OK 2: el grafo manda el mensaje al chat entre la plataforma y la estructura; si el chat falla, sigue")
 
+# 2b) Fallo 94: con pintar_progreso, la barra sale en 0 al empezar el informe y avanza con cada paso del grafo
+barra = []
+with contextlib.redirect_stdout(io.StringIO()):
+    graph.run_graph("Ya está todo", [], avisar=lambda t: None, pintar_progreso=lambda f, t: barra.append((f, t)))
+assert barra[0] == (0.0, "Eligiendo la plataforma…"), barra
+assert barra[1] == (1 / graph.PASOS_DEL_INFORME, f"Plataforma elegida · 1 de {graph.PASOS_DEL_INFORME} pasos"), barra
+assert barra[2][1] == f"Estructura de la solución · 2 de {graph.PASOS_DEL_INFORME} pasos", barra
+import progreso
+assert progreso._estado["pintar"] is None, "al acabar, el grafo no se queda con la barra"
+print("OK 2b: la barra sale en 0 al empezar el informe y avanza con la plataforma y la estructura")
+
 # 3) En la interfaz: mientras trabaja, la caja de mensajes está desactivada y el aviso sale en el chat
 grafo = types.ModuleType("graph")
 grafo.llamadas = []
 
 
-def grafo_simulado(prompt, chat_history=None, avisar=None):
+def grafo_simulado(prompt, chat_history=None, avisar=None, pintar_progreso=None):
     grafo.llamadas.append(prompt)
     avisar("Antes de preparar el informe, esto es lo que propongo: Microsoft Azure.")
+    pintar_progreso(0.0, "Eligiendo la plataforma…")  # fallo 94
+    pintar_progreso(2 / 13, "Estructura de la solución · 2 de 13 pasos")
     raise StopException()  # corta aquí, a mitad del informe, para ver la página tal como está mientras trabaja
 
 
@@ -118,7 +131,11 @@ at.chat_input[0].set_value("Ya está todo").run()
 assert grafo.llamadas == ["Ya está todo"]
 assert at.chat_input[0].proto.disabled, "mientras trabaja, no se puede escribir"
 assert at.chat_message[-1].markdown[0].value.startswith("Antes de preparar el informe"), at.chat_message[-1]
-print("OK 3: mientras se genera el informe la caja de mensajes está desactivada, y el aviso ya está en el chat")
+barras = at.get("progress")  # fallo 94: una sola barra, con el último paso
+assert len(barras) == 1 and barras[0].proto.value == round(100 * 2 / 13), [b.proto for b in barras]
+assert barras[0].proto.text == "Estructura de la solución · 2 de 13 pasos"
+print("OK 3: mientras se genera el informe la caja de mensajes está desactivada, el aviso ya está en el chat y la "
+      "barra de progreso va por su paso")
 
 # 4) Si la ejecución se corta, la siguiente no la vuelve a lanzar y la caja vuelve a estar activa
 at.run()
@@ -129,7 +146,7 @@ assert roles[-2:] == ["user", "assistant"], roles
 print("OK 4: si algo corta la ejecución, no se relanza y se puede volver a escribir")
 
 # 5) Un turno normal de discovery: la respuesta sale en el chat y la caja queda activa
-grafo.run_graph = lambda prompt, chat_history=None, avisar=None: {"assistant_response": "¿Qué volumen manejáis?",
+grafo.run_graph = lambda prompt, chat_history=None, avisar=None, pintar_progreso=None: {"assistant_response": "¿Qué volumen manejáis?",
                                                                   "completion_reached": False}
 at = AppTest.from_file(str(RAIZ / "interface.py"), default_timeout=60)
 at.run()

@@ -10,6 +10,11 @@ from agents.roadmap_builder import roadmap_builder
 from utils import PLATAFORMA_OBJETIVO, load_problem_case
 
 import gateway
+import progreso
+
+# Fallo 94: los pasos de la barra de progreso, de la plataforma al informe: plataforma, estructura, propuesta, costes,
+# perfiles y equipo, resumen y las 7 fases del roadmap
+PASOS_DEL_INFORME = 13
 
 class AgentState(TypedDict):
     user_prompt: str
@@ -47,7 +52,9 @@ def plataforma_node(state: AgentState) -> AgentState:
     """Fallo 67: después del discovery se elige el hiperescalar; su nube manda en todo el informe.
     Fallo 72: lo que ha decidido sale en el chat antes de que empiecen los agentes del informe."""
     gateway.escribir_cupos("Al empezar el informe")  # fallo 92: cuántas peticiones de Gemini quedan hoy
+    progreso.pintar_pendiente()  # fallo 94: la barra sale en 0 en cuanto empieza el informe
     problem_case = elegir_plataforma(state.get("problem_case", {}))
+    progreso.avanzar("Plataforma elegida")
     mensaje = (problem_case.get(PLATAFORMA_OBJETIVO) or {}).get("mensaje")
     if _avisar and mensaje:
         try:
@@ -64,6 +71,7 @@ def structure_proposal_node(state: AgentState) -> AgentState:
     
     structure_proposal = build_structure_proposal(problem_case, chat_history)
     print("STRUCTURE PROPOSAL COMPLETADO\n\n\n")
+    progreso.avanzar("Estructura de la solución")  # fallo 94
     
     return {
         **state,
@@ -130,7 +138,8 @@ aidm_graph = build_graph()
 # Agent run function
 
 
-def run_graph(user_prompt: str, chat_history: list[dict[str, str]] | None = None, avisar=None) -> dict:
+def run_graph(user_prompt: str, chat_history: list[dict[str, str]] | None = None, avisar=None,
+              pintar_progreso=None) -> dict:
     """avisar (fallo 72): función que recibe un texto y lo escribe en el chat mientras sigue el grafo."""
     global _avisar
     _avisar = avisar
@@ -142,10 +151,14 @@ def run_graph(user_prompt: str, chat_history: list[dict[str, str]] | None = None
         "completion_reached": False,
         "roadmap": "",
     }
+    # Fallo 94: pintar_progreso(fraccion, texto) pinta la barra; solo se llama desde este hilo (el de la sesión)
+    if pintar_progreso:
+        progreso.empezar(pintar_progreso, PASOS_DEL_INFORME, "Eligiendo la plataforma…")
     try:
         resultado = aidm_graph.invoke(initial_state)
     finally:
         _avisar = None
+        progreso.terminar()
     if resultado.get("completion_reached"):
         gateway.resumen_consumo()  # lo que ha gastado la ejecución, al acabar el informe
     return resultado
