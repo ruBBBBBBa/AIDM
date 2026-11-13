@@ -178,4 +178,39 @@ for nombre in ("solution_builder_report.html", "solution_builder_report_recovery
         'id="content-architecture"'), nombre
 print("OK 10: las dos plantillas tienen la sección «Plataforma Recomendada» antes de la arquitectura")
 
+# 11) Fallo 87: las licencias de Power BI están en la tabla y valen con cualquier nube; si la nube del cliente no tiene
+#     filas (el 12 nov, AWS: 19 avisos de «Tarifa desconocida»), no se avisa de las tarifas desconocidas, y sin
+#     ninguna fila que ofrecer el JSON de costes va sin el campo tarifa
+import logging
+pro = ec.PRECIOS_CLOUD["power-bi-pro"]
+assert pro["precio_eur"] == 12.10 and ec.PRECIOS_CLOUD["power-bi-premium-por-usuario"]["precio_eur"] == 20.80
+assert "microsoft.com/es-es" in pro["fuente"] and pro["fecha"]
+assert [f["id"] for f in ec._filas_precios(caso(cloud_provider="AWS"), "Amazon S3, Athena y Power BI")] == ["power-bi-pro"]
+assert "power-bi-pro" in ec._tabla_precios(en_aws, "Azure Data Factory y Power BI")  # con Azure, junto a las suyas
+en_sus_servidores = caso(cloud_provider="Azure")
+en_sus_servidores["plataforma_objetivo"] = {"value": "Microsoft Azure", "despliegue": "on_premises"}
+assert [f["id"] for f in ec._filas_precios(en_sus_servidores, "Azure Data Factory y Power BI")] == ["power-bi-pro"]
+assert '"tarifa"' not in ec._plantilla_costes(con_tarifa=False) and '"tarifa"' in ec._plantilla_costes(con_tarifa=True)
+componentes = [ec.ComponenteCoste(componente="Licencias Power BI Pro", tarifa="power-bi-pro", categoria="licencias",
+                                  precio_unitario_eur=0, unidades=40, unidad="usuario", periodicidad="mensual",
+                                  referencia="40 comerciales"),
+               ec.ComponenteCoste(componente="Amazon S3", tarifa="Almacenamiento del lago", categoria="infraestructura",
+                                  precio_unitario_eur=0.024, unidades=500, unidad="GB", periodicidad="mensual",
+                                  referencia="Precio público")]
+informe = ec.CostEstimationReport(componentes=componentes, supuestos=[], resumen_ejecutivo=ec.ResumenEjecutivo(
+    meses_proyecto=4, presupuesto_cliente_max_eur=100_000, justificacion="Precios públicos."))
+avisos = io.StringIO()
+manejador = logging.StreamHandler(avisos)
+logging.getLogger().addHandler(manejador)
+try:
+    html = ec._format_cost_report(informe, "", None, caso(cloud_provider="AWS"), avisar_tarifas=False)
+    assert "Tarifa desconocida" not in avisos.getvalue(), avisos.getvalue()
+    ec._format_cost_report(informe, "", None, caso(cloud_provider="AWS"))  # con filas de su nube, sí se avisa
+    assert "Tarifa desconocida en costes: 'Almacenamiento del lago'" in avisos.getvalue()
+finally:
+    logging.getLogger().removeHandler(manejador)
+assert "484 €/mes" in html and "12,10 €/usuario al mes × 40 · precio de la tabla" in html  # 40 × 12,10
+assert "12 €/mes" in html  # S3 se queda con el precio del modelo
+print("OK 11: Power BI Pro y PPU están en la tabla con cualquier nube, y sin filas de la nube no hay avisos de tarifa")
+
 print("\nTodo bien: el fallo 67 funciona (en la parte que se puede comprobar sin el LLM real).")

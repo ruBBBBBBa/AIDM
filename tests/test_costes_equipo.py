@@ -99,7 +99,10 @@ resultado = ec.run_estimation_crew("PROPUESTA SIMULADA", "groq/openai/gpt-oss-20
 assert len(prompts) == 3, f"se esperaban 3 tareas y hay {len(prompts)}"
 for n, prompt in enumerate(prompts, start=1):
     assert "DATOS DEL CLIENTE" in prompt and "150.000 a 200.000 euros" in prompt, f"la tarea {n} no lleva el caso"
-print("OK 4: las 3 tareas de costes reciben el presupuesto y el plazo del cliente")
+# Fallo 87: sin filas de la tabla de precios para esta propuesta, el JSON de costes no pide tarifa
+prompt_costes = next(p for p in prompts if "valora el coste de cada componente" in p)
+assert '"tarifa"' not in prompt_costes and "Tabla de precios" not in prompt_costes
+print("OK 4: las 3 tareas de costes reciben el presupuesto y el plazo del cliente; sin tabla, no se pide tarifa")
 
 # Total = 40.000–60.000 (sin equipo) + 39.600–52.800 (equipo) = 79.600–112.800 → cabe en 200.000
 html = resultado.cost_estimation
