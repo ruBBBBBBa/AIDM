@@ -17,13 +17,14 @@ gastado de los cupos gratuitos (precios y cupos, en el yaml). Con GRABAR_LLAMADA
 pruebas_modelos/comparar.py. Llevan datos del cliente: esa carpeta no se sube.
 """
 import json
+import logging
 import os
 import re
 import sys
 import threading
 import time
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Fallo 66: nada de red al arrancar ni en cada ejecución. Van antes de importar LiteLLM y CrewAI, que los leen al cargarse.
@@ -187,6 +188,107 @@ def _registrar(tarea: str, modelo_usado: str, mensajes, respuesta: str, uso: dic
 
 
 
+# --- Fallo 92: las peticiones de hoy a cada modelo de Gemini, entre ejecuciones ---
+# El plan gratuito da 20 al día por modelo, y el 12 nov se acabaron a mitad del roadmap sin que el log lo anunciara:
+# cada ejecución gasta unas 10. Se cuentan las respuestas de Gemini (no las simuladas de los tests) y, si Google
+# contesta que no queda cupo (RESOURCE_EXHAUSTED), el modelo queda agotado hasta el reinicio.
+CUPOS_PATH = Path("data_structures/cupos_gemini.json")
+_bloqueo_cupos = threading.Lock()
+_SIN_CUPO = re.compile(r"RESOURCE_EXHAUSTED|free_tier_requests|exceeded your current quota", re.IGNORECASE)
+
+
+def _cupo_gemini(config: dict | None = None) -> tuple[int, str]:
+    cupo = ((config if config is not None else _config()).get("cupos") or {}).get("gemini") or {}
+    return int(cupo.get("peticiones_dia") or 0), str(cupo.get("reinicio") or "09:00")
+
+
+def _dia_de_cupo(reinicio: str, ahora: datetime | None = None) -> str:
+    """El día del cupo: el de hoy desde la hora de reinicio; antes, el de ayer (a las 08:59 aún cuenta el de ayer)."""
+    ahora = ahora or datetime.now()
+    hora, _, minuto = reinicio.partition(":")
+    corte = ahora.replace(hour=int(hora), minute=int(minuto or 0), second=0, microsecond=0)
+    return (ahora.date() if ahora >= corte else ahora.date() - timedelta(days=1)).isoformat()
+
+
+def _leer_cupos(reinicio: str, ahora: datetime | None = None) -> dict:
+    """Los contadores del día de cupo; si el archivo es de otro día (o no está o no se lee), empiezan de cero."""
+    dia = _dia_de_cupo(reinicio, ahora)
+    try:
+        datos = json.loads(CUPOS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        datos = {}
+    if not isinstance(datos, dict) or datos.get("dia") != dia or not isinstance(datos.get("modelos"), dict):
+        datos = {"dia": dia, "modelos": {}}
+    return datos
+
+
+def _anotar_gemini(modelo: str, agotado: bool = False, ahora: datetime | None = None) -> None:
+    """Una petición más a un modelo de Gemini, o (agotado) el aviso de Google de que no queda cupo hoy."""
+    if not str(modelo).startswith("gemini/"):
+        return
+    try:
+        _, reinicio = _cupo_gemini()
+        with _bloqueo_cupos:
+            datos = _leer_cupos(reinicio, ahora)
+            cuenta = datos["modelos"].setdefault(str(modelo), {"peticiones": 0, "agotado": False})
+            if agotado:
+                cuenta["agotado"] = True
+            else:
+                cuenta["peticiones"] = int(cuenta.get("peticiones", 0)) + 1
+            CUPOS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            CUPOS_PATH.write_text(json.dumps(datos, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass  # el contador nunca puede romper una llamada
+
+
+def cupos_gemini(config: dict | None = None, ahora: datetime | None = None) -> list[tuple[str, int, int, bool]]:
+    """(modelo, peticiones de hoy, límite, agotado) de cada modelo de Gemini del yaml y de los que ya se han usado hoy."""
+    config = config if config is not None else _config()
+    limite, reinicio = _cupo_gemini(config)
+    if not limite:
+        return []
+    with _bloqueo_cupos:
+        usados = _leer_cupos(reinicio, ahora)["modelos"]
+    del_yaml = [_resolver(m) for lista in (config.get("perfiles") or {}).values() for m in lista or []]
+    modelos = list(dict.fromkeys(m for m in del_yaml + list(usados) if str(m).startswith("gemini/")))
+    return [(m, int((usados.get(m) or {}).get("peticiones", 0)), limite, bool((usados.get(m) or {}).get("agotado")))
+            for m in modelos]
+
+
+def _texto_cupo(peticiones: int, limite: int, agotado: bool, reinicio: str) -> str:
+    if agotado or peticiones >= limite:
+        return f"agotado hasta las {reinicio} ({peticiones} de {limite} peticiones hoy)"
+    return f"quedan {limite - peticiones} de {limite} peticiones hoy"
+
+
+def escribir_cupos(momento: str = "Al empezar el informe") -> None:
+    """Fallo 92: una línea en el log con lo que queda hoy de cada modelo de Gemini. La llama el grafo al empezar."""
+    try:
+        config = _config()
+        _, reinicio = _cupo_gemini(config)
+        partes = [f"{m}: {_texto_cupo(n, limite, agotado, reinicio)}" for m, n, limite, agotado in cupos_gemini(config)]
+    except Exception:
+        return
+    if partes:
+        _escribir(f"[gateway] {momento}, cupo de Gemini (vuelve a empezar a las {reinicio}): " + "; ".join(partes))
+
+
+class _AvisoDeCupo(logging.Handler):
+    """Fallo 92: LiteLLM escribe «Fallback attempt failed for model gemini/…: … RESOURCE_EXHAUSTED …» cuando falla un
+    modelo de la lista; ese error no llega al gateway si responde una reserva. Así se sabe que el cupo está agotado."""
+
+    _FALLO = re.compile(r"Fallback attempt failed for model (gemini/\S+?): (.*)", re.DOTALL)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            # El handler de LiteLLM, que va antes, deja el mensaje ya formateado (sin args): se lee del texto
+            m = self._FALLO.match(record.getMessage())
+            if m and _SIN_CUPO.search(m.group(2)):
+                _anotar_gemini(m.group(1), agotado=True)
+        except Exception:
+            pass
+
+
 def _sumar(modelo_usado: str, entrada, salida) -> None:
     """Suma la llamada al modelo que de verdad ha respondido: si fue una reserva, el de «→ reserva X»."""
     modelo = modelo_usado.rpartition(" → reserva ")[2]
@@ -259,6 +361,11 @@ def resumen_consumo(reiniciar: bool = True) -> None:
         if al_dia:
             lineas.append(f"  {proveedor}: {_miles(round(gastadas))} de sus {_miles(al_dia)} neuronas al día "
                           f"({_por_ciento(gastadas, al_dia)})")
+    # Fallo 92: lo que queda hoy de cada modelo de Gemini, contando también las ejecuciones anteriores
+    _, reinicio = _cupo_gemini(config)
+    for modelo, peticiones, limite, agotado in cupos_gemini(config):
+        if peticiones or agotado or modelo in consumo:
+            lineas.append(f"  {modelo}, cupo de hoy: {_texto_cupo(peticiones, limite, agotado, reinicio)}")
     for nombre, precio in (config.get("candidatos") or {}).items():
         lineas.append(f"  Todo con {nombre}: {_dolares(_coste(total, precio))}")
     falta = f" (sin contar {', '.join(sin_precio)}, que no tiene precio)" if sin_precio else ""
@@ -342,9 +449,13 @@ def _completion_registrada(*args, **kwargs):
         try:
             _registrar(tarea, str(kwargs.get("model", "")), kwargs.get("messages"), "", None,
                        time.monotonic() - inicio, f"{type(exc).__name__}: {exc}")
+            if _SIN_CUPO.search(str(exc)):  # fallo 92: Gemini sin cupo y sin reservas que respondan
+                _anotar_gemini(str(kwargs.get("model", "")), agotado=True)
         except Exception:
             pass  # el registro nunca puede romper la llamada
         raise
+    if "mock_response" not in kwargs:  # fallo 92: una petición más del cupo de Gemini (las de los tests no cuentan)
+        _anotar_gemini(_modelo_usado(respuesta, kwargs).rpartition(" → reserva ")[2])
     texto = ""
     try:
         uso = getattr(respuesta, "usage", None)
@@ -385,3 +496,4 @@ if not getattr(litellm.completion, "aidm_gateway", False):  # una sola vez, aunq
     _completion_registrada.original = litellm.completion
     _completion_registrada.aidm_gateway = True
     litellm.completion = _completion_registrada
+    logging.getLogger("LiteLLM").addHandler(_AvisoDeCupo())  # fallo 92
