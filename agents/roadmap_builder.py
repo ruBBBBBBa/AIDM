@@ -55,7 +55,7 @@ REFERENCIA = (
 
 # Fallo 74: lo que tarda cada fase depende sobre todo de lo que escribe. El 12 nov, cada una escribió entre 14.000 y
 # 20.000 caracteres (5.700–8.300 tokens) y las dos más largas tardaron casi 4 min. Con None, sin tope.
-PALABRAS_POR_FASE = 700
+PALABRAS_POR_FASE = None  # Fallo 74 (13 nov): sin tope otra vez, con las fases a la vez; se mide en la próxima ejecución
 EXTENSION = (f"\nExtensión: {PALABRAS_POR_FASE} palabras como máximo. Ve a lo concreto de este cliente, sin introducción "
              "ni repetir lo que ya dice la propuesta." if PALABRAS_POR_FASE else "")
 
