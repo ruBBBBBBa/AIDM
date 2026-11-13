@@ -6,6 +6,7 @@ from pathlib import Path
 from crewai import Agent, Crew, Process, Task
 from dotenv import load_dotenv
 import gateway
+import progreso
 from utils import (_make_agent, contexto_cliente, load_agents_config, load_problem_case, parse_html, md_to_html,
                    sin_importes, sin_emojis)
 
@@ -135,7 +136,8 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
     visualizacion = _make_agent("bi_visualization_agent", agents_config, gateway.modelo("roadmap_bi"))
 
     resumen = resumir_solucion(combined_response, agents_config)
-    
+    progreso.avanzar("Resumen de la propuesta")  # fallo 94
+
     # Las 7 tareas reciben, además del resumen, los datos del cliente del discovery.
     if problem_case is None:
         problem_case = load_problem_case()
@@ -347,16 +349,19 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
             crew.kickoff()
         except Exception as exc:
             print(f"[roadmap_builder] La fase «{TITULOS[n]}» ha fallado ({type(exc).__name__}: {exc}); su sección sale vacía")
+            progreso.avanzar(f"Roadmap: {TITULOS[n]} (sin texto)")  # fallo 94
             return
         if not salidas[n]:  # sin callback, la salida de la tarea
             salidas[n] = getattr(getattr(tarea, "output", None), "raw", "") or ""
         print(f"[roadmap_builder] {TITULOS[n]}: {len(salidas[n])} caracteres · {time.monotonic() - inicio:.0f} s")
+        progreso.avanzar(f"Roadmap: {TITULOS[n]}")  # fallo 94: desde el hilo solo se anota; lo pinta la sesión
 
     print(f"\n\n[roadmap_builder] Ejecutando las {len(tareas)} fases del roadmap"
           + (" a la vez" if HILOS > 1 else " en orden") + "...\n")
     inicio = time.monotonic()
     with ThreadPoolExecutor(max_workers=max(1, HILOS), thread_name_prefix="roadmap") as hilos:
-        list(hilos.map(ejecutar, range(len(tareas)), tareas))
+        # Fallo 94: el hilo de la sesión espera a las fases pintando la barra cada vez que acaba una
+        progreso.esperar([hilos.submit(ejecutar, n, tarea) for n, tarea in enumerate(tareas)])
     vacias = [TITULOS[n] for n, texto in enumerate(salidas) if not texto.strip()]
     print(f"\n[roadmap_builder] Roadmap: {len(tareas) - len(vacias)} de {len(tareas)} fases en "
           f"{time.monotonic() - inicio:.0f} s" + (f"; sin texto: {', '.join(vacias)}" if vacias else "") + "\n")

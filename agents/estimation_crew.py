@@ -14,6 +14,7 @@ import json
 import textwrap
 
 import litellm
+import progreso
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field, PrivateAttr, field_validator, ValidationError
 import gateway
@@ -1664,9 +1665,10 @@ def run_estimation_crew(
             crews[nombre].kickoff()
         except Exception as exc:
             logger.error("[estimation_crew] La crew de %s falló (modelo de costes: %s): %s", nombre, model_name, exc)
+        progreso.avanzar(nombre[0].upper() + nombre[1:])  # fallo 94: desde el hilo solo se anota; lo pinta la sesión
 
     with ThreadPoolExecutor(max_workers=len(crews), thread_name_prefix="costes") as hilos:
-        list(hilos.map(lanzar, crews))
+        progreso.esperar([hilos.submit(lanzar, nombre) for nombre in crews])  # fallo 94: pinta mientras espera
 
     # Coste del equipo: el LLM elige perfiles, nivel, horas y meses; las cuentas se hacen aquí
     equipo_pydantic = _leer_salida(team_cost_task, EquipoEstimado) if team_cost_task else None

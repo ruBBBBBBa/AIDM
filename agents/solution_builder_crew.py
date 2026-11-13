@@ -4,6 +4,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
+import progreso
 from agents.estimation_crew import run_estimation_crew
 from agents.proposal_crew import run_proposal_crew
 from utils import md_to_html, parse_html, sin_importes
@@ -87,6 +88,7 @@ def propose_solution(
     try:
         # Gateway de modelos: cada agente pide su modelo (data_structures/modelos.yaml); aquí ya no se elige
         proposal = run_proposal_crew(structure_proposal, problem_case, chat_history)
+        progreso.avanzar("Propuesta: arquitectura, gobernanza, estrategia y visualización")  # fallo 94
         # Fallo 46: la tarea de costes solo necesita los componentes y sus volúmenes, que están en la arquitectura
         estimation = run_estimation_crew(proposal.as_combined_context(), problem_case=problem_case,
                                          componentes=proposal.architecture)

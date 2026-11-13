@@ -95,5 +95,40 @@ graph.roadmap_node({"problem_solution": "x", "problem_case": caso})
 assert recibido["caso"] is caso, "roadmap_node no pasa el problem_case"
 print("OK 4: graph.py pasa el caso del estado al roadmap")
 
+# 5) Fallo 94: la barra de progreso avanza con el resumen y con cada fase al terminar. Las fases van en hilos y solo
+#    anotan su avance: la barra la pinta siempre el hilo que la empezó (el de la sesión de Streamlit)
+import random
+import threading
+import time
+
+import progreso
+
+rb.HILOS = 7
+pintadas = []
+
+
+def kickoff_lento(self, *args, **kwargs):
+    if self.task_callback is not None:
+        time.sleep(random.uniform(0.6, 1.8))  # las fases acaban a destiempo, como de verdad
+    return kickoff_simulado(self, *args, **kwargs)
+
+
+Crew.kickoff = kickoff_lento
+progreso.empezar(lambda fraccion, texto: pintadas.append((threading.get_ident(), fraccion, texto)), total=8)
+try:
+    rb.roadmap_builder({"architecture": "ARQUITECTURA SIMULADA"}, problem_case=caso)
+finally:
+    progreso.terminar()
+    Crew.kickoff = kickoff_simulado
+hilos = {hilo for hilo, _, _ in pintadas}
+assert hilos == {threading.get_ident()}, "la barra solo se pinta desde el hilo de la sesión"
+fracciones = [f for _, f, _ in pintadas]
+assert fracciones == sorted(fracciones) and fracciones[-1] == 1.0, fracciones
+assert len(pintadas) >= 3, pintadas  # se ha pintado mientras las fases iban acabando, no solo al final
+assert pintadas[0][2] == "Resumen de la propuesta · 1 de 8 pasos" and pintadas[-1][2].endswith("· 8 de 8 pasos")
+assert any(texto.startswith("Roadmap: ") for _, _, texto in pintadas)
+progreso.avanzar("Sin barra")  # sin empezar (tests, scripts), no hace nada
+print(f"OK 5: la barra avanza con el resumen y las 7 fases ({len(pintadas)} veces), pintada siempre por la sesión")
+
 assert hashlib.md5(INFORME.read_bytes()).hexdigest() == huella_antes, "el informe real no debía cambiar"
-print("\nTodo bien: los fallos 4 y 73 están arreglados.")
+print("\nTodo bien: los fallos 4, 73 y 94 están arreglados.")
