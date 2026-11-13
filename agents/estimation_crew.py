@@ -626,22 +626,34 @@ def _valor_caso(problem_case: dict | None, campo: str) -> str:
     return "" if not isinstance(valor, str) or es_valor_de_relleno(valor) else valor
 
 
-def _tabla_precios(problem_case: dict | None, arquitectura: str) -> str:
-    """Fallo 53: las filas de la tabla que puede usar el modelo, en texto: las de los servicios que nombra la
-    arquitectura (columna «buscar») y, si se sabe la nube del cliente, solo las de esa nube. Así el prompt no empuja
-    servicios que la propuesta no trae (fallo 34). Vacío si no queda ninguna."""
+def _es_licencia(fila: dict) -> bool:
+    """Fallo 87: una fila que no es de ninguna nube (proveedor «Licencia», como Power BI) vale con cualquier nube."""
+    return _PROVEEDORES.get(_normalize_text(fila.get("proveedor", ""))) is None
+
+
+def _filas_precios(problem_case: dict | None, arquitectura: str) -> list[dict]:
+    """Fallo 53: las filas de la tabla que puede usar el modelo: las de los servicios que nombra la arquitectura
+    (columna «buscar») y, si se sabe la nube del cliente, solo las de esa nube. Así el prompt no empuja servicios que la
+    propuesta no trae (fallo 34). Fallo 87: las licencias (Power BI) valen con cualquier nube, y también en sus
+    servidores."""
     plataforma = (problem_case or {}).get("plataforma_objetivo")
-    if isinstance(plataforma, dict) and plataforma.get("despliegue") == "on_premises":
-        return ""  # fallo 70: en sus servidores no se pagan servicios de la nube
+    en_sus_servidores = isinstance(plataforma, dict) and plataforma.get("despliegue") == "on_premises"
 
     # Fallo 67: la plataforma objetivo, si el agente de plataforma la ha elegido; si no, la nube del cliente
     nube = _normalize_text(_valor_caso(problem_case, "plataforma_objetivo")
                            or _valor_caso(problem_case, "cloud_provider"))
     del_cliente = {p for clave, p in _PROVEEDORES.items() if clave in nube}
     texto = _normalize_text(arquitectura or "")
-    filas = [f for f in PRECIOS_CLOUD.values()
-             if (not del_cliente or _PROVEEDORES.get(_normalize_text(f.get("proveedor", ""))) in del_cliente)
-             and any(b and _normalize_text(b) in texto for b in f.get("buscar", "").split("|"))]
+    return [f for f in PRECIOS_CLOUD.values()
+            # fallo 70: en sus servidores no se pagan servicios de la nube, pero sí las licencias
+            if (_es_licencia(f) or (not en_sus_servidores and (
+                not del_cliente or _PROVEEDORES.get(_normalize_text(f.get("proveedor", ""))) in del_cliente)))
+            and any(b and _normalize_text(b) in texto for b in f.get("buscar", "").split("|"))]
+
+
+def _tabla_precios(problem_case: dict | None, arquitectura: str) -> str:
+    """Fallo 53: las filas de _filas_precios() en texto, para el prompt. Vacío si no queda ninguna."""
+    filas = _filas_precios(problem_case, arquitectura)
     if not filas:
         return ""
     lineas = ["id | servicio | concepto | unidades en | gratis al mes"]
@@ -656,16 +668,18 @@ def _fecha(texto: str) -> str:
     return f"{m.group(3)}/{m.group(2)}/{m.group(1)}" if m else (texto or "")
 
 
-def _con_precio_de_tabla(c: ComponenteCoste) -> ComponenteCoste:
+def _con_precio_de_tabla(c: ComponenteCoste, avisar: bool = True) -> ComponenteCoste:
     """Fallo 53: si el componente trae una fila de la tabla, su precio es el de la tabla. El modelo da la cantidad de
     un mes en la unidad de la fila (144.000.000 eventos); aquí se quita lo gratuito y se pasa al paquete en que se
     cobra (144 millones de eventos a 0,0246 €). Sin fila, o con un id que no está en la tabla, se queda como lo dio
-    el modelo, con `tarifa` vacía."""
+    el modelo, con `tarifa` vacía. Fallo 87: `avisar` es False si la nube del cliente no tiene filas en la tabla: ahí
+    un id desconocido no es un error que mirar (el 12 nov, con AWS, salieron 19 avisos)."""
     if not c.tarifa:
         return c
     fila = PRECIOS_CLOUD.get(c.tarifa.strip().lower())
     if fila is None:
-        logger.warning("Tarifa desconocida en costes: '%s' (%s); se usa el precio del modelo", c.tarifa, c.componente)
+        if avisar:
+            logger.warning("Tarifa desconocida en costes: '%s' (%s); se usa el precio del modelo", c.tarifa, c.componente)
         return c.model_copy(update={"tarifa": ""})
     cantidad = c.unidades
     gratis = fila["gratis_al_mes"]
@@ -770,10 +784,11 @@ def _sin_valorar_presupuesto(texto: str) -> str:
     return "\n".join(lineas).strip()
 
 def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", equipo: dict | None = None,
-                        problem_case: dict | None = None) -> str:
+                        problem_case: dict | None = None, avisar_tarifas: bool = True) -> str:
     r = report.resumen_ejecutivo
     # Fallo 53: los componentes que están en la tabla de precios llevan su precio; el resto, el del modelo
-    componentes = [_con_precio_de_tabla(c) for c in report.componentes]
+    # Fallo 87: sin filas de la nube del cliente en la tabla, sin avisos de «Tarifa desconocida»
+    componentes = [_con_precio_de_tabla(c, avisar_tarifas) for c in report.componentes]
     # Fallo 58: una cuota mensual o anual con los meses del proyecto como unidades se cuenta una vez por periodo
     componentes = [_sin_periodos_repetidos(c) for c in componentes]
     # Fallo 54: lo que el cliente ya usa, para comprobar los «ya lo tiene»
@@ -1338,12 +1353,21 @@ def _leer_json(texto: str, modelo: type[BaseModel]) -> BaseModel:
     raise ValueError("no hay ningún objeto JSON en la respuesta")
 
 
-def _guardrail_json(modelo: type[BaseModel], tarea: str, reintentos: int = 1):
+def _plantilla_costes(con_tarifa: bool) -> str:
+    """Fallo 87: la forma del JSON de costes; sin el campo tarifa si no hay tabla de precios que ofrecer."""
+    plantilla = json.loads(_plantilla_json(CostEstimationReport))
+    if not con_tarifa:
+        for componente in plantilla["componentes"]:
+            componente.pop("tarifa", None)
+    return json.dumps(plantilla, ensure_ascii=False)
+
+
+def _guardrail_json(modelo: type[BaseModel], tarea: str, reintentos: int = 1, plantilla: str | None = None):
     """Guardrail de las tareas con salida estructurada (fallo 46). Si la respuesta no trae un JSON válido, CrewAI
     repite la tarea con el motivo. Tras `reintentos` repeticiones devuelve True con SIN_JSON: si el guardrail
     fallara otra vez, CrewAI lanzaría una excepción y se perdería el informe entero (como en _guardrail_perfiles)."""
     repetidas = 0
-    plantilla = _plantilla_json(modelo)
+    plantilla = plantilla or _plantilla_json(modelo)
     
 
     def comprobar(salida):
@@ -1470,6 +1494,13 @@ def run_estimation_crew(
 
     # Fallo 53: la tabla de precios de la empresa, con las filas de la nube del cliente
     tabla_precios = _tabla_precios(problem_case, componentes or proposal_context)
+    # Fallo 87: si la nube del cliente no tiene filas (el 12 nov, AWS), no se le piden tarifas de sus servicios y no se
+    # avisa de las desconocidas; si tampoco hay licencias que ofrecer, el JSON va sin el campo tarifa
+    filas_nube = [f for f in _filas_precios(problem_case, componentes or proposal_context) if not _es_licencia(f)]
+    plantilla_costes = _plantilla_costes(con_tarifa=bool(tabla_precios))
+    if tabla_precios and not filas_nube:
+        pricing_note += ("\nLa tabla de precios solo tiene las licencias de abajo: pon tarifa solo en ellas. Los "
+                         "servicios de la nube van con tarifa vacía y con tu precio unitario, tu unidad y tu periodicidad.")
     if tabla_precios:
         pricing_note += (
             "\nTabla de precios: para cada componente que sea uno de estos servicios, pon el id de su fila en tarifa y, "
@@ -1523,7 +1554,7 @@ def run_estimation_crew(
             "tildes). Las opciones de categoria y periodicidad son claves fijas: van tal cual, sin tilde (formacion, "
             "unico), sea cual sea el idioma. Los importes, siempre en euros.\n"
             "Responde solo con un objeto JSON, sin texto antes ni después, con esta forma: "
-            f"{_plantilla_json(CostEstimationReport)}\n\n"
+            f"{plantilla_costes}\n\n"
             f"{datos_cliente}"
             "Arquitectura propuesta (componentes y volúmenes):\n"
             f"{componentes or proposal_context}"
@@ -1533,7 +1564,7 @@ def run_estimation_crew(
         name="costes",
         agent=report_writer_agent,
         # Fallo 46: sin output_pydantic, para no depender de las llamadas a herramienta; el JSON se valida aquí
-        guardrail=_guardrail_json(CostEstimationReport, "costes"),
+        guardrail=_guardrail_json(CostEstimationReport, "costes", plantilla=plantilla_costes),
         guardrail_max_retries=1,
     )
 
@@ -1644,7 +1675,8 @@ def run_estimation_crew(
     # Costes: el JSON ya validado por el guardrail; si no llegó, la sección lo avisa y el informe sigue
     report = _leer_salida(cost_report_task, CostEstimationReport)
     if report:
-        cost_estimation = _format_cost_report(report, infracost_prices or "", equipo, problem_case)
+        cost_estimation = _format_cost_report(report, infracost_prices or "", equipo, problem_case,
+                                              avisar_tarifas=bool(filas_nube))
     else:
         logger.error("[estimation_crew] Sin costes: el modelo %s no devolvió un JSON válido", model_name)
         cost_estimation = _aviso_sin_costes(model_name)
