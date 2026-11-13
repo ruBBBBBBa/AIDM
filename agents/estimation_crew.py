@@ -475,6 +475,39 @@ def _valor_del_caso(problem_case: dict | None, campo: str) -> str:
     return valor if isinstance(valor, str) and not es_valor_de_relleno(valor) else ""
 
 
+# Fallo 84: el 12 nov el encaje salía «Alto» porque comparaba el MVP (4 meses, 105.805 €) con los 120.000 € que el
+# cliente daba para todo el proyecto (10 meses). Si lo valorado es más corto que el plazo, el encaje es «Parcial» y dice
+# qué parte del presupuesto se lleva ya lo valorado.
+def _alcance_valorado(problem_case: dict | None) -> str:
+    """Fallo 84: cómo llama el cliente a lo que se valora: «el MVP», «el piloto», «la primera fase» o «lo valorado»."""
+    plazo = _normalize_text(_valor_del_caso(problem_case, "plazo_objetivo"))
+    if re.search(r"\bmvp\b", plazo):
+        return "el MVP"
+    if re.search(r"\bpilot", plazo):
+        return "el piloto"
+    if re.search(r"\b(?:fase 1|primera fase|phase 1|first phase)\b", plazo):
+        return "la primera fase"
+    return "lo valorado"
+
+
+def _encaje_parcial(total_min: float, total_max: float, presupuesto: int, meses_min: int, meses_max: int, plazo: int,
+                    problem_case: dict | None) -> tuple[str, str, str]:
+    """Fallo 84: nivel ('parcial', o 'bajo' si lo valorado ya no cabe), el titular y el motivo, cuando se valoran
+    menos meses que el plazo del cliente."""
+    alcance = _alcance_valorado(problem_case)
+    pct_min, pct_max = round(100 * total_min / presupuesto), round(100 * total_max / presupuesto)
+    pct = f"{pct_min} %" if pct_min == pct_max else f"{pct_min}–{pct_max} %"
+    meses = f"{meses_max}" if meses_min == meses_max else f"{meses_min}–{meses_max}"
+    parte = f"{alcance}, {meses} de {plazo} meses,"
+    if total_min > presupuesto:
+        return "bajo", f"Bajo: {parte} se lleva el {pct}", (
+            f"Solo {parte} ya supera el presupuesto del cliente ({_eur(presupuesto)}): se lleva el {pct}.")
+    return "parcial", f"Parcial: {parte} se lleva el {pct}", (
+        f"{alcance[0].upper()}{alcance[1:]}, {meses} de {plazo} meses, se lleva el {pct} del presupuesto del cliente "
+        f"({_eur(presupuesto)}). Los meses que faltan hasta los {plazo} del plazo no están valorados y tendrán que "
+        f"caber en el resto.")
+
+
 def _limite_mensual(problem_case: dict | None) -> tuple[float, float] | None:
     """Fallo 79: el límite al mes que da el cliente en restriccion_presupuestaria (mínimo, máximo), o None."""
     for trozo in re.split(r";|\.\s|\n", _valor_del_caso(problem_case, "restriccion_presupuestaria")):
@@ -788,6 +821,12 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     falta_min, falta_max = equipo_dict.get("falta_min", 0), equipo_dict.get("falta_max", 0)
     presupuesto = r.presupuesto_cliente_max_eur
     nivel, motivo = _encaje_presupuesto(total_min + falta_min, total_max + falta_max, presupuesto)
+    titular = nivel.capitalize()
+    # Fallo 84: con menos meses valorados que el plazo del cliente, «Parcial» y la parte del presupuesto que se lleva
+    plazo_max = _meses_del_plazo(problem_case)
+    if presupuesto > 0 and 0 < meses_max < plazo_max:
+        nivel, titular, motivo = _encaje_parcial(total_min + falta_min, total_max + falta_max, presupuesto, meses_min,
+                                                 meses_max, plazo_max, problem_case)
     if falta_max and presupuesto > 0:
         # Fallo 55: con horas en la implantación, se dicen las de cada fase
         horas_dev, horas_impl = equipo_dict.get("horas_sin_tarifa", 0), equipo_dict.get("horas_sin_tarifa_impl", 0)
@@ -796,7 +835,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         motivo = (f"Contando al menos {_rango(falta_min, falta_max)} por lo que no tiene tarifa "
                   f"({horas} a {_cifra(equipo_dict['tarifa_minima'])} €/h, la tarifa "
                   f"más baja de la tabla), " + motivo[0].lower() + motivo[1:])
-    etiqueta_nivel = nivel.capitalize() + (" (provisional)" if no_sumados or fuera else "")  # fallo 59: o algo no se suma
+    etiqueta_nivel = titular + (" (provisional)" if no_sumados or fuera else "")  # fallo 59: o algo no se suma
     if not equipo:
         motivo += " Ojo: el total no incluye el equipo, que no se pudo calcular."
 
@@ -821,7 +860,6 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
                       f"tarifa en la tabla de la empresa. El coste real será mayor, así que el encaje es provisional.")
 
     # Fallo 79: el total cubre los meses que se valoran del equipo (el piloto o MVP), no un plazo más largo
-    plazo_max = _meses_del_plazo(problem_case)
     if plazo_max > meses_max:
         avisos.append(f"Ojo: el total cubre {meses_txt}, los que se han valorado del equipo. El cliente habla de un "
                       f"plazo de hasta {plazo_max} meses: lo que va después no está valorado.")
@@ -884,6 +922,8 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         "medio": ("60%",  "#b45309"),           # amber — matches template warm tones
         "alto":  ("100%", "var(--accent)"),     # template gold — clearly "good"
     }
+    if nivel == "parcial":  # fallo 84: ámbar, con la barra en la parte del plazo que se ha valorado (4 de 10 meses: 40 %)
+        confidence_map["parcial"] = (f"{round(100 * meses_max / max(plazo_max, 1))}%", "#b45309")
     conf_pct, conf_color = confidence_map.get(nivel, ("50%", "var(--muted)"))
 
     # Desglose: (etiqueta, texto, valor de la barra, color), con los importes calculados arriba
