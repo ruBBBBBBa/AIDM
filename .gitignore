@@ -20,3 +20,6 @@ pruebas_modelos/resultados/
 
 # Modelo de decisión (fallo 36): el GGUF pesa 800 MB y va fuera del repo
 *.gguf
+
+# Fallo 92: las peticiones de hoy a Gemini, entre ejecuciones
+data_structures/cupos_gemini.json

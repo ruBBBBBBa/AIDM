@@ -46,6 +46,7 @@ _avisar = None
 def plataforma_node(state: AgentState) -> AgentState:
     """Fallo 67: después del discovery se elige el hiperescalar; su nube manda en todo el informe.
     Fallo 72: lo que ha decidido sale en el chat antes de que empiecen los agentes del informe."""
+    gateway.escribir_cupos("Al empezar el informe")  # fallo 92: cuántas peticiones de Gemini quedan hoy
     problem_case = elegir_plataforma(state.get("problem_case", {}))
     mensaje = (problem_case.get(PLATAFORMA_OBJETIVO) or {}).get("mensaje")
     if _avisar and mensaje:

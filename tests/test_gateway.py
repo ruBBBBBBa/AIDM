@@ -42,6 +42,8 @@ import agents.structure_proposal_agent_logic as sp
 # El .env de quien ejecuta el test no cuenta: sin MODELO_* ni grabación
 for clave in [c for c in os.environ if c.startswith("MODELO_")] + ["GRABAR_LLAMADAS"]:
     os.environ.pop(clave, None)
+# Fallo 92: el contador de Gemini del test va aparte; el tuyo (data_structures/cupos_gemini.json) no se toca
+gateway.CUPOS_PATH = Path(tempfile.mkdtemp()) / "cupos_gemini.json"
 
 config = yaml.safe_load(Path("data_structures/modelos.yaml").read_text(encoding="utf-8"))
 PERFILES, TAREAS = config["perfiles"], config["tareas"]
@@ -302,5 +304,79 @@ try:
 finally:
     gateway._completion_registrada.original = original
 print("OK 10: una respuesta degenerada pasa a la siguiente reserva y, si ninguna vale, la sección lleva un aviso")
+
+# 11) Fallo 92: las peticiones de hoy a cada modelo de Gemini se guardan entre ejecuciones y vuelven a cero a las 09:00;
+#     un «sin cupo» de Google lo deja agotado hasta el reinicio. El log lo dice al empezar el informe y al final
+import logging
+from datetime import datetime
+
+flash, lite = "gemini/gemini-3.6-flash", "gemini/gemini-3.5-flash-lite"
+gateway.CUPOS_PATH = Path(tempfile.mkdtemp()) / "cupos_gemini.json"
+assert gateway._dia_de_cupo("09:00", datetime(2026, 11, 13, 8, 59)) == "2026-11-12"   # antes de las 9, el de ayer
+assert gateway._dia_de_cupo("09:00", datetime(2026, 11, 13, 9, 0)) == "2026-11-13"
+ayer, hoy = datetime(2026, 11, 13, 8, 30), datetime(2026, 11, 13, 9, 30)
+for _ in range(15):
+    gateway._anotar_gemini(flash, ahora=ayer)
+gateway._anotar_gemini("mistral/mistral-large-4", ahora=hoy)  # solo cuenta Gemini
+estado = {m: (n, agotado) for m, n, _, agotado in gateway.cupos_gemini(ahora=ayer)}
+assert estado[flash] == (15, False) and estado[lite] == (0, False), estado
+assert gateway.cupos_gemini(ahora=hoy)[0][1] == 0  # a las 09:00 vuelve a empezar
+for _ in range(3):
+    gateway._anotar_gemini(flash, ahora=hoy)
+assert json.loads(gateway.CUPOS_PATH.read_text(encoding="utf-8"))["modelos"][flash]["peticiones"] == 3
+
+# Las respuestas de verdad de Gemini cuentan (la que responde, aunque sea una reserva); las simuladas, no
+gateway.CUPOS_PATH = Path(tempfile.mkdtemp()) / "cupos_gemini.json"
+original, gateway._completion_registrada.original = gateway._completion_registrada.original, completion_degenerada
+try:
+    textos = {tecnico[0]: parrafo * 10}
+    with contextlib.redirect_stdout(io.StringIO()):
+        litellm.completion(model=str(bi), **gateway.parametros(bi), messages=[])
+        litellm.completion(model=str(bi), **gateway.parametros(bi), messages=[], mock_response="simulada")
+finally:
+    gateway._completion_registrada.original = original
+assert {m: n for m, n, _, _ in gateway.cupos_gemini()}[flash] == 1
+
+# Un «sin cupo» en la lista de reservas (lo escribe LiteLLM) o sin reservas (la excepción) lo deja agotado
+logging.getLogger("LiteLLM").error("Fallback attempt failed for model %s: %s", flash, "litellm.RateLimitError: "
+                                   "RESOURCE_EXHAUSTED Quota exceeded for metric: generate_content_free_tier_requests")
+logging.getLogger("LiteLLM").error("Fallback attempt failed for model %s: %s", lite, "503 UNAVAILABLE high demand")
+estado = {m: (n, agotado) for m, n, _, agotado in gateway.cupos_gemini()}
+assert estado[flash] == (1, True) and estado[lite] == (0, False), estado  # un 503 no agota el cupo
+
+
+def sin_cupo(*args, **kwargs):
+    raise litellm.RateLimitError("You exceeded your current quota (RESOURCE_EXHAUSTED)", llm_provider="gemini",
+                                 model=kwargs["model"])
+
+
+original, gateway._completion_registrada.original = gateway._completion_registrada.original, sin_cupo
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        litellm.completion(model=lite, messages=[], metadata={"aidm_tarea": "resumen"})
+except litellm.RateLimitError:
+    pass
+finally:
+    gateway._completion_registrada.original = original
+assert {m: agotado for m, _, _, agotado in gateway.cupos_gemini()}[lite] is True
+
+log = io.StringIO()
+with contextlib.redirect_stdout(log):
+    gateway.escribir_cupos("Al empezar el informe")
+    gateway._consumo.clear()
+    gateway._sumar(flash, 1000, 500)
+    gateway.resumen_consumo()
+assert "[gateway] Al empezar el informe, cupo de Gemini (vuelve a empezar a las 09:00): " in log.getvalue()
+assert f"{flash}: agotado hasta las 09:00 (1 de 20 peticiones hoy)" in log.getvalue(), log.getvalue()
+assert f"  {flash}, cupo de hoy: agotado hasta las 09:00 (1 de 20 peticiones hoy)" in log.getvalue(), log.getvalue()
+gateway.CUPOS_PATH = Path(tempfile.mkdtemp()) / "cupos_gemini.json"
+for _ in range(9):
+    gateway._anotar_gemini(flash)
+log = io.StringIO()
+with contextlib.redirect_stdout(log):
+    gateway.escribir_cupos()
+assert f"{flash}: quedan 11 de 20 peticiones hoy" in log.getvalue(), log.getvalue()
+assert f"{lite}: quedan 20 de 20 peticiones hoy" in log.getvalue(), log.getvalue()
+print("OK 11: el cupo de Gemini se cuenta entre ejecuciones, vuelve a empezar a las 09:00 y un «sin cupo» lo agota")
 
 print("\nTodo bien: el gateway de modelos funciona (en la parte que se puede comprobar sin el LLM real).")

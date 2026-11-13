@@ -112,7 +112,10 @@ candidatos:
 
 # Cupos gratuitos al día. Groq y SambaNova cuentan por modelo; Cloudflare, en neuronas para todos sus modelos juntos.
 # Los de Gemini y Mistral se ven en AI Studio y en la consola de Mistral: si se ponen aquí, salen también.
+# Fallo 92: los de Gemini, además, se cuentan entre ejecuciones (data_structures/cupos_gemini.json, fuera de git): 20
+# peticiones al día por modelo en el plan gratuito, que vuelven a empezar a las 09:00 (medianoche en California).
 cupos:
+  gemini: {peticiones_dia: 20, reinicio: "09:00"}
   groq: {peticiones_dia: 1000, tokens_dia: 200000}
   sambanova: {peticiones_dia: 20}
   cloudflare:
