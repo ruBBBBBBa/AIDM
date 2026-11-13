@@ -109,4 +109,28 @@ assert "Equipo: 39.600 € – 52.800 €" in html, "la barra de desarrollo debe
 assert "| **Total mensual** | | | | **13.200 €** |" in resultado.team_profiles
 print("OK 5: el informe suma infraestructura + equipo (79.600 – 112.800 €) y el encaje sale 'Alto'")
 
+# 6) Fallo 84: si se valoran menos meses que el plazo del cliente, el encaje es «Parcial» con la parte del presupuesto
+#    que se lleva lo valorado, en el titular y en el texto (lo que lee el resumen). El 12 nov salía «Alto» con el MVP
+#    (4 de 10 meses) frente al presupuesto de todo el proyecto
+largo = {**caso, "plazo_objetivo": {"description": "Plazo", "value": "MVP en 3-4 meses; proyecto completo en 10 meses"}}
+resultado = ec.run_estimation_crew("PROPUESTA SIMULADA", "groq/openai/gpt-oss-20b", problem_case=largo)
+html = resultado.cost_estimation
+# 79.600 € y 112.800 €, más el mínimo por el Experto en SAP (40 h/mes a 20 €/h): 82.000 € y 116.000 € de 200.000 €
+assert "Parcial: el MVP, 3–4 de 10 meses, se lleva el 41–58 % (provisional)" in html, html
+assert "el MVP, 3–4 de 10 meses, se lleva el 41–58 % del presupuesto del cliente (200.000 €)" in html
+assert "Los meses que faltan hasta los 10 del plazo no están valorados" in html and "Alto" not in html
+assert "width:40%" in html  # la barra: 4 de los 10 meses
+# Si lo valorado ya no cabe, «Bajo», también con la parte que se lleva
+pequeno = informe_simulado.model_copy(update={"resumen_ejecutivo": informe_simulado.resumen_ejecutivo.model_copy(
+    update={"presupuesto_cliente_max_eur": 60_000})})
+html = ec._format_cost_report(pequeno, "", _calcular_equipo(equipo, tarifas), largo)
+assert "Bajo: el MVP, 3–4 de 10 meses, se lleva el 137–193 %" in html, html
+assert "solo el MVP, 3–4 de 10 meses, ya supera el presupuesto del cliente (60.000 €)" in html  # tras «Contando…»
+# Sin la palabra MVP ni piloto, «lo valorado»; con el plazo igual a lo valorado, el encaje de siempre
+sin_mvp = {**caso, "plazo_objetivo": {"description": "Plazo", "value": "4 meses la primera parte y 12 meses en total"}}
+assert "Parcial: lo valorado, 3–4 de 12 meses, se lleva el" in ec._format_cost_report(
+    informe_simulado, "", _calcular_equipo(equipo, tarifas), sin_mvp)
+assert ">Alto (provisional)<" in ec._format_cost_report(informe_simulado, "", _calcular_equipo(equipo, tarifas), caso)
+print("OK 6: con 3–4 de 10 meses valorados el encaje es 'Parcial' (41–58 %), o 'Bajo' si ya no cabe")
+
 print("\nTodo bien: el fallo 5 está arreglado.")
