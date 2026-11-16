@@ -76,9 +76,54 @@ def _escribir(linea: str) -> None:
     sys.stdout.flush()
 
 
-def modelos_de(tarea: str, config: dict | None = None) -> tuple[str, list[str]]:
+# --- Fallo 95: un modelo que no está en el plan del proveedor se salta ---
+# El 14 nov, Mistral Large 4 contestó 403 «This model is not available in your subscription tier» (tier_not_allowed)
+# en las 7 llamadas de redacción; LiteLLM reintentó cada una dos veces antes de pasar a Gemini. Ese error no se arregla
+# repitiendo: no se reintenta, el modelo se salta durante el resto del proceso y el log lo dice una sola vez.
+_FUERA_DEL_PLAN = re.compile(r"tier_not_allowed|not available in your subscription tier", re.IGNORECASE)
+_saltados: dict[str, str] = {}  # modelo → por qué se salta
+_bloqueo_saltados = threading.Lock()
+
+
+def fuera_del_plan(error) -> bool:
+    return bool(_FUERA_DEL_PLAN.search(str(error)))
+
+
+def _saltar(modelo, error) -> None:
+    """Fallo 95: apunta el modelo como fuera del plan y lo dice en el log, solo la primera vez."""
+    modelo = str(modelo or "")
+    if not modelo:
+        return
+    with _bloqueo_saltados:
+        if modelo in _saltados:
+            return
+        _saltados[modelo] = "403 tier_not_allowed"
+    _escribir(f"[gateway] {modelo} no está en el plan de su proveedor (403 tier_not_allowed: «not available in your "
+              "subscription tier»): no se reintenta y se salta durante el resto del proceso")
+
+
+def _sin_saltados(kwargs: dict) -> dict:
+    """Fallo 95: la llamada sin los modelos saltados; si el primero lo está, va la primera reserva que no lo esté, con
+    sus reglas. Si lo están todos, la llamada se queda como está y el error se verá."""
+    if not _saltados:
+        return kwargs
+    reservas = [r if isinstance(r, dict) else {"model": str(r)} for r in kwargs.get("fallbacks") or []]
+    quedan = [r for r in reservas if str(r.get("model")) not in _saltados]
+    if str(kwargs.get("model", "")) not in _saltados:
+        return {**kwargs, "fallbacks": quedan} if len(quedan) != len(reservas) else kwargs
+    if not quedan:
+        return kwargs
+    nuevos = {k: v for k, v in kwargs.items() if k not in ("num_retries", "timeout", "max_tokens", "fallbacks")}
+    nuevos.update(quedan[0])
+    if quedan[1:]:
+        nuevos["fallbacks"] = quedan[1:]
+    return nuevos
+
+
+def modelos_de(tarea: str, config: dict | None = None, con_saltados: bool = False) -> tuple[str, list[str]]:
     """El perfil de la tarea y su lista de modelos, con MODELO_<TAREA> delante si está en el .env. Una tarea que no
-    está en el yaml usa el perfil de «por_defecto»; un «perfil» con «/» se toma como un modelo suelto."""
+    está en el yaml usa el perfil de «por_defecto»; un «perfil» con «/» se toma como un modelo suelto. Fallo 95: sin
+    los modelos que el proveedor ha dicho que no están en el plan (salvo que no quede ninguno)."""
     config = config if config is not None else _config()
     perfiles, tareas = config.get("perfiles") or {}, config.get("tareas") or {}
     if tarea not in tareas:
@@ -89,7 +134,9 @@ def modelos_de(tarea: str, config: dict | None = None) -> tuple[str, list[str]]:
     propio = os.getenv(f"MODELO_{tarea.upper()}", "").strip()
     if propio:
         lista = [propio] + [m for m in lista if m != propio]
-    return perfil, lista
+    if con_saltados:
+        return perfil, lista
+    return perfil, [m for m in lista if m not in _saltados] or lista
 
 
 def modelo(tarea: str) -> ModeloDeTarea:
@@ -100,7 +147,9 @@ def modelo(tarea: str) -> ModeloDeTarea:
         return ModeloDeTarea("", tarea)
     origen = f"MODELO_{tarea.upper()} del .env" if os.getenv(f"MODELO_{tarea.upper()}", "").strip() else f"perfil {perfil}"
     reservas = f"; reservas: {', '.join(lista[1:])}" if lista[1:] else ""
-    _escribir(f"[gateway] {tarea}: {lista[0]} ({origen}{reservas})")
+    saltados = [m for m in modelos_de(tarea, con_saltados=True)[1] if m not in lista] if _saltados else []  # fallo 95
+    saltados = f"; se salta {', '.join(saltados)}, fuera del plan" if saltados else ""
+    _escribir(f"[gateway] {tarea}: {lista[0]} ({origen}{reservas}{saltados})")
     return ModeloDeTarea(lista[0], tarea, tuple(lista[1:]))
 
 
@@ -432,6 +481,30 @@ def _reservas_que_quedan(respuesta, kwargs: dict) -> tuple[str, list[dict]]:
     return usado, reservas[nombres.index(usado):] if usado in nombres else reservas
 
 
+def _llamar(original, args, kwargs):
+    """Fallo 95: sin reservas, LiteLLM reintenta en la misma llamada aunque el error sea de plan. Aquí el primer intento
+    va sin reintentos y, si el error no es de plan, se repite con los que quedan (los mismos intentos en total que
+    antes). Con reservas, los reintentos los corta _num_reintentos()."""
+    reintentos = int(kwargs.get("num_retries") or 0)
+    if kwargs.get("fallbacks") or not reintentos:
+        return original(*args, **kwargs)
+    try:
+        return original(*args, **{**kwargs, "num_retries": 0})
+    except Exception as exc:
+        if fuera_del_plan(exc):
+            raise
+    return original(*args, **{**kwargs, "num_retries": reintentos - 1})
+
+
+def _num_reintentos(kwargs=None, exception=None, **resto):
+    """Fallo 95: los reintentos que decide LiteLLM tras un error dentro de la lista de reservas (cada modelo va por
+    acompletion). Un error de plan no se reintenta: se salta el modelo y LiteLLM pasa a la siguiente reserva."""
+    if fuera_del_plan(exception):
+        _saltar((kwargs or {}).get("model"), exception)
+        return 0, kwargs
+    return _num_reintentos.original(kwargs=kwargs, exception=exception, **resto)
+
+
 def _completion_registrada(*args, **kwargs):
     """litellm.completion, y si la llamada viene del gateway (lleva su tarea), se registra. La usan tanto CrewAI como
     completar(), así que sale una línea por llamada, con el modelo que de verdad ha respondido. Antes se registraba
@@ -442,10 +515,13 @@ def _completion_registrada(*args, **kwargs):
     tarea = metadata.get("aidm_tarea") if isinstance(metadata, dict) else None
     if not tarea:
         return original(*args, **kwargs)
+    kwargs = _sin_saltados(kwargs)  # fallo 95: los modelos fuera del plan no se llaman
     inicio = time.monotonic()
     try:
-        respuesta = original(*args, **kwargs)
+        respuesta = _llamar(original, args, kwargs)
     except Exception as exc:
+        if fuera_del_plan(exc):  # fallo 95: sin reservas que respondan
+            _saltar(kwargs.get("model"), exc)
         try:
             _registrar(tarea, str(kwargs.get("model", "")), kwargs.get("messages"), "", None,
                        time.monotonic() - inicio, f"{type(exc).__name__}: {exc}")
@@ -497,3 +573,5 @@ if not getattr(litellm.completion, "aidm_gateway", False):  # una sola vez, aunq
     _completion_registrada.aidm_gateway = True
     litellm.completion = _completion_registrada
     logging.getLogger("LiteLLM").addHandler(_AvisoDeCupo())  # fallo 92
+    _num_reintentos.original = litellm.utils._get_wrapper_num_retries  # fallo 95
+    litellm.utils._get_wrapper_num_retries = _num_reintentos
