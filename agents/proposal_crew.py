@@ -50,6 +50,7 @@ def run_proposal_crew(
             f"{contexto}"
             f"- Historial reciente:\n{transcript}\n"
             "Ajusta la propuesta al tamaño del cliente y al alcance que pide: no añadas componentes que el caso no necesita y redactala acordemente\n"
+            f"{inventario.REGLA_ELEGIR}\n"  # fallo 89: una opción elegida por papel, sin «X o Y»
             f"{inventario.INSTRUCCION}"  # fallo 88: la lista cerrada de servicios, que leen costes, equipo y roadmap
         ),
         expected_output="Una propuesta de arquitectura justificada y proporcionada al cliente, con la siguiente estructura: Arquitectura Propuesta:\n (...). Sin dibujar ninguna tabla ni gráfico, solo texto, "

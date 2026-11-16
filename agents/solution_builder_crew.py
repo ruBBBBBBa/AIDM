@@ -97,7 +97,9 @@ def propose_solution(
         arquitectura, filas = inventario.leer(proposal.architecture)
         inventario.comprobar(filas, problem_case)
         if filas:
-            proposal = proposal.model_copy(update={"architecture": f"{arquitectura}\n\n{inventario.tabla(filas)}"})
+            nota = inventario.nota_sin_decidir(inventario.sin_decidir(arquitectura, filas))  # fallo 89
+            proposal = proposal.model_copy(update={
+                "architecture": f"{nota}{arquitectura}\n\n{inventario.tabla(filas)}"})
         # Fallo 46: la tarea de costes solo necesita los componentes y sus volúmenes, que están en la arquitectura
         estimation = run_estimation_crew(proposal.as_combined_context(), problem_case=problem_case,
                                          componentes=proposal.architecture, inventario=filas)
