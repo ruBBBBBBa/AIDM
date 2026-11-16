@@ -9,7 +9,8 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from html import escape
 from pathlib import Path
-from typing import Any, Literal, get_args, get_origin
+from types import UnionType
+from typing import Any, Literal, Union, get_args, get_origin
 import json
 import textwrap
 
@@ -105,6 +106,7 @@ class ResumenEjecutivo(BaseModel):
 
 Categoria = Literal["infraestructura", "licencias", "formacion", "mantenimiento"]
 Periodicidad = Literal["mensual", "anual", "unico"]
+Fase = Literal["mvp", "proyecto_completo"]  # fallo 86
 
 
 def _a_numero(valor: Any) -> Any:
@@ -167,7 +169,23 @@ class ComponenteCoste(BaseModel):
                     "Con tarifa, mensual")
     referencia: str = Field(description="De dónde salen las unidades (el uso que estimas) y, sin tarifa, el precio "
                                         "unitario: precio público, tarifa de mercado…")
+    # Fallo 86: el 12 nov, IoT, SageMaker, Rekognition y Macie se pagaban en los 4 meses del MVP aunque iban en la fase 2
+    fase: Fase = Field(default="mvp", description="Desde qué alcance se paga: mvp si entra en el MVP (o si el cliente "
+                                                  "no pide un MVP); proyecto_completo si solo entra después del MVP")
     _cantidad: float | None = PrivateAttr(default=None)  # fallo 53: el uso que dio el modelo, antes de pasarlo a paquetes
+
+    @field_validator("fase", mode="before")
+    @classmethod
+    def _fase_sin_variantes(cls, valor: Any) -> Any:
+        """Fallo 86: «MVP», «Fase 1» → mvp; «Proyecto completo», «Fase 2», «resto» → proyecto_completo."""
+        if not isinstance(valor, str):
+            return valor
+        texto = _normalize_text(valor)
+        if any(p in texto for p in ("complet", "fase 2", "segunda", "resto", "full", "phase 2")):
+            return "proyecto_completo"
+        if any(p in texto for p in ("mvp", "piloto", "pilot", "fase 1", "primera", "phase 1")):
+            return "mvp"
+        return valor
 
     @property
     def importe_eur(self) -> float:
@@ -256,7 +274,7 @@ def _funcion_y_fase(nombre: str) -> tuple[str, str | None]:
     return nombre.strip(), None
 
 
-class EquipoEstimado(BaseModel):
+class _EquipoDeUnAlcance(BaseModel):
     perfiles: list[PerfilEquipo]
 
     meses_min: int = Field(description="Meses de trabajo del equipo según el plazo del cliente, implantación incluida "
@@ -300,6 +318,26 @@ class EquipoEstimado(BaseModel):
             union.horas_mes_implantacion = max(union.horas_mes_implantacion, horas_impl)
         return list(unidas.values())
 
+
+# Fallo 86: el 14 nov, costes salió con «4–10 meses» y encaje «Medio» porque «cabía el escenario bajo», que era el
+# equipo completo (con Data Scientist y AI Engineer) durante 4 meses: ni el MVP ni el proyecto. Ahora se valoran dos
+# alcances por separado: el MVP (o el único, si no lo hay) y lo que va después hasta el proyecto completo, cada uno
+# con sus meses y su equipo. El proyecto completo es la suma, en Python; el rango bajo–alto es la incertidumbre de un
+# mismo alcance.
+class EquipoDelResto(_EquipoDeUnAlcance):
+    meses_min: int = Field(description="Meses que van después del MVP hasta tener el proyecto completo, implantación "
+                                       "incluida (escenario corto); solo los de después del MVP")
+    meses_max: int = Field(description="Meses que van después del MVP hasta tener el proyecto completo, implantación "
+                                       "incluida (escenario largo); solo los de después del MVP")
+
+
+class EquipoEstimado(_EquipoDeUnAlcance):
+    resto_del_proyecto: EquipoDelResto | None = Field(
+        default=None,
+        description="Si el cliente pide un MVP o piloto y después el proyecto completo: el equipo de los meses que van "
+                    "después del MVP hasta completarlo, con sus perfiles, horas y meses (solo los de después). null "
+                    "si el plazo del cliente no tiene un MVP y luego el proyecto completo")
+
 def _eur(valor: float) -> str:
     """12345.6 -> '12.346 €'"""
     return f"{valor:,.0f} €".replace(",", ".")
@@ -332,7 +370,7 @@ def _cargar_tarifas() -> dict[tuple[str, str], float]:
     return tarifas
 
 
-def _calcular_equipo(equipo: EquipoEstimado, tarifas: dict[tuple[str, str], float]) -> dict:
+def _calcular_equipo(equipo: _EquipoDeUnAlcance, tarifas: dict[tuple[str, str], float]) -> dict:
     """Coste del equipo calculado en Python (horas × tarifa del CSV), nunca por el LLM.
 
     Fallo 43: si el equipo trae fase de implantación (sus meses y horas de algún perfil), el desarrollo y la
@@ -806,39 +844,68 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
           meses_min, meses_max = equipo["meses_min"], equipo["meses_max"]
     else:
           meses_min = meses_max = max(r.meses_proyecto, 1)
+    # Fallo 86: con el resto del proyecto, el total es el del proyecto completo (MVP + resto); lo que solo entra después
+    # del MVP se paga en los meses del resto
+    resto = (equipo or {}).get("resto")
+    mvp_min, mvp_max = meses_min, meses_max
+    if resto:
+        meses_min, meses_max = mvp_min + resto["meses_min"], mvp_max + resto["meses_max"]
     meses = f"{meses_min}" if meses_min == meses_max else f"{meses_min}–{meses_max}"
     meses_txt = f"{meses} {'mes' if meses_max == 1 else 'meses'}"
+
+    def en_proyecto(c: ComponenteCoste, alto: bool) -> float:
+        """Fallo 86: lo que cuesta un componente en todo lo valorado, desde su fase."""
+        if resto and c.fase == "proyecto_completo":
+            return _coste_en_proyecto(c, resto["meses_max"] if alto else resto["meses_min"])
+        return _coste_en_proyecto(c, meses_max if alto else meses_min)
 
      # Fallo 59: un componente que por sí solo cuesta más que todo el presupuesto del cliente tiene mal la cantidad o
     # la unidad; no se suma y se avisa. El 29 oct, Databricks SQL Serverless con 500.000 DBU-hora al mes (el modelo
     # había calculado 3.000) costaba 2,4 M€ y llevaba el total a 2,8 M€ con un presupuesto de 600.000 €
     fuera = [c for c in componentes
-             if r.presupuesto_cliente_max_eur > 0 and _coste_en_proyecto(c, meses_max) > r.presupuesto_cliente_max_eur]
+             if r.presupuesto_cliente_max_eur > 0 and en_proyecto(c, True) > r.presupuesto_cliente_max_eur]
     sumados = [c for c in componentes if not any(c is x for x in fuera)]
 
     por_categoria = {cat: [0.0, 0.0] for cat in CATEGORIAS}
     for c in sumados:
-        por_categoria[c.categoria][0] += _coste_en_proyecto(c, meses_min)
-        por_categoria[c.categoria][1] += _coste_en_proyecto(c, meses_max)
+        por_categoria[c.categoria][0] += en_proyecto(c, False)
+        por_categoria[c.categoria][1] += en_proyecto(c, True)
     base_min = sum(v[0] for v in por_categoria.values())
     base_max = sum(v[1] for v in por_categoria.values())
     contingencia = base_max * max(r.contingencia_pct, 0) / 100  # solo en el escenario alto
     sin_equipo_min, sin_equipo_max = base_min, base_max + contingencia
 
-    # Total = componentes (sin el equipo) + el equipo calculado en Python
-    equipo_min = equipo["total_min"] if equipo else 0
-    equipo_max = equipo["total_max"] if equipo else 0
+    # Total = componentes (sin el equipo) + el equipo calculado en Python (fallo 86: el del MVP y el del resto)
+    equipo_min = (equipo["total_min"] if equipo else 0) + (resto["total_min"] if resto else 0)
+    equipo_max = (equipo["total_max"] if equipo else 0) + (resto["total_max"] if resto else 0)
     total_min = sin_equipo_min + equipo_min
     total_max = sin_equipo_max + equipo_max
 
     # Fallo 42 (C16): lo que no tiene tarifa no está en el total, pero el encaje cuenta un mínimo por ello
     # (sus horas a la tarifa más baja de la tabla) y se marca como provisional
     equipo_dict = equipo or {}
-    no_sumados = equipo_dict.get("no_sumados") or []
-    falta_min, falta_max = equipo_dict.get("falta_min", 0), equipo_dict.get("falta_max", 0)
+    no_sumados = (equipo_dict.get("no_sumados") or []) + [f"{x} (resto del proyecto)" for x in
+                                                          (resto or {}).get("no_sumados") or []]
+    falta_min = equipo_dict.get("falta_min", 0) + (resto or {}).get("falta_min", 0)
+    falta_max = equipo_dict.get("falta_max", 0) + (resto or {}).get("falta_max", 0)
     presupuesto = r.presupuesto_cliente_max_eur
     nivel, motivo = _encaje_presupuesto(total_min + falta_min, total_max + falta_max, presupuesto)
     titular = nivel.capitalize()
+    # Fallo 86: el MVP, con su equipo y lo que entra en él, y la parte del presupuesto que se lleva
+    mvp = None
+    if resto:
+        mvp_base_min = sum(_coste_en_proyecto(c, mvp_min) for c in sumados if c.fase == "mvp")
+        mvp_base_max = sum(_coste_en_proyecto(c, mvp_max) for c in sumados if c.fase == "mvp")
+        mvp = {"min": mvp_base_min + equipo_dict.get("total_min", 0),
+               "max": mvp_base_max * (1 + max(r.contingencia_pct, 0) / 100) + equipo_dict.get("total_max", 0),
+               "falta_min": equipo_dict.get("falta_min", 0), "falta_max": equipo_dict.get("falta_max", 0)}
+        if presupuesto > 0:
+            pct_min = round(100 * (mvp["min"] + mvp["falta_min"]) / presupuesto)
+            pct_max = round(100 * (mvp["max"] + mvp["falta_max"]) / presupuesto)
+            mvp["pct"] = f"{pct_min} %" if pct_min == pct_max else f"{pct_min}–{pct_max} %"
+            motivo += (f" El MVP ({_meses_txt(mvp_min, mvp_max)}) cuesta {_rango(mvp['min'], mvp['max'])}: el "
+                       f"{mvp['pct']} del presupuesto.")
+            titular += f": el proyecto completo, {meses_txt}; el MVP se lleva el {mvp['pct']}"
     # Fallo 84: con menos meses valorados que el plazo del cliente, «Parcial» y la parte del presupuesto que se lleva
     plazo_max = _meses_del_plazo(problem_case)
     if presupuesto > 0 and 0 < meses_max < plazo_max:
@@ -849,6 +916,8 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         horas_dev, horas_impl = equipo_dict.get("horas_sin_tarifa", 0), equipo_dict.get("horas_sin_tarifa_impl", 0)
         horas = (f"{horas_dev} h/mes en el desarrollo y {horas_impl} h/mes en la implantación," if horas_dev and horas_impl
                  else f"{horas_impl} h/mes en la implantación," if horas_impl else f"{horas_dev} h/mes")
+        if resto and (resto.get("horas_sin_tarifa") or resto.get("horas_sin_tarifa_impl")):  # fallo 86
+            horas = "sus horas en el MVP y en el resto del proyecto,"
         motivo = (f"Contando al menos {_rango(falta_min, falta_max)} por lo que no tiene tarifa "
                   f"({horas} a {_cifra(equipo_dict['tarifa_minima'])} €/h, la tarifa "
                   f"más baja de la tabla), " + motivo[0].lower() + motivo[1:])
@@ -903,7 +972,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
                            f"{'no está' if uno else 'no están'} entre lo que usa según sus datos.")
 
     if fuera:
-        nombres = _lista([f"{c.componente} ({_eur(_coste_en_proyecto(c, meses_max))} en {meses_txt})" for c in fuera])
+        nombres = _lista([f"{c.componente} ({_eur(en_proyecto(c, True))} en {meses_txt})" for c in fuera])
         uno = len(fuera) == 1
         avisos.append(f"Ojo: no se suma {escape(nombres)}: {'por sí solo supera' if uno else 'cada uno supera por sí solo'} "
                       f"el presupuesto del cliente ({_eur(presupuesto)}), así que la cantidad o la unidad están mal. "
@@ -949,7 +1018,12 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     if contingencia:
         filas.append((f"Contingencia ({r.contingencia_pct} %, solo escenario alto)", _eur(contingencia),
                       contingencia, "#64748b"))  # slate
-    if equipo and equipo.get("meses_implantacion"):
+    if resto:  # fallo 86: el equipo de cada alcance, con sus meses
+        filas.append((f"Equipo del MVP · {_meses_txt(mvp_min, mvp_max)}",
+                      f"Equipo: {_rango(equipo['total_min'], equipo['total_max'])}", equipo["total_max"], "#0f766e"))
+        filas.append((f"Equipo del resto del proyecto · {_meses_txt(resto['meses_min'], resto['meses_max'])}",
+                      f"Equipo: {_rango(resto['total_min'], resto['total_max'])}", resto["total_max"], "#15803d"))
+    elif equipo and equipo.get("meses_implantacion"):
         # Fallo 43: el desarrollo y la implantación, cada uno con sus meses
         impl = equipo["meses_implantacion"]
         meses_dev = _meses_txt(equipo["meses_min"] - impl, equipo["meses_max"] - impl)
@@ -979,9 +1053,16 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     cards_html = ""
     for c in componentes:
         categoria, color = CATEGORIAS[c.categoria]
-        en_proyecto = _rango(_coste_en_proyecto(c, meses_min), _coste_en_proyecto(c, meses_max))
+        coste_txt = _rango(en_proyecto(c, False), en_proyecto(c, True))
         if c.periodicidad == "anual":
-            en_proyecto += " (parte proporcional)"
+            coste_txt += " (parte proporcional)"
+        # Fallo 86: con dos alcances, desde cuál se paga y en cuántos meses
+        if resto and c.fase == "proyecto_completo":
+            cuando = f"Desde el fin del MVP · en {_meses_txt(resto['meses_min'], resto['meses_max'])}"
+        elif resto:
+            cuando = f"Desde el MVP · en {meses_txt}"
+        else:
+            cuando = f"En {meses_txt}"
         importe = f"{_cifra(c.importe_eur)} {_UNIDAD[c.periodicidad]}"
         #Un componente a 0 € solo cuadra si el cliente ya lo tiene; lo demás se avisa
         if not c.importe_eur:
@@ -1002,7 +1083,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
             f'<div style="font-size:1rem;font-weight:700;color:var(--text);">{importe}</div>'
             f'<div style="font-size:0.72rem;color:var(--muted);margin-top:2px;">'
             f'{_cifra(c.precio_unitario_eur)} €/{escape(c.unidad)} × {_cifra(c.unidades)} · {origen}</div>'
-            f'<div style="font-size:0.75rem;color:var(--text);margin-top:3px;">En {meses_txt}: {en_proyecto}</div>'
+            f'<div style="font-size:0.75rem;color:var(--text);margin-top:3px;">{cuando}: {coste_txt}</div>'
             f'<div style="font-size:0.7rem;color:var(--muted);margin-top:3px;opacity:0.75;">{escape(c.referencia)}</div>'
             f'<div style="font-size:0.7rem;color:var(--muted);opacity:0.5;">{categoria}</div>'
             f'</div>'
@@ -1064,15 +1145,26 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         f'<div style="flex:1;min-width:140px;background:var(--surface);border:1px solid var(--border);'
         f'border-radius:9px;padding:1.1rem;text-align:center;box-shadow:var(--shadow);">'
         f'<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">'
-        f'{"Coste total (equipo incluido)" if equipo else "Coste estimado (sin equipo)"}</div>'
+        f'{"Proyecto completo (equipo incluido)" if resto else "Coste total (equipo incluido)" if equipo else "Coste estimado (sin equipo)"}</div>'
         f'<div style="font-size:1.5rem;font-weight:700;color:var(--text);">'
         f'{_rango(total_min, total_max)}</div></div>'
         f'<div style="flex:1;min-width:140px;background:var(--surface);border:1px solid var(--border);'
         f'border-radius:9px;padding:1.1rem;text-align:center;box-shadow:var(--shadow);">'
         f'<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">Horizonte temporal</div>'
         f'<div style="font-size:1.5rem;font-weight:700;color:var(--text);">'
-        f'{meses_txt}</div></div>'
-        f'</div>'
+        f'{meses_txt}</div>'
+        + (f'<div style="font-size:0.78rem;color:var(--muted);">MVP: {_meses_txt(mvp_min, mvp_max)}</div>' if resto else "")
+        + '</div>'
+        # Fallo 86: el MVP, con su parte del presupuesto
+        + (f'<div style="flex:1;min-width:140px;background:var(--surface);border:1px solid var(--border);'
+           f'border-radius:9px;padding:1.1rem;text-align:center;box-shadow:var(--shadow);">'
+           f'<div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;'
+           f'margin-bottom:4px;">MVP (equipo incluido)</div>'
+           f'<div style="font-size:1.5rem;font-weight:700;color:var(--text);">{_rango(mvp["min"], mvp["max"])}</div>'
+           + (f'<div style="font-size:0.78rem;color:var(--muted);">el {mvp["pct"]} del presupuesto</div>'
+              if mvp.get("pct") else "")
+           + '</div>' if mvp else "")
+        + f'</div>'
         f'<div style="margin-bottom:0.875rem;">'
         f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
         f'<span style="font-size:0.82rem;color:var(--muted);">Encaje con el presupuesto</span>'
@@ -1250,6 +1342,9 @@ def _plantilla_json(modelo: type[BaseModel]) -> str:
         extra = getattr(campo, "json_schema_extra", None)
         if isinstance(extra, dict) and extra.get("enum"):
             return "|".join(extra["enum"])
+        opciones = [a for a in get_args(tipo) if a is not type(None)] if get_origin(tipo) in (Union, UnionType) else []
+        if opciones:  # fallo 86: «EquipoDelResto | None» → su forma (puede ir null)
+            return valor(opciones[0])
         if get_origin(tipo) is Literal:
             return "|".join(get_args(tipo))
         if get_origin(tipo) is list:
@@ -1542,7 +1637,12 @@ def run_estimation_crew(
             "El coste del equipo (desarrollo e implantación) se calcula aparte con las tarifas de la empresa: NO lo "
             "incluyas como componente. Los totales, el horizonte y el encaje con el presupuesto se calculan después a "
             "partir de tus importes. En meses_proyecto pon los meses del alcance que se presupuesta (el piloto, si lo "
-            "hay) según el plazo del cliente. En presupuesto_cliente_max_eur pon el máximo del presupuesto que "
+            "hay) según el plazo del cliente. "
+            # Fallo 86: lo de la fase 2 no se paga durante el MVP
+            "Si el cliente pide un MVP o piloto y después el proyecto completo, pon en fase desde cuándo se paga cada "
+            "componente: mvp si entra ya en el MVP, proyecto_completo si solo entra después (por ejemplo, lo que la "
+            "arquitectura deja para la fase 2). Si no hay MVP, todo va como mvp. "
+            "En presupuesto_cliente_max_eur pon el máximo del presupuesto que "
             "indica el caso del cliente, o 0 si no lo indica. Si incluyes una contingencia, usa un único porcentaje, "
             "el mismo en todo el informe: ponlo en contingencia_pct (0 si no hay) y no lo añadas como componente. "
             # Fallo 57: sin totales propios, que no cuadraban con las tarjetas
@@ -1582,8 +1682,14 @@ def run_estimation_crew(
     team_building_task = Task(
         description=(
             "A partir de la propuesta de solución y de los datos del cliente, identifica los perfiles profesionales necesarios "
-            "para implementar lo que pide el cliente en el plazo que indica (el piloto, si lo hay), no la solución completa a largo plazo. "
-            "Incluye solo los perfiles imprescindibles para ese alcance y, para cada uno, sus responsabilidades clave, las "
+            "para implementar lo que pide el cliente en el plazo que indica. "
+            # Fallo 86: el MVP y el resto del proyecto, cada uno con sus perfiles
+            "Si el cliente pide un MVP o piloto y después el proyecto completo, hay dos alcances: el MVP y el resto del "
+            "proyecto (lo que va después del MVP). Di en cada perfil en qué alcance trabaja: «Alcance: MVP», «Alcance: "
+            "resto del proyecto» o «Alcance: MVP y resto del proyecto». Un perfil que solo hace falta para lo que va "
+            "después del MVP (por ejemplo, los de IA si la IA es de la fase 2) no va en el MVP. Si no hay MVP, hay un "
+            "solo alcance. "
+            "Incluye solo los perfiles imprescindibles para cada alcance y, para cada uno, sus responsabilidades clave, las "
             "habilidades requeridas y si su dedicación es completa o parcial. "
             "Escribe un apartado por perfil, con su nombre como título y una lista debajo; no uses tablas. "
             "Distingue su dedicación en el desarrollo (construir la solución) y en la implantación (ponerla en "
@@ -1630,6 +1736,12 @@ def run_estimation_crew(
             "si el cliente pide un piloto, los meses del piloto, no los del despliegue completo. En meses_implantacion "
             "pon cuántos de esos meses, al final, son de implantación; antes tiene que quedar al menos un mes de "
             "desarrollo. "
+            # Fallo 86: el resto del proyecto, con su equipo y sus meses; el total lo suma el programa
+            "Si el cliente pide un MVP o piloto y después el proyecto completo, lo de arriba es el MVP (solo los perfiles "
+            "que trabajan en él), y en resto_del_proyecto pon el equipo de lo que va después: los perfiles que "
+            "trabajan en el resto del proyecto, con sus horas, y sus meses, que son solo los que van después del MVP "
+            "hasta el plazo del proyecto completo (con un MVP de 4 meses y el proyecto completo en 10, son 6). Si no "
+            "hay MVP, resto_del_proyecto es null. "
             # Fallo 61: con la implantación «después» del piloto, llegaban 0 meses de implantación con horas en ella
             "La implantación va dentro de esos meses, no después: si algún perfil tiene horas de implantación, "
             "meses_implantacion no puede ser 0. "
@@ -1673,6 +1785,14 @@ def run_estimation_crew(
     # Coste del equipo: el LLM elige perfiles, nivel, horas y meses; las cuentas se hacen aquí
     equipo_pydantic = _leer_salida(team_cost_task, EquipoEstimado) if team_cost_task else None
     equipo = _calcular_equipo(equipo_pydantic, tarifas) if equipo_pydantic else None
+    # Fallo 86: el equipo de lo que va después del MVP, calculado igual; el total del proyecto completo suma los dos
+    resto_pydantic = getattr(equipo_pydantic, "resto_del_proyecto", None)
+    if equipo and resto_pydantic and resto_pydantic.perfiles:
+        equipo["resto"] = _calcular_equipo(resto_pydantic, tarifas)
+        print(f"[estimation_crew] Resto del proyecto: {resto_pydantic.meses_min}–{resto_pydantic.meses_max} meses "
+              f"después del MVP, {len(resto_pydantic.perfiles)} perfiles")
+    elif equipo_pydantic:
+        print("[estimation_crew] Sin resto del proyecto: se valora un solo alcance")
     if equipo_pydantic:  # fallo 61: los meses y las fases tal como los dio el modelo, para revisar cada ejecución
         con_impl = sum(p.horas_mes_implantacion > 0 for p in equipo_pydantic.perfiles)
         print(f"[estimation_crew] Equipo: {equipo_pydantic.meses_min}–{equipo_pydantic.meses_max} meses, "
@@ -1708,7 +1828,12 @@ def run_estimation_crew(
                               "llegado cortada. La tabla de coste de abajo sí está completa.")
 
     if equipo:
-        team_profiles = team_profiles + "\n\n---\n\n## Estimación de Coste del Equipo\n\n" + equipo["texto"]
+        if equipo.get("resto"):  # fallo 86: una tabla por alcance
+            team_profiles = (team_profiles + "\n\n---\n\n## Estimación de Coste del Equipo\n\n### MVP\n\n"
+                             + equipo["texto"] + "\n\n### Resto del proyecto, después del MVP\n\n"
+                             + equipo["resto"]["texto"])
+        else:
+            team_profiles = team_profiles + "\n\n---\n\n## Estimación de Coste del Equipo\n\n" + equipo["texto"]
 
 
     return EstimationResult(

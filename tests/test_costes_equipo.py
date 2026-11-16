@@ -163,4 +163,51 @@ assert [t.name for t in contextos["equipo"]] == ["perfiles"]  # equipo sigue ley
 assert "79.600 € – 112.800 €" in resultado.cost_estimation  # el total sigue juntando costes y equipo
 print("OK 7: costes va a la vez que perfiles → equipo, perfiles no lee costes, y el total junta los dos")
 
+# 8) Fallo 86: el MVP y el resto del proyecto, cada uno con sus meses y su equipo. El proyecto completo es la suma; lo que
+#    solo entra después del MVP se paga en los meses del resto; el encaje es el del proyecto completo y el MVP sale como
+#    parte del presupuesto. El 14 nov salió «4–10 meses» y «Medio» con el equipo completo durante 4 meses
+from agents.estimation_crew import ComponenteCoste, EquipoDelResto, ResumenEjecutivo
+
+mvp = EquipoEstimado(perfiles=[PerfilEquipo(perfil="Data Engineer", nivel="Senior", horas_mes=160)],  # 7.200 €/mes
+                     meses_min=4, meses_max=4)
+resto = EquipoDelResto(perfiles=[PerfilEquipo(perfil="Data Engineer", nivel="Senior", horas_mes=160),
+                                 PerfilEquipo(perfil="Data Scientist", nivel="Senior", horas_mes=160)],
+                       meses_min=6, meses_max=6)
+calculado = _calcular_equipo(mvp, tarifas)
+calculado["resto"] = _calcular_equipo(resto, tarifas)
+tarifa_ds = tarifas[("data scientist", "senior")]
+informe = CostEstimationReport(
+    componentes=[ComponenteCoste(componente="Lago de datos", categoria="infraestructura", precio_unitario_eur=1_000,
+                                 unidades=1, unidad="mes", periodicidad="mensual", referencia="x", fase="mvp"),
+                 ComponenteCoste(componente="Visión artificial", categoria="infraestructura", precio_unitario_eur=500,
+                                 unidades=1, unidad="mes", periodicidad="mensual", referencia="x", fase="Fase 2")],
+    resumen_ejecutivo=ResumenEjecutivo(meses_proyecto=4, presupuesto_cliente_max_eur=200_000, justificacion="x"),
+    supuestos=[])
+assert informe.componentes[1].fase == "proyecto_completo"  # «Fase 2» se entiende
+dos = {**caso, "plazo_objetivo": {"description": "Plazo", "value": "MVP en 4 meses; proyecto completo en 10 meses"}}
+html = ec._format_cost_report(informe, "", calculado, dos)
+mvp_total = 1_000 * 4 + 7_200 * 4                                    # sin la visión artificial, que es de la fase 2
+completo = 1_000 * 10 + 500 * 6 + 7_200 * 4 + (7_200 + 160 * tarifa_ds) * 6
+assert f"Proyecto completo (equipo incluido)</div><div style=\"font-size:1.5rem;font-weight:700;color:var(--text);\">" \
+       f"{ec._eur(completo)}" in html, html
+assert "MVP: 4 meses" in html and f">{ec._eur(mvp_total)}</div>" in html
+pct = round(100 * mvp_total / 200_000)
+assert f"el {pct} % del presupuesto" in html and f"El MVP (4 meses) cuesta {ec._eur(mvp_total)}: el {pct} %" in html
+nivel_esperado = "Alto" if completo <= 200_000 else "Bajo"
+assert f">{nivel_esperado}: el proyecto completo, 10 meses; el MVP se lleva el {pct} %<" in html, html
+assert "Parcial" not in html  # con el proyecto completo valorado no hace falta el «Parcial» del fallo 84
+assert "Desde el fin del MVP · en 6 meses: 3.000 €" in html and "Desde el MVP · en 10 meses: 10.000 €" in html
+assert "Equipo del MVP · 4 meses" in html and "Equipo del resto del proyecto · 6 meses" in html
+# Sin resto del proyecto, la fase no cambia nada: todo se paga en los meses valorados, como antes
+html = ec._format_cost_report(informe, "", _calcular_equipo(mvp, tarifas), caso)
+assert "En 4 meses: 2.000 €" in html and "Proyecto completo" not in html
+# El equipo lo pide así el JSON y run_estimation_crew calcula y enseña los dos alcances
+assert '"resto_del_proyecto": {"perfiles": [' in ec._plantilla_json(EquipoEstimado)
+equipo = mvp.model_copy(update={"resto_del_proyecto": resto})  # lo que devuelve el modelo simulado
+resultado = ec.run_estimation_crew("PROPUESTA SIMULADA", "groq/openai/gpt-oss-20b", problem_case=dos)
+assert "Proyecto completo (equipo incluido)" in resultado.cost_estimation
+assert "### MVP" in resultado.team_profiles and "### Resto del proyecto, después del MVP" in resultado.team_profiles
+assert "Data Scientist" in resultado.team_profiles.split("### Resto del proyecto")[1]
+print(f"OK 8: el MVP ({ec._eur(mvp_total)}, {pct} %) y el proyecto completo ({ec._eur(completo)}) se valoran por separado")
+
 print("\nTodo bien: el fallo 5 está arreglado.")

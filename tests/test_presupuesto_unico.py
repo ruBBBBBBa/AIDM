@@ -81,8 +81,13 @@ assert all(REGLA not in p for p in prompts["costes"]), "la crew de costes sí de
 print("OK 2: los 12 prompts de estructura, propuesta y roadmap prohíben presupuestos propios; los 3 de costes no")
 
 # 3) Perfiles: el alcance pedido, el tipo de servicio y sin cifras ni lista fija de roles
-costes, perfiles, equipo = prompts["costes"]
-assert "no la solución completa a largo plazo" in perfiles
+# Fallo 93: costes y perfiles van a la vez, así que los prompts pueden llegar en cualquier orden
+costes = next(p for p in prompts["costes"] if "valora el coste de cada componente" in p)
+perfiles = next(p for p in prompts["costes"] if "identifica los perfiles profesionales" in p)
+equipo = next(p for p in prompts["costes"] if "define el equipo que se va a presupuestar" in p)
+# Fallo 86: el MVP y el resto del proyecto, cada perfil en su alcance (antes: solo el piloto)
+assert "Un perfil que solo hace falta para lo que va después del MVP" in perfiles
+assert "en resto_del_proyecto pon el equipo de lo que va después" in equipo
 assert "si su dedicación es completa o parcial" in perfiles
 assert "si quiere que Inetum lo implemente" in perfiles
 assert "No des cifras de coste" in perfiles
