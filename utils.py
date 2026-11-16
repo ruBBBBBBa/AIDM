@@ -292,6 +292,9 @@ def contexto_cliente(problem_case: dict, con_costes: bool = False) -> str:
             partes.append("MODELO DE DESPLIEGUE: híbrido, por decisión de Inetum. Lo que no puede salir de sus servidores "
                           "(sistemas que no se pueden mover, datos que no pueden salir, equipos de planta) se queda en "
                           f"ellos y el resto va a {plataforma['value']}; diséñalo así aunque modelo_de_despliegue diga otro.")
+    evitar = texto_servicios_a_evitar(problem_case)  # fallo 83: lo que no hay que proponer en esa nube
+    if evitar:
+        partes.append(evitar)
     for estado, lineas in grupos.items():
         if lineas:
             partes.append(titulos[estado] + "\n" + "\n".join(lineas))
@@ -302,6 +305,88 @@ def contexto_cliente(problem_case: dict, con_costes: bool = False) -> str:
         partes.append("(sin datos del cliente)")
     reglas = REGLAS_DATOS_CLIENTE if con_costes else REGLAS_DATOS_CLIENTE + REGLA_PRESUPUESTO
     return "\n\n".join(partes) + "\n\n" + reglas
+
+# --- Fallo 83: servicios que no se deben proponer en la nube elegida ---
+# Las listas están en data_structures/hiperescalares.yaml (servicios_a_evitar): lo que no está en la región en España
+# de cada nube y lo retirado o cerrado a clientes nuevos, con su alternativa y su fuente. El 12 nov el informe ponía en
+# Aragón Rekognition Custom Labels, SageMaker Serverless Inference y Macie; el 14 nov, Lookout for Vision (retirado).
+HIPERESCALARES_PATH = Path("data_structures/hiperescalares.yaml")
+
+
+def _clave_de_nube(problem_case: dict | None, config: dict) -> str:
+    """La clave en hiperescalares.yaml de la nube en la que se diseña: la plataforma objetivo o, si no la hay, la que
+    nombra cloud_provider. Vacío si no se sabe."""
+    proveedores = config.get("proveedores") or {}
+    plataforma = (problem_case or {}).get(PLATAFORMA_OBJETIVO)
+    nombre = plataforma.get("value") if isinstance(plataforma, dict) else ""
+    for clave, datos in proveedores.items():
+        if nombre and _normalize_text(str(datos.get("nombre", ""))) == _normalize_text(str(nombre)):
+            return clave
+    texto = _normalize_text(" ".join(str((problem_case or {}).get(c, {}).get("value") or "")
+                                     for c in ("cloud_provider",) if isinstance((problem_case or {}).get(c), dict)))
+    for clave, datos in proveedores.items():
+        if any(re.search(rf"\b{re.escape(_normalize_text(p))}\b", texto) for p in datos.get("claves") or []):
+            return clave
+    return ""
+
+
+def servicios_a_evitar(problem_case: dict | None, config: dict | None = None) -> list[dict]:
+    """Fallo 83: los servicios que no hay que proponer en la nube del caso, cada uno con «tipo» («no_en_region» o
+    «retirado»), su motivo y su alternativa. Lista vacía si no se sabe la nube o no hay yaml."""
+    if config is None:
+        try:
+            config = yaml.safe_load(HIPERESCALARES_PATH.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            return []
+    clave = _clave_de_nube(problem_case, config)
+    listas = ((config.get("servicios_a_evitar") or {}).get(clave)) or {}
+    region = ((config.get("proveedores") or {}).get(clave) or {}).get("region_espana", "su región en España")
+    salida = []
+    for entrada in listas.get("no_en_region") or []:
+        salida.append({**entrada, "tipo": "no_en_region", "motivo": f"no está en {region}",
+                       "usar": entrada.get("alternativa", "")})
+    for entrada in listas.get("retirados") or []:
+        salida.append({**entrada, "tipo": "retirado", "motivo": entrada.get("estado", "retirado"),
+                       "usar": entrada.get("sustituto", "")})
+    return salida
+
+
+def texto_servicios_a_evitar(problem_case: dict | None, config: dict | None = None) -> str:
+    """Fallo 83: el bloque que va en los datos del cliente de todos los agentes."""
+    lista = servicios_a_evitar(problem_case, config)
+    if not lista:
+        return ""
+    lineas = [f"- {s['servicio']}: {s['motivo']}. En su lugar: {s['usar']}." for s in lista]
+    return ("SERVICIOS QUE NO DEBES PROPONER en esta nube (no están en su región en España, o están retirados o "
+            "cerrados a clientes nuevos). No los nombres como opción; usa la alternativa:\n" + "\n".join(lineas))
+
+
+def revisar_servicios(texto: str, problem_case: dict | None, seccion: str,
+                      config: dict | None = None) -> list[dict]:
+    """Fallo 83: los servicios a evitar que nombra un texto de una sección. Lo dice en el log, una línea por servicio."""
+    normal = _normalize_text(texto or "")
+    hallados = []
+    for s in servicios_a_evitar(problem_case, config):
+        if any(re.search(rf"(?<![\w-]){re.escape(_normalize_text(b))}(?![\w-])", normal) for b in s.get("buscar") or []):
+            hallados.append(s)
+            logger.warning("[servicios] %s nombra %s (%s); en su lugar: %s", seccion, s["servicio"], s["motivo"],
+                           s["usar"])
+    return hallados
+
+
+def nota_servicios(hallados: list[dict]) -> str:
+    """Fallo 83: la nota visible, en markdown, que va al principio de la sección que nombra servicios a evitar."""
+    if not hallados:
+        return ""
+    lineas = [f"- **{s['servicio']}** {s['motivo']}: en su lugar, {s['usar']}." for s in hallados]
+    return ("> **Ojo: esta sección nombra servicios que no se pueden usar tal cual en la nube elegida.** Hay que "
+            "cambiarlos antes de presentar la propuesta:\n>\n" + "\n".join(f"> {l}" for l in lineas) + "\n\n")
+
+
+def con_nota_de_servicios(texto: str, problem_case: dict | None, seccion: str) -> str:
+    """Fallo 83: el texto (markdown) con la nota delante si nombra servicios a evitar."""
+    return nota_servicios(revisar_servicios(texto, problem_case, seccion)) + (texto or "")
+
 
 # Fallo 44: los importes salen solo en la sección de costes, donde se suman en Python. Arquitectura, BI y el
 # roadmap los ponían igualmente («~500 €/mes», «6.000 €/año») aunque REGLA_PRESUPUESTO se lo prohíbe

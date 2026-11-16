@@ -140,6 +140,224 @@ proveedores:
     hibrido: IBM Cloud Satellite   # fallo 70: sus servicios en el centro de datos del cliente
 
 
+# Fallo 83: servicios que AIDM no debe proponer en cada nube. contexto_cliente() pasa a los agentes los de la nube elegida
+# con su alternativa, y después de la propuesta, los costes y el roadmap Python busca sus nombres en el texto: si sale
+# alguno, lo dice el log y la sección lleva una nota. El 12 nov el informe ponía en Aragón Rekognition Custom Labels,
+# SageMaker Serverless Inference y Macie, que no están allí; el 14 nov, Lookout for Vision, retirado en 2025.
+# - no_en_region: no está en la región en España de esa nube (region_espana).
+# - retirados: retirado, con el fin anunciado o cerrado a clientes nuevos.
+# «buscar»: cómo se nombra en el texto, en minúsculas y sin tildes (cualquiera de ellas lo delata). Solo entran los
+# comprobados en la fuente oficial; la fecha es la de la consulta. Sin comprobar (16 nov): qué falta en Spain Central de
+# Azure (la tabla de productos por región de Microsoft se genera en el navegador) y en Madrid, Dataflow, Dataproc,
+# Pub/Sub, Composer y los modelos Gemini.
+servicios_a_evitar:
+  aws:
+    no_en_region:
+      - servicio: Amazon Rekognition Custom Labels
+        buscar: [rekognition custom labels]
+        alternativa: un modelo de visión propio en Amazon SageMaker AI, con endpoint en tiempo real (está en eu-south-2)
+        fuente: https://docs.aws.amazon.com/general/latest/gr/rekognition.html
+        fecha: 2026-11-12
+      - servicio: Amazon SageMaker Serverless Inference
+        buscar: [serverless inference, inferencia serverless, sagemaker serverless]
+        alternativa: un endpoint en tiempo real de SageMaker AI o inferencia por lotes (Batch Transform), que sí están en eu-south-2
+        fuente: https://docs.aws.amazon.com/sagemaker/latest/dg/serverless-endpoints.html
+        fecha: 2026-11-12
+      - servicio: Amazon Macie
+        buscar: [macie]
+        alternativa: la detección de datos sensibles de AWS Glue y las etiquetas de AWS Lake Formation (están en eu-south-2)
+        fuente: https://docs.aws.amazon.com/general/latest/gr/macie.html
+        fecha: 2026-11-12
+      - servicio: AWS IoT SiteWise
+        buscar: [iot sitewise, sitewise]
+        alternativa: AWS IoT Core con Amazon Timestream for InfluxDB para las series temporales (están en eu-south-2)
+        fuente: https://docs.aws.amazon.com/general/latest/gr/iot-sitewise.html
+        fecha: 2026-11-16
+    retirados:
+      - servicio: Amazon Lookout for Vision
+        buscar: [lookout for vision]
+        estado: retirado el 31 oct 2025 (cerrado a clientes nuevos desde el 10 oct 2024)
+        sustituto: un modelo de visión en Amazon SageMaker AI (modelos preentrenados de JumpStart) o Amazon Bedrock
+        fuente: https://aws.amazon.com/blogs/machine-learning/exploring-alternatives-and-seamlessly-migrating-data-from-amazon-lookout-for-vision/
+        fecha: 2026-11-16
+      - servicio: Amazon Lookout for Equipment
+        buscar: [lookout for equipment]
+        estado: retirado el 7 oct 2026 (cerrado a clientes nuevos desde el 7 oct 2025)
+        sustituto: la detección de anomalías multivariante de AWS IoT SiteWise; en eu-south-2, donde SiteWise no está, un modelo de anomalías en Amazon SageMaker AI
+        fuente: https://aws.amazon.com/blogs/machine-learning/preserve-access-and-explore-alternatives-for-amazon-lookout-for-equipment/
+        fecha: 2026-11-16
+      - servicio: Amazon Lookout for Metrics
+        buscar: [lookout for metrics]
+        estado: retirado el 10 oct 2025
+        sustituto: AWS Glue Data Quality, Amazon Redshift ML, la detección de anomalías de Amazon CloudWatch o Amazon QuickSight
+        fuente: https://aws.amazon.com/blogs/machine-learning/transitioning-off-amazon-lookout-for-metrics/
+        fecha: 2026-11-16
+      - servicio: Amazon Forecast
+        buscar: [amazon forecast]
+        estado: cerrado a clientes nuevos desde el 29 jul 2024
+        sustituto: la previsión de series temporales de Amazon SageMaker Canvas (o la API de AutoML de SageMaker)
+        fuente: https://aws.amazon.com/blogs/machine-learning/transition-your-amazon-forecast-usage-to-amazon-sagemaker-canvas/
+        fecha: 2026-11-16
+      - servicio: AWS IoT Analytics
+        buscar: [aws iot analytics]
+        estado: retirado el 15 dic 2025
+        sustituto: Amazon Kinesis Data Streams y Amazon S3, con Glue y Athena para analizar
+        fuente: https://docs.aws.amazon.com/iotanalytics/latest/userguide/iotanalytics-end-of-support.html
+        fecha: 2026-11-16
+      - servicio: AWS IoT Events
+        buscar: [aws iot events]
+        estado: retirado el 20 may 2026
+        sustituto: reglas de AWS IoT Core con AWS Lambda o Amazon EventBridge para las alarmas (propuesta de AIDM; la página oficial no se pudo leer)
+        fuente: https://aws.amazon.com/about-aws/whats-new/2025/05/aws-service-changes
+        fecha: 2026-11-16
+      - servicio: Amazon Timestream for LiveAnalytics
+        buscar: [timestream for liveanalytics, timestream for live analytics]
+        estado: cerrado a clientes nuevos desde el 20 jun 2025
+        sustituto: Amazon Timestream for InfluxDB (está en eu-south-2)
+        fuente: https://aws.amazon.com/about-aws/whats-new/2025/05/aws-service-changes
+        fecha: 2026-11-16
+      - servicio: Amazon Fraud Detector
+        buscar: [fraud detector]
+        estado: cerrado a clientes nuevos desde el 7 nov 2025 (en mantenimiento)
+        sustituto: un modelo propio en Amazon SageMaker AI
+        fuente: https://aws.amazon.com/about-aws/whats-new/2025/10/aws-service-availability
+        fecha: 2026-11-16
+      - servicio: Amazon Glacier (el servicio de bóvedas, no las clases de almacenamiento de S3)
+        buscar: [glacier vault, boveda de glacier, bovedas de glacier]
+        estado: cerrado a clientes nuevos desde el 7 nov 2025 (en mantenimiento)
+        sustituto: las clases de almacenamiento S3 Glacier (Instant Retrieval, Flexible Retrieval o Deep Archive)
+        fuente: https://aws.amazon.com/about-aws/whats-new/2025/10/aws-service-availability
+        fecha: 2026-11-16
+      - servicio: AWS IoT Greengrass V1
+        buscar: [greengrass v1, greengrass version 1]
+        estado: en fin de vida (sunset)
+        sustituto: AWS IoT Greengrass V2
+        fuente: https://aws.amazon.com/about-aws/whats-new/2025/10/aws-service-availability
+        fecha: 2026-11-16
+  azure:
+    no_en_region: []
+    retirados:
+      - servicio: Azure Data Lake Analytics
+        buscar: [azure data lake analytics]
+        estado: retirado el 29 feb 2024
+        sustituto: Spark en Microsoft Fabric o en Azure Synapse Analytics
+        fuente: https://learn.microsoft.com/en-us/azure/data-lake-analytics/migrate-azure-data-lake-analytics-to-synapse
+        fecha: 2026-11-16
+      - servicio: Azure Time Series Insights
+        buscar: [time series insights]
+        estado: retirado el 7 jul 2024
+        sustituto: Eventhouse en Microsoft Fabric Real-Time Intelligence (o Azure Data Explorer)
+        fuente: https://learn.microsoft.com/en-us/azure/time-series-insights/migration-to-fabric
+        fecha: 2026-11-16
+      - servicio: HDInsight on AKS
+        buscar: [hdinsight on aks]
+        estado: retirado el 31 ene 2025
+        sustituto: Microsoft Fabric
+        fuente: https://learn.microsoft.com/en-us/azure/hdinsight-aks/overview
+        fecha: 2026-11-16
+      - servicio: Azure AI Anomaly Detector
+        buscar: [anomaly detector]
+        estado: retirado el 1 oct 2026 (sin recursos nuevos desde el 20 sep 2023)
+        sustituto: la detección de anomalías de Microsoft Fabric
+        fuente: https://learn.microsoft.com/en-us/azure/ai-services/anomaly-detector/overview
+        fecha: 2026-11-16
+      - servicio: Azure AI Metrics Advisor
+        buscar: [metrics advisor]
+        estado: retirado el 18 may 2026
+        sustituto: la detección de anomalías de Azure Monitor (KQL) o de Microsoft Fabric
+        fuente: https://learn.microsoft.com/en-us/azure/ai-services/metrics-advisor/overview
+        fecha: 2026-11-16
+      - servicio: Language Understanding (LUIS)
+        buscar: [language understanding]   # «LUIS» solo no: puede ser el nombre de alguien del cliente
+        estado: retirado el 31 mar 2026
+        sustituto: comprensión del lenguaje conversacional (CLU) de Azure AI Language
+        fuente: https://learn.microsoft.com/en-us/azure/ai-services/luis/what-is-luis
+        fecha: 2026-11-16
+      - servicio: QnA Maker
+        buscar: [qna maker]
+        estado: retirado el 31 oct 2025
+        sustituto: respuesta a preguntas personalizada (custom question answering) de Azure AI Language
+        fuente: https://learn.microsoft.com/en-us/azure/ai-services/qnamaker/overview/overview
+        fecha: 2026-11-16
+      - servicio: Azure Data Catalog (Gen1)
+        buscar: [azure data catalog]
+        estado: retirado el 15 may 2024
+        sustituto: Microsoft Purview
+        fuente: https://learn.microsoft.com/en-us/azure/data-catalog/overview
+        fecha: 2026-11-16
+      - servicio: Grupos de Data Explorer de Azure Synapse
+        buscar: [data explorer pool, synapse data explorer]
+        estado: retirado el 7 oct 2025
+        sustituto: Eventhouse en Microsoft Fabric
+        fuente: https://learn.microsoft.com/en-us/azure/synapse-analytics/data-explorer/data-explorer-overview
+        fecha: 2026-11-16
+      - servicio: Azure SQL Edge
+        buscar: [sql edge]
+        estado: retirado el 30 sep 2025
+        sustituto: SQL Server en el equipo de planta o Azure SQL (la página oficial no da sustituto)
+        fuente: https://learn.microsoft.com/en-us/azure/azure-sql-edge/overview
+        fecha: 2026-11-16
+      - servicio: Azure AI Custom Vision
+        buscar: [custom vision]
+        estado: retirada anunciada; soporte hasta el 25 sep 2028, así que no conviene en un proyecto nuevo
+        sustituto: AutoML de Azure Machine Learning o los modelos de visión de Azure AI Foundry
+        fuente: https://learn.microsoft.com/en-us/azure/ai-services/custom-vision-service/overview
+        fecha: 2026-11-16
+  google:
+    no_en_region:
+      - servicio: Document AI
+        buscar: [document ai]
+        alternativa: Document AI en la multirregión eu (los documentos salen de España, y hay que decirlo como riesgo) o la extracción con modelos de Vertex AI
+        fuente: https://cloud.google.com/document-ai/docs/regions
+        fecha: 2026-11-16
+      - servicio: Vertex AI Feature Store
+        buscar: [feature store]
+        alternativa: tablas de características en BigQuery (está en europe-southwest1)
+        fuente: https://cloud.google.com/vertex-ai/docs/general/locations
+        fecha: 2026-11-16
+      - servicio: Vertex AI Model Monitoring
+        buscar: [vertex ai model monitoring, model monitoring de vertex]
+        alternativa: el seguimiento de las predicciones con consultas programadas en BigQuery y alertas de Cloud Monitoring
+        fuente: https://cloud.google.com/vertex-ai/docs/general/locations
+        fecha: 2026-11-16
+    retirados:
+      - servicio: AI Platform (Training, Prediction, Pipelines y Data Labeling heredados)
+        buscar: [ai platform training, ai platform prediction, ai platform pipelines, ai platform data labeling]
+        estado: retirado el 7 abr 2025 (Pipelines y Data Labeling, el 31 ene 2025)
+        sustituto: Vertex AI (entrenamiento personalizado, predicciones y Vertex AI Pipelines)
+        fuente: https://cloud.google.com/vertex-ai/docs/deprecations
+        fecha: 2026-11-16
+      - servicio: Data Catalog
+        buscar: [data catalog]
+        estado: retirado el 1 jun 2026 (Policy Tag Manager sigue)
+        sustituto: Knowledge Catalog de Dataplex
+        fuente: https://cloud.google.com/data-catalog/docs/deprecations
+        fecha: 2026-11-16
+      - servicio: Vertex AI Feature Store (Legacy)
+        buscar: [feature store (legacy), feature store legacy]
+        estado: obsoleto desde el 17 feb 2026; se retira el 17 feb 2027
+        sustituto: Vertex AI Feature Store (V2)
+        fuente: https://cloud.google.com/vertex-ai/docs/featurestore/overview
+        fecha: 2026-11-16
+      - servicio: AutoML heredado (AutoML Tables, Vision, Video Intelligence, Natural Language)
+        buscar: [automl tables, automl vision, automl natural language, automl video]
+        estado: retirados en 2024 y 2025
+        sustituto: Vertex AI (y Gemini para texto y vídeo)
+        fuente: https://cloud.google.com/vertex-ai/docs/deprecations
+        fecha: 2026-11-16
+      - servicio: Cuadernos gestionados y de usuario de Vertex AI Workbench
+        buscar: [managed notebooks, user-managed notebooks, cuadernos gestionados]
+        estado: retirados el 14 abr 2025; instancias borradas el 30 mar 2026
+        sustituto: instancias de Vertex AI Workbench
+        fuente: https://cloud.google.com/vertex-ai/docs/deprecations
+        fecha: 2026-11-16
+      - servicio: Vertex Explainable AI
+        buscar: [vertex explainable ai, vertex ai explainable]
+        estado: obsoleto desde el 16 mar 2026; se retira el 16 mar 2027
+        sustituto: SHAP o LIME sobre el modelo
+        fuente: https://cloud.google.com/vertex-ai/docs/deprecations
+        fecha: 2026-11-16
+
 # Lo que el informe recuerda siempre al hablar de cambiar de nube.
 notas:
   - "Ley de Datos de la UE: desde el 12 de enero de 2027 los proveedores no pueden cobrar por cambiar de nube, tampoco la salida de los datos; hasta entonces, como mucho lo que les cueste. AWS, Azure y Google ya no cobran la salida de datos al marcharse desde 2024."

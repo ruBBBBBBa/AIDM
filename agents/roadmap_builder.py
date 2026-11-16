@@ -7,8 +7,8 @@ from crewai import Agent, Crew, Process, Task
 from dotenv import load_dotenv
 import gateway
 import progreso
-from utils import (_make_agent, contexto_cliente, load_agents_config, load_problem_case, parse_html, md_to_html,
-                   sin_importes, sin_emojis)
+from utils import (_make_agent, con_nota_de_servicios, contexto_cliente, load_agents_config, load_problem_case,
+                   parse_html, md_to_html, sin_importes, sin_emojis)
 
 load_dotenv(".env")
 
@@ -369,6 +369,9 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
 
     # Fallo 44: los importes salen solo en la sección de costes, donde se suman en Python
     captured_outputs[:] = [sin_importes(texto, problem_case, f"roadmap {n}") for n, texto in enumerate(captured_outputs, 1)]
+    # Fallo 83: la fase que nombre un servicio que no está en la región o está retirado lleva una nota visible
+    captured_outputs[:] = [con_nota_de_servicios(texto, problem_case, f"roadmap: {TITULOS[n]}") if texto.strip() else texto
+                           for n, texto in enumerate(captured_outputs)]
 
     if len(captured_outputs) == 7:
         inject_roadmap_into_html(*captured_outputs)

@@ -7,7 +7,9 @@ from pydantic import BaseModel
 import progreso
 from agents.estimation_crew import run_estimation_crew
 from agents.proposal_crew import run_proposal_crew
-from utils import md_to_html, parse_html, sin_importes
+import re
+
+from utils import con_nota_de_servicios, md_to_html, nota_servicios, parse_html, revisar_servicios, sin_importes
 
 load_dotenv(".env")
 
@@ -100,6 +102,16 @@ def propose_solution(
         campo: sin_importes(getattr(proposal, campo), problem_case, campo)
         for campo in ("architecture", "governance", "data_ai_strategy", "bi_visualization")
     })
+    # Fallo 83: si una sección nombra un servicio que no está en la región o está retirado, lo dice el log y la sección
+    # lleva una nota visible al principio
+    proposal = proposal.model_copy(update={
+        campo: con_nota_de_servicios(getattr(proposal, campo), problem_case, campo)
+        for campo in ("architecture", "governance", "data_ai_strategy", "bi_visualization")
+    })
+    hallados = revisar_servicios(re.sub(r"<[^>]+>", " ", estimation.cost_estimation or ""), problem_case, "costes")
+    if hallados:
+        estimation = estimation.model_copy(update={
+            "cost_estimation": md_to_html(nota_servicios(hallados)) + estimation.cost_estimation})
 
     _inject_into_html(
         proposal.architecture,
