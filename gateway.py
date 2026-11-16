@@ -16,6 +16,7 @@ gastado de los cupos gratuitos (precios y cupos, en el yaml). Con GRABAR_LLAMADA
 .env, además se guardan los prompts y las respuestas en pruebas_modelos/grabaciones/, para compararlos con
 pruebas_modelos/comparar.py. Llevan datos del cliente: esa carpeta no se sube.
 """
+import asyncio
 import json
 import logging
 import os
@@ -481,12 +482,77 @@ def _reservas_que_quedan(respuesta, kwargs: dict) -> tuple[str, list[dict]]:
     return usado, reservas[nombres.index(usado):] if usado in nombres else reservas
 
 
+# --- Fallo 96: como mucho N peticiones por minuto móvil a cada modelo ---
+# Gemini gratis admite 5 por minuto y modelo (quotaId GenerateRequestsPerMinutePerProjectPerModel-FreeTier). El 14 nov,
+# con las 7 fases del roadmap a la vez, la de BI recibió un 429 y pasó a Cloudflare. Ahora la llamada que llegaría al
+# límite espera su turno. Cada modelo guarda las horas reservadas de sus peticiones; una nueva toma la primera hora que
+# deje como mucho N en cualquier minuto. Con un bloqueo, vale entre los hilos del roadmap y de costes ∥ perfiles.
+VENTANA = 60.0  # segundos
+MARGEN = 1.0    # segundos de más, para no rozar el límite
+_reservas_por_minuto: dict[str, list[float]] = {}
+_bloqueo_minuto = threading.Lock()
+
+
+def _limite_por_minuto(modelo: str, config: dict | None = None) -> int:
+    """Las peticiones por minuto del yaml para un modelo (las suyas o las de su proveedor); 0 si no tiene límite."""
+    config = config if config is not None else _config()
+    proveedor = str(modelo).partition("/")[0]
+    reglas = {**((config.get("proveedores") or {}).get(proveedor) or {}),
+              **((config.get("modelos") or {}).get(str(modelo)) or {})}
+    return int(reglas.get("peticiones_por_minuto") or 0)
+
+
+def _reservar_hueco(modelo: str, limite: int, ahora: float | None = None) -> float:
+    """Fallo 96: reserva la hora de la siguiente petición a `modelo` y devuelve cuántos segundos hay que esperar."""
+    if limite <= 0:
+        return 0.0
+    ahora = time.monotonic() if ahora is None else ahora
+    with _bloqueo_minuto:
+        horas = [h for h in _reservas_por_minuto.get(modelo, []) if h > ahora - VENTANA - MARGEN]
+        hora = ahora if len(horas) < limite else max(ahora, horas[-limite] + VENTANA + MARGEN)
+        horas.append(hora)
+        _reservas_por_minuto[modelo] = horas
+    return hora - ahora
+
+
+def _esperar_turno(kwargs: dict) -> float:
+    """Fallo 96: reserva el hueco del modelo de la llamada y dice en el log cuánto va a esperar. Devuelve los segundos."""
+    modelo = str(kwargs.get("model", ""))
+    if "mock_response" in kwargs:
+        return 0.0  # las respuestas simuladas de los tests no van al proveedor
+    try:
+        limite = _limite_por_minuto(modelo)
+        espera = _reservar_hueco(modelo, limite)
+    except Exception:
+        return 0.0  # el limitador nunca puede romper una llamada
+    if espera > 0:
+        metadata = kwargs.get("metadata")
+        tarea = metadata.get("aidm_tarea") if isinstance(metadata, dict) else ""
+        segundos = f"{espera:.1f}".replace(".", ",")
+        _escribir(f"[gateway] {tarea or '¿tarea?'} · {modelo} espera {segundos} s para no pasar de {limite} "
+                  "peticiones por minuto")
+    return espera
+
+
+async def _acompletion_con_turno(*args, **kwargs):
+    """Fallo 96: cada modelo de la lista de reservas va por litellm.acompletion: aquí espera su turno si hace falta."""
+    espera = _esperar_turno(kwargs)
+    if espera > 0:
+        await asyncio.sleep(espera)
+    return await _acompletion_con_turno.original(*args, **kwargs)
+
+
 def _llamar(original, args, kwargs):
     """Fallo 95: sin reservas, LiteLLM reintenta en la misma llamada aunque el error sea de plan. Aquí el primer intento
     va sin reintentos y, si el error no es de plan, se repite con los que quedan (los mismos intentos en total que
     antes). Con reservas, los reintentos los corta _num_reintentos()."""
     reintentos = int(kwargs.get("num_retries") or 0)
-    if kwargs.get("fallbacks") or not reintentos:
+    if kwargs.get("fallbacks"):
+        return original(*args, **kwargs)  # cada modelo de la lista espera su turno en _acompletion_con_turno
+    espera = _esperar_turno(kwargs)  # fallo 96: sin reservas, la llamada va directa al modelo
+    if espera > 0:
+        time.sleep(espera)
+    if not reintentos:
         return original(*args, **kwargs)
     try:
         return original(*args, **{**kwargs, "num_retries": 0})
@@ -575,3 +641,5 @@ if not getattr(litellm.completion, "aidm_gateway", False):  # una sola vez, aunq
     logging.getLogger("LiteLLM").addHandler(_AvisoDeCupo())  # fallo 92
     _num_reintentos.original = litellm.utils._get_wrapper_num_retries  # fallo 95
     litellm.utils._get_wrapper_num_retries = _num_reintentos
+    _acompletion_con_turno.original = litellm.acompletion  # fallo 96
+    litellm.acompletion = _acompletion_con_turno

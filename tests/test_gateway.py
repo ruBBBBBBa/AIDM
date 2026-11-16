@@ -446,4 +446,57 @@ assert "mistral/otro" in gateway._saltados
 gateway._saltados.clear()
 print("OK 12: un 403 de plan no se reintenta, el modelo se salta en las tareas siguientes y el log lo dice una vez")
 
+# 13) Fallo 96: como mucho N peticiones por minuto móvil a cada modelo (5 en los Gemini gratis); la que llegaría al límite
+#     espera su turno en vez de recibir el 429, también entre hilos. El 14 nov, la 6.ª fase del roadmap a la vez dio 429
+import asyncio
+import threading
+import time
+
+assert gateway._limite_por_minuto("gemini/gemini-3.6-flash") == 5 and gateway._limite_por_minuto(lite) == 5
+assert gateway._limite_por_minuto("cloudflare/@cf/openai/gpt-oss-120b") == 0
+assert "peticiones_por_minuto" not in gateway.parametros("gemini/gemini-3.6-flash")  # no va a LiteLLM
+assert litellm.acompletion is gateway._acompletion_con_turno  # cada modelo de la lista de reservas pasa por aquí
+gateway._reservas_por_minuto.clear()
+esperas = [gateway._reservar_hueco("gemini/x", 5, ahora=100.0) for _ in range(7)]
+assert esperas[:5] == [0.0] * 5 and esperas[5:] == [61.0, 61.0], esperas  # las dos últimas, al minuto (más el margen)
+assert gateway._reservar_hueco("gemini/x", 5, ahora=130.0) == 31.0  # a los 30 s, la 8.ª va en el hueco del minuto
+assert gateway._reservar_hueco("gemini/x", 5, ahora=200.0) == 0.0   # pasado el minuto, sin esperar
+assert gateway._reservar_hueco("cloudflare/y", 0, ahora=100.0) == 0.0  # sin límite en el yaml, nunca espera
+
+# Siete hilos a la vez, como las fases del roadmap, con una ventana de 1 s para que el test no tarde un minuto
+gateway._reservas_por_minuto.clear()
+ventana, margen = gateway.VENTANA, gateway.MARGEN
+gateway.VENTANA, gateway.MARGEN = 1.0, 0.05
+horas_de_llamada = []
+
+
+async def acompletion_simulada(*args, **kwargs):
+    horas_de_llamada.append(time.monotonic())
+    return "respuesta"
+
+
+original_a, gateway._acompletion_con_turno.original = gateway._acompletion_con_turno.original, acompletion_simulada
+log = io.StringIO()
+try:
+    with contextlib.redirect_stdout(log):
+        hilos = [threading.Thread(target=lambda: asyncio.run(gateway._acompletion_con_turno(
+            model="gemini/gemini-3.6-flash", messages=[], metadata={"aidm_tarea": "roadmap_bi"}))) for _ in range(7)]
+        for h in hilos:
+            h.start()
+        for h in hilos:
+            h.join()
+finally:
+    gateway._acompletion_con_turno.original = original_a
+    gateway.VENTANA, gateway.MARGEN = ventana, margen
+horas_de_llamada.sort()
+assert len(horas_de_llamada) == 7
+for n in range(len(horas_de_llamada) - 5):  # en ningún segundo hay más de 5
+    assert horas_de_llamada[n + 5] - horas_de_llamada[n] >= 1.0, horas_de_llamada
+assert log.getvalue().count("[gateway] roadmap_bi · gemini/gemini-3.6-flash espera ") == 2, log.getvalue()
+assert "s para no pasar de 5 peticiones por minuto" in log.getvalue()
+# Las respuestas simuladas de los tests no esperan
+gateway._reservas_por_minuto.clear()
+assert all(gateway._esperar_turno({"model": "gemini/x", "mock_response": "ok"}) == 0 for _ in range(10))
+print("OK 13: como mucho 5 peticiones por minuto a cada Gemini; las demás esperan su turno, también entre hilos")
+
 print("\nTodo bien: el gateway de modelos funciona (en la parte que se puede comprobar sin el LLM real).")
