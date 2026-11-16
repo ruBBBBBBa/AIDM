@@ -282,7 +282,10 @@ try:
                                messages=[{"role": "user", "content": "Fase de BI"}])
     assert r.choices[0].message.content == parrafo * 10
     assert [k["model"] for k in llamadas] == tecnico[:2], llamadas
-    assert llamadas[1]["metadata"] == {"aidm_tarea": "roadmap_bi"} and llamadas[1]["max_tokens"] == 8192  # su regla
+    assert llamadas[1]["metadata"] == {"aidm_tarea": "roadmap_bi"}
+    reglas_reserva = gateway._reglas(tecnico[1])  # las reglas de la reserva, y no las del primero
+    assert all(llamadas[1][k] == v for k, v in reglas_reserva.items()), llamadas[1]
+    assert ("max_tokens" in llamadas[1]) == ("max_tokens" in reglas_reserva), llamadas[1]
     assert [f["model"] for f in llamadas[1]["fallbacks"]] == tecnico[2:]  # las que quedan detrás
     assert (f"[gateway] roadmap_bi · {tecnico[0]} ha dado una respuesta degenerada (" in log.getvalue()
             and f"pasa a la reserva {tecnico[1]}" in log.getvalue()), log.getvalue()
