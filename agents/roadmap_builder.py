@@ -7,6 +7,7 @@ from crewai import Agent, Crew, Process, Task
 from dotenv import load_dotenv
 import gateway
 import progreso
+from agents import inventario
 from utils import (_make_agent, con_nota_de_servicios, contexto_cliente, load_agents_config, load_problem_case,
                    parse_html, md_to_html, sin_importes, sin_emojis)
 
@@ -53,6 +54,19 @@ REFERENCIA = (
     "otros ni cambies lo que ya está decidido. Si algo te parece un riesgo, dilo como riesgo y cómo mitigarlo, sin "
     "cambiar el diseño. No des por hecho lo que digan las otras fases: cuéntalo desde la propuesta.\n\n"
 )
+
+# Fallo 88: con el inventario de la arquitectura, las fases usan solo esos servicios, y la orquestación es la suya
+SOLO_INVENTARIO = ("Usa solo los servicios de este inventario, con la fase que dice cada uno. La orquestación es la del "
+                   "inventario: no propongas otra. Si echas en falta un servicio, dilo como riesgo, sin añadirlo.")
+# Fallo 88: la sección de la propuesta que desarrolla cada fase (lo que antes le llegaba a través del resumen)
+SECCION_DE_CADA_FASE = {
+    0: ("data_ai_strategy", "ESTRATEGIA DE DATOS E IA"),   # fuentes: las de cada funcionalidad
+    2: ("governance", "GOBERNANZA DEL DATO E IA"),          # almacenamiento: retención, acceso, clasificación
+    3: ("governance", "GOBERNANZA DEL DATO E IA"),          # ETL: reglas de calidad
+    4: ("bi_visualization", "ESTRATEGIA DE VISUALIZACIÓN"), # modelado: KPIs y métricas
+    5: ("data_ai_strategy", "ESTRATEGIA DE DATOS E IA"),   # ML: casos de uso y KPIs
+    6: ("bi_visualization", "ESTRATEGIA DE VISUALIZACIÓN"), # BI: cuadros de mando y usuarios
+}
 
 # Fallo 74: lo que tarda cada fase depende sobre todo de lo que escribe. El 12 nov, cada una escribió entre 14.000 y
 # 20.000 caracteres (5.700–8.300 tokens) y las dos más largas tardaron casi 4 min. Con None, sin tope.
@@ -135,18 +149,31 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
     ml_mlops = _make_agent("ml_mlops_agent", agents_config, gateway.modelo("roadmap_ml"))
     visualizacion = _make_agent("bi_visualization_agent", agents_config, gateway.modelo("roadmap_bi"))
 
-    resumen = resumir_solucion(combined_response, agents_config)
-    progreso.avanzar("Resumen de la propuesta")  # fallo 94
+    # Fallo 88: con el inventario de servicios de la arquitectura, el resumen ya no se llama (una llamada menos): cada
+    # fase recibe el inventario, con la orquestación, y la sección de la propuesta que desarrolla. Sin inventario, el
+    # resumen, como antes
+    propuesta = combined_response if isinstance(combined_response, dict) else {}
+    filas = propuesta.get("inventario") or []
+    if filas:
+        resumen = ""
+        progreso.avanzar("Inventario de servicios para el roadmap")  # fallo 94: el mismo paso que el resumen
+    else:
+        resumen = resumir_solucion(combined_response, agents_config)
+        progreso.avanzar("Resumen de la propuesta")  # fallo 94
 
     # Las 7 tareas reciben, además del resumen, los datos del cliente del discovery.
     if problem_case is None:
         problem_case = load_problem_case()
     # Fallo 73: la arquitectura de la propuesta va entera, como referencia común de las 7 fases (ya sin importes)
-    arquitectura = combined_response.get("architecture", "") if isinstance(combined_response, dict) else ""
-    contexto = (f"{resumen}\n\n"
+    arquitectura = propuesta.get("architecture", "")
+    contexto = ((f"{resumen}\n\n" if resumen else "")
+                + (f"{inventario.para_agentes(filas)}\n{SOLO_INVENTARIO}\n\n" if filas else "")
                 + (f"PROPUESTA DE ARQUITECTURA (la referencia común de las 7 fases):\n{sin_emojis(arquitectura)}\n\n"
                    if arquitectura else "")
                 + f"{contexto_cliente(problem_case)}\n{PLATAFORMA}{REFERENCIA}")
+    # Fallo 88: lo que cada fase leía del resumen, ahora de su sección de la propuesta
+    extra = {n: f"\n{titulo} (la sección de la propuesta que desarrolla tu fase):\n{sin_emojis(propuesta[campo])}\n\n"
+             for n, (campo, titulo) in SECCION_DE_CADA_FASE.items() if filas and propuesta.get(campo)}
 
     data_sources_task = Task(
         description=(
@@ -334,6 +361,8 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
 
     tareas = [data_sources_task, ingestion_task, storage_task, etl_processing_task, modeling_serving_task,
               ml_mlops_task, bi_visualization_roadmap_task]
+    for n, texto in extra.items():  # fallo 88: la sección de la propuesta de cada fase, detrás del contexto común
+        tareas[n].description = tareas[n].description.replace(contexto, contexto + texto, 1)
     salidas = [""] * len(tareas)
 
     def ejecutar(n: int, tarea: Task) -> None:

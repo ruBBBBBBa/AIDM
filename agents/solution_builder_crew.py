@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 
 import progreso
+from agents import inventario
 from agents.estimation_crew import run_estimation_crew
 from agents.proposal_crew import run_proposal_crew
 import re
@@ -31,6 +32,7 @@ class SolutionResult(BaseModel):
     bi_visualization: str
     cost_estimation: str
     team_profiles: str
+    inventario: list[dict] = []  # fallo 88: lo lee el roadmap
 
 
 def _inject_into_html(
@@ -91,9 +93,14 @@ def propose_solution(
         # Gateway de modelos: cada agente pide su modelo (data_structures/modelos.yaml); aquí ya no se elige
         proposal = run_proposal_crew(structure_proposal, problem_case, chat_history)
         progreso.avanzar("Propuesta: arquitectura, gobernanza, estrategia y visualización")  # fallo 94
+        # Fallo 88: el inventario de servicios del final de la arquitectura; en el informe va como tabla
+        arquitectura, filas = inventario.leer(proposal.architecture)
+        inventario.comprobar(filas, problem_case)
+        if filas:
+            proposal = proposal.model_copy(update={"architecture": f"{arquitectura}\n\n{inventario.tabla(filas)}"})
         # Fallo 46: la tarea de costes solo necesita los componentes y sus volúmenes, que están en la arquitectura
         estimation = run_estimation_crew(proposal.as_combined_context(), problem_case=problem_case,
-                                         componentes=proposal.architecture)
+                                         componentes=proposal.architecture, inventario=filas)
     except RuntimeError as e:
         return str(e)
 
@@ -125,4 +132,5 @@ def propose_solution(
     return SolutionResult(
         **proposal.model_dump(),
         **estimation.model_dump(),
+        inventario=filas,  # fallo 88
     ).model_dump()

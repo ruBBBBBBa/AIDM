@@ -130,5 +130,25 @@ assert any(texto.startswith("Roadmap: ") for _, _, texto in pintadas)
 progreso.avanzar("Sin barra")  # sin empezar (tests, scripts), no hace nada
 print(f"OK 5: la barra avanza con el resumen y las 7 fases ({len(pintadas)} veces), pintada siempre por la sesión")
 
+# 6) Fallo 88: con el inventario de la arquitectura, el resumen no se llama; las 7 fases reciben el inventario (con la
+#    orquestación) y la sección de la propuesta que desarrolla cada una, que es lo que antes les llegaba en el resumen
+rb.HILOS = 1
+prompts.clear()
+propuesta = {"architecture": "ARQUITECTURA SIMULADA", "governance": "GOBERNANZA SIMULADA: retención de 7 años",
+             "data_ai_strategy": "ESTRATEGIA SIMULADA: previsión de demanda", "bi_visualization": "BI SIMULADA: 4 cuadros",
+             "inventario": [{"servicio": "AWS Step Functions", "capa": "orquestación", "fase": "mvp", "alternativa": ""},
+                            {"servicio": "Amazon SageMaker AI", "capa": "IA", "fase": "proyecto_completo",
+                             "alternativa": ""}]}
+rb.roadmap_builder(propuesta, problem_case=caso)
+assert len(prompts) == 7, "sin la llamada al resumen"  # antes, 8: el resumen y las 7 fases
+for n, prompt in enumerate(prompts):
+    assert "- AWS Step Functions · orquestación · desde el MVP" in prompt and "La orquestación es la del inventario" in prompt
+    assert "RESUMEN SIMULADO" not in prompt
+fuentes, ingesta, almacenamiento, etl, modelado, ml, bi = prompts
+assert "ESTRATEGIA SIMULADA" in fuentes and "ESTRATEGIA SIMULADA" in ml and "BI SIMULADA" in bi and "BI SIMULADA" in modelado
+assert "GOBERNANZA SIMULADA" in almacenamiento and "GOBERNANZA SIMULADA" in etl
+assert not any(s in ingesta for s in ("ESTRATEGIA SIMULADA", "GOBERNANZA SIMULADA", "BI SIMULADA"))
+print("OK 6: con el inventario no se llama al resumen; cada fase recibe el inventario y su sección de la propuesta")
+
 assert hashlib.md5(INFORME.read_bytes()).hexdigest() == huella_antes, "el informe real no debía cambiar"
-print("\nTodo bien: los fallos 4, 73 y 94 están arreglados.")
+print("\nTodo bien: los fallos 4, 73, 88 y 94 están arreglados.")

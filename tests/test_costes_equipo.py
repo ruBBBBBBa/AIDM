@@ -210,4 +210,27 @@ assert "### MVP" in resultado.team_profiles and "### Resto del proyecto, despué
 assert "Data Scientist" in resultado.team_profiles.split("### Resto del proyecto")[1]
 print(f"OK 8: el MVP ({ec._eur(mvp_total)}, {pct} %) y el proyecto completo ({ec._eur(completo)}) se valoran por separado")
 
+# 9) Fallo 88: costes valora los servicios del inventario de la arquitectura, cada uno desde su fase; avisa de lo que
+#    el inventario trae y no está valorado, y de lo que se valora sin estar en él. Los perfiles también lo reciben
+INVENTARIO = [{"servicio": "Lago de datos", "capa": "almacenamiento", "fase": "mvp", "alternativa": ""},
+              {"servicio": "Visión artificial", "capa": "IA", "fase": "proyecto_completo", "alternativa": ""},
+              {"servicio": "AWS Step Functions", "capa": "orquestación", "fase": "mvp", "alternativa": ""}]
+sin_fase = informe.model_copy(update={"componentes": [
+    c.model_copy(update={"fase": "mvp"}) for c in informe.componentes] + [
+    ComponenteCoste(componente="Amazon API Gateway", categoria="infraestructura", precio_unitario_eur=10, unidades=1,
+                    unidad="mes", periodicidad="mensual", referencia="x")]})
+html = ec._format_cost_report(sin_fase, "", calculado, dos, inventario=INVENTARIO)
+assert "Desde el fin del MVP · en 6 meses: 3.000 €" in html  # la fase de la visión artificial sale del inventario
+assert "el inventario de la arquitectura trae AWS Step Functions, que no está valorado" in html
+assert "se valora Amazon API Gateway, que no está en el inventario de la arquitectura" in html
+prompts.clear()
+equipo = mvp
+ec.run_estimation_crew("PROPUESTA SIMULADA", "groq/openai/gpt-oss-20b", problem_case=dos, inventario=INVENTARIO)
+costes_p = next(p for p in prompts if "valora el coste de cada componente" in p)
+perfiles_p = next(p for p in prompts if "identifica los perfiles profesionales" in p)
+assert "exactamente los del inventario de servicios de abajo" in costes_p
+assert "- Visión artificial · IA · solo después del MVP" in costes_p and "- AWS Step Functions" in perfiles_p
+assert "Pon perfiles solo para los servicios de cada alcance" in perfiles_p
+print("OK 9: costes usa la fase del inventario y avisa de lo que falta o sobra; perfiles recibe el inventario")
+
 print("\nTodo bien: el fallo 5 está arreglado.")

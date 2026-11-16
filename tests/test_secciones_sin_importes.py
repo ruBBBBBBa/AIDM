@@ -201,4 +201,44 @@ assert any(m.startswith("[servicios] architecture nombra Amazon Lookout for Visi
 assert any(m.startswith("[servicios] roadmap: ML y MLOps nombra Amazon Macie") for m in mensajes), mensajes
 print("OK 9: los agentes reciben lo que no hay que proponer en su nube, y la sección que lo nombra lleva una nota")
 
-print("\nTodo bien: los fallos 44 y 83 están arreglados.")
+# 10) Fallo 88: la arquitectura termina con el inventario de servicios; Python lo lee (lista o tabla), lo pone como tabla
+#     en el informe y se lo pasa a costes y al roadmap. Sin inventario, todo sigue como antes
+from agents import inventario
+
+BLOQUE = """La plataforma va en S3 con Glue.
+
+**INVENTARIO DE SERVICIOS**
+- Amazon S3 (capas Bronze, Silver y Gold) | almacenamiento | MVP | Amazon EFS
+- AWS Step Functions | orquestación | MVP | AWS Glue Workflows
+- Amazon SageMaker AI | IA | completo | —"""
+texto, filas = inventario.leer(BLOQUE)
+assert texto == "La plataforma va en S3 con Glue." and [f["servicio"] for f in filas] == [
+    "Amazon S3 (capas Bronze, Silver y Gold)", "AWS Step Functions", "Amazon SageMaker AI"]
+assert [f["fase"] for f in filas] == ["mvp", "mvp", "proyecto_completo"] and filas[2]["alternativa"] == ""
+tabla_md = "Texto.\n\n### Inventario de servicios\n| Servicio | Capa | Fase | Alternativa |\n|---|---|---|---|\n" \
+           "| Amazon Athena | analítica | Fase 2 | Amazon Redshift |"
+assert inventario.leer(tabla_md)[1] == [{"servicio": "Amazon Athena", "capa": "analítica", "fase": "proyecto_completo",
+                                         "alternativa": "Amazon Redshift"}]
+assert inventario.leer("Sin inventario.") == ("Sin inventario.", [])
+assert "INVENTARIO DE SERVICIOS" in inventario.INSTRUCCION and "orquestación" in inventario.INSTRUCCION
+
+recibido = {}
+sbc.run_proposal_crew = lambda *a, **k: ProposalResult(architecture=BLOQUE, governance="G.", data_ai_strategy="D.",
+                                                       bi_visualization="B.")
+sbc.run_estimation_crew = lambda *a, **k: recibido.update(k) or EstimationResult(cost_estimation="<div>c</div>",
+                                                                                 team_profiles="P.")
+resultado = sbc.propose_solution("ESTRUCTURA", CASO, [])
+assert "**INVENTARIO DE SERVICIOS**" not in inyectado["architecture"]  # el bloque crudo no va al informe
+assert "#### Inventario de servicios" in inyectado["architecture"]
+assert "| AWS Step Functions | orquestación | MVP | AWS Glue Workflows |" in inyectado["architecture"]
+assert "| Amazon SageMaker AI | IA | Proyecto completo | — |" in inyectado["architecture"]
+assert [f["servicio"] for f in recibido["inventario"]] == [f["servicio"] for f in filas]
+assert resultado["inventario"] == filas  # lo lee el roadmap
+sbc.run_proposal_crew = lambda *a, **k: ProposalResult(architecture="Sin bloque.", governance="G.",
+                                                       data_ai_strategy="D.", bi_visualization="B.")
+avisos.clear()
+assert sbc.propose_solution("ESTRUCTURA", CASO, [])["inventario"] == [] and recibido["inventario"] == []
+assert any("no trae el inventario de servicios" in r.getMessage() for r in avisos)
+print("OK 10: el inventario de la arquitectura se lee, va como tabla al informe y llega a costes y al roadmap")
+
+print("\nTodo bien: los fallos 44, 83 y 88 están arreglados.")

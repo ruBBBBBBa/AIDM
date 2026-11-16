@@ -16,6 +16,7 @@ import textwrap
 
 import litellm
 import progreso
+from agents import inventario as inventario_mod  # fallo 88
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field, PrivateAttr, field_validator, ValidationError
 import gateway
@@ -823,12 +824,36 @@ def _sin_valorar_presupuesto(texto: str) -> str:
                        quitadas)
     return "\n".join(lineas).strip()
 
+def _cruzar_con_inventario(componentes: list[ComponenteCoste], inventario: list[dict]
+                           ) -> tuple[list[ComponenteCoste], list[str], list[str]]:
+    """Fallo 88: cada componente con la fase de su servicio en el inventario, lo que el inventario trae y no está
+    valorado, y lo que se valora sin estar en el inventario (infraestructura y licencias)."""
+    con_fase = []
+    for c in componentes:
+        fila = next((f for f in inventario if inventario_mod.corresponde(f["servicio"], c.componente)), None)
+        con_fase.append(c.model_copy(update={"fase": fila["fase"]}) if fila and fila["fase"] != c.fase else c)
+    sin_valorar = [f["servicio"] for f in inventario
+                   if not any(inventario_mod.corresponde(f["servicio"], c.componente) for c in componentes)]
+    fuera_de_lista = [c.componente for c in componentes if c.categoria in ("infraestructura", "licencias")
+                      and not any(inventario_mod.corresponde(f["servicio"], c.componente) for f in inventario)]
+    for nombre in sin_valorar:
+        logger.warning("[inventario] costes no valora %s, que está en el inventario de la arquitectura", nombre)
+    for nombre in fuera_de_lista:
+        logger.warning("[inventario] costes valora %s, que no está en el inventario de la arquitectura", nombre)
+    return con_fase, sin_valorar, fuera_de_lista
+
+
 def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", equipo: dict | None = None,
-                        problem_case: dict | None = None, avisar_tarifas: bool = True) -> str:
+                        problem_case: dict | None = None, avisar_tarifas: bool = True,
+                        inventario: list[dict] | None = None) -> str:
     r = report.resumen_ejecutivo
     # Fallo 53: los componentes que están en la tabla de precios llevan su precio; el resto, el del modelo
     # Fallo 87: sin filas de la nube del cliente en la tabla, sin avisos de «Tarifa desconocida»
     componentes = [_con_precio_de_tabla(c, avisar_tarifas) for c in report.componentes]
+    # Fallo 88: la fase de cada componente es la de su servicio en el inventario de la arquitectura
+    sin_valorar = fuera_de_lista = []
+    if inventario:
+        componentes, sin_valorar, fuera_de_lista = _cruzar_con_inventario(componentes, inventario)
     # Fallo 58: una cuota mensual o anual con los meses del proyecto como unidades se cuenta una vez por periodo
     componentes = [_sin_periodos_repetidos(c) for c in componentes]
     # Fallo 54: lo que el cliente ya usa, para comprobar los «ya lo tiene»
@@ -998,6 +1023,14 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     if not componentes:
         avisos.append("Ojo: el total no incluye infraestructura, licencias, formación ni soporte, porque el modelo "
                       "no ha valorado ningún componente de la propuesta.")
+    if sin_valorar:  # fallo 88
+        avisos.append(f"Ojo: el inventario de la arquitectura trae {escape(_lista(sin_valorar))}, que no "
+                      f"{'está valorado' if len(sin_valorar) == 1 else 'están valorados'}: el total no "
+                      f"{'lo' if len(sin_valorar) == 1 else 'los'} incluye.")
+    if fuera_de_lista:
+        avisos.append(f"Ojo: se valora {escape(_lista(fuera_de_lista))}, que no "
+                      f"{'está' if len(fuera_de_lista) == 1 else 'están'} en el inventario de la arquitectura: revisa "
+                      f"si hace falta.")
     aviso_html = "".join(
         f'<p style="color:#b45309;font-size:0.875rem;font-weight:600;margin:0 0 0.5rem;">{aviso}</p>' for aviso in avisos
     )
@@ -1525,6 +1558,7 @@ def run_estimation_crew(
     tools: list | None = None,
     problem_case: dict | None = None,
     componentes: str | None = None,
+    inventario: list[dict] | None = None,
 ) -> EstimationResult:
     """
     Ejecuta la crew de estimación de costos y perfiles de equipo.
@@ -1568,6 +1602,8 @@ def run_estimation_crew(
 
     tarifas = _cargar_tarifas()
     datos_cliente = f"{contexto_cliente(problem_case or {}, con_costes=True)}\n"
+    # Fallo 88: la lista cerrada de servicios de la arquitectura, con la fase de cada uno
+    lista_servicios = (f"\n{inventario_mod.para_agentes(inventario)}\n" if inventario else "")
 
     # --- Fase CrewAI: report writer + team builder (ambos sin tools) ---
     agent_data = agents_config.get("cost_estimation_agent", {})
@@ -1619,6 +1655,9 @@ def run_estimation_crew(
             f"{pricing_note}\n"
             "En componentes pon un elemento por cada servicio cloud, licencia, formación o soporte que aparezca en la "
             "arquitectura, sin dejarte ninguno, cada uno con su categoría, su precio unitario en euros (solo el número), "
+            # Fallo 88: exactamente los del inventario, cada uno desde su fase
+            + ("exactamente los del inventario de servicios de abajo (ni más ni menos, con su mismo nombre y la fase "
+               "que dice el inventario), además de la formación y el soporte, " if inventario else "") +
             "las unidades que se pagan en cada periodo, qué es una unidad y la periodicidad: mensual, anual o unico "
             "(si se paga una sola vez). No multipliques: el importe lo calcula el programa. Lo que se paga por uso "
             "(horas, GB, ejecuciones) va como mensual, con las unidades de un mes. "
@@ -1658,6 +1697,7 @@ def run_estimation_crew(
             "Responde solo con un objeto JSON, sin texto antes ni después, con esta forma: "
             f"{plantilla_costes}\n\n"
             f"{datos_cliente}"
+            f"{lista_servicios}"  # fallo 88
             "Arquitectura propuesta (componentes y volúmenes):\n"
             f"{componentes or proposal_context}"
         ),
@@ -1704,6 +1744,9 @@ def run_estimation_crew(
             "No des cifras de coste: el coste del equipo se calcula aparte con las tarifas de la empresa. "
             "Escribe en el idioma de los datos del cliente, con su ortografía completa (en español, con tildes).\n\n"
             f"{datos_cliente}"
+            # Fallo 88: los perfiles de cada alcance, para lo que entra en él
+            + (f"{lista_servicios}Pon perfiles solo para los servicios de cada alcance: los que van «solo después del "
+               "MVP» no necesitan perfiles en el MVP.\n" if inventario else "") +
             "Esta es la solución propuesta sobre la que debes identificar los perfiles profesionales necesarios:\n"
             f"{proposal_context}"
         ),
@@ -1805,7 +1848,7 @@ def run_estimation_crew(
     report = _leer_salida(cost_report_task, CostEstimationReport)
     if report:
         cost_estimation = _format_cost_report(report, infracost_prices or "", equipo, problem_case,
-                                              avisar_tarifas=bool(filas_nube))
+                                              avisar_tarifas=bool(filas_nube), inventario=inventario)
     else:
         logger.error("[estimation_crew] Sin costes: el modelo %s no devolvió un JSON válido", model_name)
         cost_estimation = _aviso_sin_costes(model_name)
