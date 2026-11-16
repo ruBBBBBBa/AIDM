@@ -153,4 +153,52 @@ assert "6.000 €/año" not in roadmap[2] and "Superar el presupuesto de 90.000 
 assert "$0" not in roadmap[6] and "6.600 €/año" not in combinado
 print("OK 8: las 7 secciones del roadmap se filtran antes de ir al informe")
 
-print("\nTodo bien: el fallo 44 está arreglado.")
+# 9) Fallo 83: los agentes reciben lo que no hay que proponer en la nube elegida y, si una sección lo nombra igualmente,
+#    lleva una nota visible y el log lo dice. El 12 nov el informe ponía en Aragón Rekognition Custom Labels, SageMaker
+#    Serverless Inference y Macie (no están allí); el 14 nov, Lookout for Vision (retirado el 31 oct 2025)
+import logging
+import utils
+
+EN_AWS = {**CASO, "plataforma_objetivo": {"value": "Amazon Web Services (AWS)", "region": "Europe (Spain), eu-south-2 (Aragón)"}}
+EN_AZURE = {**CASO, "cloud_provider": {"description": "", "value": "Microsoft Azure"}}
+contexto = utils.contexto_cliente(EN_AWS)
+assert "SERVICIOS QUE NO DEBES PROPONER" in contexto
+assert "- Amazon Lookout for Vision: retirado el 31 oct 2025" in contexto and "SageMaker" in contexto
+assert "- Amazon Rekognition Custom Labels: no está en Europe (Spain), eu-south-2 (Aragón)" in contexto
+assert "Time Series Insights" not in contexto  # solo la nube elegida
+assert "Time Series Insights" in utils.contexto_cliente(EN_AZURE)  # sin plataforma objetivo, vale cloud_provider
+assert "SERVICIOS QUE NO DEBES PROPONER" not in utils.contexto_cliente(CASO)  # sin nube, nada
+nombres = lambda texto, caso: [s["servicio"] for s in utils.revisar_servicios(texto, caso, "prueba")]
+assert nombres("La inspección va con Amazon Lookout for Vision y alertas.", EN_AWS) == ["Amazon Lookout for Vision"]
+assert nombres("Inferencia en SageMaker Serverless Inference; PII con Amazon Macie.", EN_AWS) == [
+    "Amazon SageMaker Serverless Inference", "Amazon Macie"]
+# Nombres parecidos que sí valen: las clases S3 Glacier, el Glue Data Catalog, un tal Luis del cliente
+assert nombres("Logs a S3 Glacier Deep Archive; esquemas en AWS Glue Data Catalog; IoT Core.", EN_AWS) == []
+assert nombres("Luis, el responsable de IT, valida los informes de Power BI.", EN_AZURE) == []
+assert nombres("Bots con Language Understanding (LUIS).", EN_AZURE) == ["Language Understanding (LUIS)"]
+
+avisos = []
+manejador = logging.Handler()
+manejador.emit = avisos.append
+logging.getLogger("aidm").addHandler(manejador)
+sbc.run_proposal_crew = lambda *a, **k: ProposalResult(
+    architecture="Visión con Amazon Lookout for Vision.", governance="Sin servicios raros.",
+    data_ai_strategy="Sin servicios raros.", bi_visualization="Power BI.")
+sbc.run_estimation_crew = lambda *a, **k: EstimationResult(
+    cost_estimation="<div>Amazon Rekognition Custom Labels · 80 €/mes</div>", team_profiles="Perfiles.")
+sbc.propose_solution("ESTRUCTURA", EN_AWS, [])
+assert inyectado["architecture"].startswith("> **Ojo: esta sección nombra servicios")
+assert "**Amazon Lookout for Vision** retirado el 31 oct 2025" in inyectado["architecture"]
+assert "en su lugar, un modelo de visión en Amazon SageMaker AI" in inyectado["architecture"]
+assert inyectado["governance"] == "Sin servicios raros."
+assert inyectado["cost_estimation"].startswith("<blockquote>") and "Rekognition Custom Labels" in inyectado["cost_estimation"]
+salidas = ["Fuentes.", "Ingesta.", "Almacenamiento.", "ETL.", "Modelado.", "Detección de PII con Amazon Macie.", "BI."]
+roadmap.clear()
+rb.roadmap_builder("PROPUESTA SIMULADA", problem_case=EN_AWS)
+assert roadmap[5].startswith("> **Ojo:") and "Amazon Macie" in roadmap[5] and roadmap[0] == "Fuentes."
+mensajes = [r.getMessage() for r in avisos]
+assert any(m.startswith("[servicios] architecture nombra Amazon Lookout for Vision") for m in mensajes), mensajes
+assert any(m.startswith("[servicios] roadmap: ML y MLOps nombra Amazon Macie") for m in mensajes), mensajes
+print("OK 9: los agentes reciben lo que no hay que proponer en su nube, y la sección que lo nombra lleva una nota")
+
+print("\nTodo bien: los fallos 44 y 83 están arreglados.")
