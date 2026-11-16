@@ -262,4 +262,46 @@ assert inyectado["architecture"].startswith("> **Ojo: la arquitectura deja elecc
                                             "Apache Iceberg; Amazon Kinesis Data Streams o Amazon Kinesis Data Firehose)")
 print("OK 11: la arquitectura que deja «X o Y» entre un servicio y su alternativa lleva una nota")
 
-print("\nTodo bien: los fallos 44, 83, 88 y 89 están arreglados.")
+# 12) Fallo 90: con Power BI y los datos fuera de Azure, la puerta de enlace de datos local va en la arquitectura, en el
+#     inventario y en los costes. El 12 nov Power BI se conectaba con Athena sin ella
+POWER_BI = {"herramienta_de_visualizacion": {"description": "", "value": "Power BI (preferencia por Microsoft 365)"}}
+aws_pbi, azure_pbi = {**EN_AWS, **POWER_BI}, {**EN_AZURE, **POWER_BI}
+aws_qs = {**EN_AWS, "herramienta_de_visualizacion": {"description": "", "value": "Amazon QuickSight"}}
+en_casa = {**POWER_BI, "plataforma_objetivo": {"value": "Microsoft Azure", "despliegue": "on_premises"}}
+assert utils.necesita_puerta_de_enlace(aws_pbi) and utils.necesita_puerta_de_enlace(en_casa)
+assert not utils.necesita_puerta_de_enlace(azure_pbi) and not utils.necesita_puerta_de_enlace(aws_qs)
+assert "on-premises data gateway" in utils.regla_puerta_de_enlace(aws_pbi) and utils.regla_puerta_de_enlace(aws_qs) == ""
+sin_puerta = [{"servicio": "Amazon Athena", "capa": "analítica", "fase": "mvp", "alternativa": ""},
+              {"servicio": "Power BI Pro", "capa": "visualización", "fase": "mvp", "alternativa": ""}]
+filas_90, nota_90 = inventario.con_puerta_de_enlace(sin_puerta, aws_pbi)
+assert filas_90[-1]["servicio"] == utils.PUERTA_DE_ENLACE and filas_90[-1]["fase"] == "mvp" and "Ojo: falta" in nota_90
+con_puerta = sin_puerta + [{"servicio": "On-premises data gateway", "capa": "visualización", "fase": "mvp",
+                            "alternativa": ""}]
+assert inventario.con_puerta_de_enlace(con_puerta, aws_pbi) == (con_puerta, "")  # ya la trae: no se duplica
+assert inventario.con_puerta_de_enlace(sin_puerta, azure_pbi) == (sin_puerta, "")
+bloque_90 = "Power BI lee de Athena.\n\nINVENTARIO DE SERVICIOS\n- Amazon Athena | analítica | MVP | —\n" \
+            "- Power BI Pro | visualización | MVP | —"
+sbc.run_proposal_crew = lambda *a, **k: ProposalResult(architecture=bloque_90, governance="G.", data_ai_strategy="D.",
+                                                       bi_visualization="B.")
+sbc.propose_solution("ESTRUCTURA", aws_pbi, [])
+assert "Ojo: falta la puerta de enlace de Power BI" in inyectado["architecture"]
+assert f"| {utils.PUERTA_DE_ENLACE} | visualización | MVP | — |" in inyectado["architecture"]
+assert recibido["inventario"][-1]["servicio"] == utils.PUERTA_DE_ENLACE  # la valoran los costes
+# Y la regla va en el prompt de la arquitectura
+import agents.proposal_crew as pc
+vistos_90 = []
+
+
+def kickoff_que_mira(self, *args, **kwargs):
+    for t in self.tasks:
+        vistos_90.append(t.description)
+        t.output = SimpleNamespace(raw="texto")
+    return SimpleNamespace(raw="texto")
+
+
+Crew.kickoff = kickoff_que_mira
+pc.run_proposal_crew("ESTRUCTURA", aws_pbi, [], model_name="groq/openai/gpt-oss-20b")
+assert "PUERTA DE ENLACE DE POWER BI" in vistos_90[0]
+print("OK 12: con Power BI y los datos fuera de Azure, la puerta de enlace entra en el prompt, el inventario y los costes")
+
+print("\nTodo bien: los fallos 44, 83, 88, 89 y 90 están arreglados.")

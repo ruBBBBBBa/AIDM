@@ -23,7 +23,8 @@ from pydantic import BaseModel, Field, PrivateAttr, field_validator, ValidationE
 import gateway
 
 from utils import (_CANTIDAD_RE, _IMPORTE as _IMPORTE_CLIENTE, _make_agent, _normalize_text, _valor_cantidad, build_llm,
-                   contexto_cliente, es_valor_de_relleno, load_agents_config, md_to_html)
+                   contexto_cliente, es_valor_de_relleno, load_agents_config, md_to_html,
+                   regla_puerta_de_enlace)
 
 logger = logging.getLogger("aidm")
 
@@ -1759,6 +1760,7 @@ def run_estimation_crew(
             "Responde solo con un objeto JSON, sin texto antes ni después, con esta forma: "
             f"{plantilla_costes}\n\n"
             f"{datos_cliente}"
+            f"{regla_puerta_de_enlace(problem_case)}"  # fallo 90
             f"{lista_servicios}"  # fallo 88
             "Arquitectura propuesta (componentes y volúmenes):\n"
             f"{componentes or proposal_context}"

@@ -388,6 +388,44 @@ def con_nota_de_servicios(texto: str, problem_case: dict | None, seccion: str) -
     return nota_servicios(revisar_servicios(texto, problem_case, seccion)) + (texto or "")
 
 
+# --- Fallo 90: Power BI con los datos fuera de Azure necesita una puerta de enlace ---
+# Power BI Service llega a los datos de otra nube (Athena en AWS, BigQuery…) o de los servidores del cliente a través
+# de una puerta de enlace de datos local (on-premises data gateway): un programa gratuito en una máquina Windows que
+# llegue a los datos. Para el conector de Athena, por ejemplo, lo exige Microsoft (learn.microsoft.com/power-query/
+# connectors/amazon-athena). El 12 nov la propuesta conectaba Power BI con Athena sin ella, ni en la arquitectura ni en
+# los costes.
+PUERTA_DE_ENLACE = "Puerta de enlace de datos local de Power BI (on-premises data gateway), en una VM Windows"
+
+
+def necesita_puerta_de_enlace(problem_case: dict | None) -> bool:
+    """Fallo 90: la herramienta de BI es Power BI y los datos no están en Azure."""
+    vis = (problem_case or {}).get("herramienta_de_visualizacion")
+    texto = _normalize_text(str(vis.get("value") if isinstance(vis, dict) else vis or ""))
+    if "power bi" not in texto:
+        return False
+    try:
+        config = yaml.safe_load(HIPERESCALARES_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    plataforma = (problem_case or {}).get(PLATAFORMA_OBJETIVO)
+    if isinstance(plataforma, dict) and plataforma.get("despliegue") == "on_premises":
+        return True
+    clave = _clave_de_nube(problem_case, config)
+    return bool(clave) and clave != "azure"
+
+
+def regla_puerta_de_enlace(problem_case: dict | None) -> str:
+    """Fallo 90: la regla para los prompts de arquitectura y costes, o "" si no hace falta."""
+    if not necesita_puerta_de_enlace(problem_case):
+        return ""
+    return ("PUERTA DE ENLACE DE POWER BI: la herramienta de BI es Power BI y los datos no están en Azure, así que Power "
+            "BI Service necesita una puerta de enlace de datos local (on-premises data gateway) en una máquina Windows "
+            "que llegue a los datos (por ejemplo, una VM en la nube elegida, en la misma red que el almacén analítico). "
+            "Inclúyela en la arquitectura, en el inventario de servicios (capa visualización, desde el MVP) y en los "
+            "costes: la máquina se paga todas las horas que está encendida; el programa de la puerta de enlace es "
+            "gratuito.\n")
+
+
 # Fallo 44: los importes salen solo en la sección de costes, donde se suman en Python. Arquitectura, BI y el
 # roadmap los ponían igualmente («~500 €/mes», «6.000 €/año») aunque REGLA_PRESUPUESTO se lo prohíbe
 _CANTIDAD = r"\d(?:[\d.,]*\d)?(?:\s*(?:mil(?:lones)?(?:\s+de)?|[km])(?![a-záéíóúñ]))?"
