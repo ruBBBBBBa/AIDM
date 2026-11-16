@@ -70,6 +70,9 @@ tareas:
 # 2 veces por su cuenta, aunque se le diga que no): sin reintentos y con 100 s por conexión se queda en unos 5 minutos.
 # El 5 nov, MiniMax-M3.1-Flash, sin estas reglas, tardó 5.557 s en dar «timeout» (9 conexiones).
 proveedores:
+  # Fallo 96: peticiones_por_minuto es el máximo por minuto móvil a cada modelo; si se llega, la llamada espera su turno
+  # en vez de recibir el 429. Gemini gratis: 5 por minuto y modelo (GenerateRequestsPerMinutePerProjectPerModel-FreeTier)
+  gemini: {peticiones_por_minuto: 5}
   sambanova: {num_retries: 0, timeout: 100}    # 20 peticiones al día por modelo y 8.192 tokens de ventana (entrada y salida)
   nvidia_nim: {num_retries: 0, timeout: 100}   # unas 40 por minuto
 
