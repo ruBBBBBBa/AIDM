@@ -241,4 +241,25 @@ assert sbc.propose_solution("ESTRUCTURA", CASO, [])["inventario"] == [] and reci
 assert any("no trae el inventario de servicios" in r.getMessage() for r in avisos)
 print("OK 10: el inventario de la arquitectura se lee, va como tabla al informe y llega a costes y al roadmap")
 
-print("\nTodo bien: los fallos 44, 83 y 88 están arreglados.")
+# 11) Fallo 89: la arquitectura elige una opción por papel y deja la otra como alternativa del inventario; si el texto
+#     sigue con «X o Y» (el 12 nov: «Delta Lake (o Apache Iceberg)», «Kinesis Data Streams o Firehose»), lo avisa
+assert "Elige una sola opción para cada papel" in inventario.REGLA_ELEGIR
+filas_89 = [{"servicio": "Delta Lake", "capa": "almacenamiento", "fase": "mvp", "alternativa": "Apache Iceberg"},
+            {"servicio": "Amazon Kinesis Data Streams", "capa": "ingesta", "fase": "mvp",
+             "alternativa": "Amazon Kinesis Data Firehose"},
+            {"servicio": "Amazon Athena", "capa": "analítica", "fase": "mvp", "alternativa": "Amazon Redshift"}]
+abierto = ("Se usa el formato **Delta Lake** (o Apache Iceberg) sobre Parquet. Los sensores publican en Amazon Kinesis "
+           "Data Streams o directamente en Kinesis Data Firehose. Si crece, se migraría a Amazon Redshift.")
+assert inventario.sin_decidir(abierto, filas_89) == ["Delta Lake o Apache Iceberg",
+                                                     "Amazon Kinesis Data Streams o Amazon Kinesis Data Firehose"]
+assert inventario.sin_decidir("Formato Delta Lake por su time travel; se descarta Apache Iceberg.", filas_89) == []
+bloque_89 = abierto + "\n\nINVENTARIO DE SERVICIOS\n" + "\n".join(
+    f"- {f['servicio']} | {f['capa']} | MVP | {f['alternativa']}" for f in filas_89)
+sbc.run_proposal_crew = lambda *a, **k: ProposalResult(architecture=bloque_89, governance="G.", data_ai_strategy="D.",
+                                                       bi_visualization="B.")
+sbc.propose_solution("ESTRUCTURA", CASO, [])
+assert inyectado["architecture"].startswith("> **Ojo: la arquitectura deja elecciones sin decidir** (Delta Lake o "
+                                            "Apache Iceberg; Amazon Kinesis Data Streams o Amazon Kinesis Data Firehose)")
+print("OK 11: la arquitectura que deja «X o Y» entre un servicio y su alternativa lleva una nota")
+
+print("\nTodo bien: los fallos 44, 83, 88 y 89 están arreglados.")

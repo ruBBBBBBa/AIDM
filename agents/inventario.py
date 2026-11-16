@@ -99,6 +99,45 @@ def para_agentes(filas: list[dict]) -> str:
             + "\n".join(f"- {f['servicio']} · {f['capa']} · {fases[f['fase']]}" for f in filas))
 
 
+# Fallo 89: el 12 nov la arquitectura dejaba 7 elecciones sin decidir («Delta Lake (o Apache Iceberg)», «Kinesis Data
+# Streams o Firehose», «Rekognition o SageMaker»…). El prompt obliga a elegir una y dejar la otra como alternativa en el
+# inventario; Python busca en el texto «la elegida o su alternativa» (o al revés) y, si sale, lo avisa.
+REGLA_ELEGIR = (
+    "Elige una sola opción para cada papel de la solución (por ejemplo, el formato de tabla: Delta Lake o Apache "
+    "Iceberg; la ingesta en streaming: Kinesis Data Streams o Data Firehose) y escribe solo la elegida, con su "
+    "motivo. La que descartas va únicamente en la columna alternativa del inventario. No escribas «X o Y», «X/Y» ni "
+    "«X (o Y)» para servicios o formatos."
+)
+
+
+def sin_decidir(texto: str, filas: list[dict]) -> list[str]:
+    """Fallo 89: las elecciones que el texto deja abiertas entre un servicio del inventario y su alternativa."""
+    normal = re.sub(r"[*_`()]", " ", _normalize_text(texto or ""))
+    normal = re.sub(r"\s+", " ", normal)
+    abiertas = []
+    for f in filas:
+        if not f.get("alternativa"):
+            continue
+        a, b = _clave(f["servicio"]), _clave(f["alternativa"])
+        if not a or not b:
+            continue
+        patron = rf"\b{re.escape(a)}\b[^.;\n]{{0,25}}?\s(?:o|u|or|/)\s[^.;\n]{{0,25}}?\b{re.escape(b)}\b"
+        inverso = rf"\b{re.escape(b)}\b[^.;\n]{{0,25}}?\s(?:o|u|or|/)\s[^.;\n]{{0,25}}?\b{re.escape(a)}\b"
+        if re.search(patron, normal) or re.search(inverso, normal):
+            abiertas.append(f"{f['servicio']} o {f['alternativa']}")
+            logger.warning("[inventario] La arquitectura deja sin decidir %s o %s (el inventario elige %s)",
+                           f["servicio"], f["alternativa"], f["servicio"])
+    return abiertas
+
+
+def nota_sin_decidir(abiertas: list[str]) -> str:
+    """Fallo 89: la nota visible, en markdown, para el principio de la arquitectura."""
+    if not abiertas:
+        return ""
+    return ("> **Ojo: la arquitectura deja elecciones sin decidir** (" + "; ".join(abiertas) + "). Vale la primera de "
+            "cada par, la del inventario de servicios: la otra es la alternativa descartada.\n\n")
+
+
 def comprobar(filas: list[dict], problem_case: dict | None) -> list[dict]:
     """Los servicios del inventario que no se pueden usar en la nube elegida (fallo 83). Lo dice el log."""
     if not filas:
