@@ -103,14 +103,42 @@ def _saltar(modelo, error) -> None:
               "subscription tier»): no se reintenta y se salta durante el resto del proceso")
 
 
+def _fuera_de_juego() -> set[str]:
+    """Fallo 95: los modelos fuera del plan. Fallo 99: y los de Gemini con el cupo del día agotado, hasta las 09:00. El
+    16 nov, con gemini-3.6-flash agotado, cada llamada lo seguía probando primero y el limitador del 96 hacía esperar
+    hasta 90 s a las fases del roadmap por un hueco de ese modelo."""
+    try:
+        agotados = {m for m, n, limite, agotado in cupos_gemini() if agotado or n >= limite}
+    except Exception:
+        agotados = set()
+    for modelo in agotados:
+        _avisar_agotado(modelo)
+    return set(_saltados) | agotados
+
+
+_avisados_agotados: set[str] = set()
+
+
+def _avisar_agotado(modelo: str) -> None:
+    """Fallo 99: una sola línea en el log por modelo agotado."""
+    with _bloqueo_saltados:
+        if modelo in _avisados_agotados:
+            return
+        _avisados_agotados.add(modelo)
+    _, reinicio = _cupo_gemini()
+    _escribir(f"[gateway] {modelo} ha agotado el cupo del día: se salta hasta las {reinicio}, sin esperar turno")
+
+
 def _sin_saltados(kwargs: dict) -> dict:
     """Fallo 95: la llamada sin los modelos saltados; si el primero lo está, va la primera reserva que no lo esté, con
-    sus reglas. Si lo están todos, la llamada se queda como está y el error se verá."""
-    if not _saltados:
+    sus reglas. Si lo están todos, la llamada se queda como está y el error se verá. Fallo 99: también sin los que han
+    agotado el cupo del día."""
+    fuera = _fuera_de_juego()
+    if not fuera:
         return kwargs
     reservas = [r if isinstance(r, dict) else {"model": str(r)} for r in kwargs.get("fallbacks") or []]
-    quedan = [r for r in reservas if str(r.get("model")) not in _saltados]
-    if str(kwargs.get("model", "")) not in _saltados:
+    quedan = [r for r in reservas if str(r.get("model")) not in fuera]
+    if str(kwargs.get("model", "")) not in fuera:
         return {**kwargs, "fallbacks": quedan} if len(quedan) != len(reservas) else kwargs
     if not quedan:
         return kwargs
@@ -137,7 +165,8 @@ def modelos_de(tarea: str, config: dict | None = None, con_saltados: bool = Fals
         lista = [propio] + [m for m in lista if m != propio]
     if con_saltados:
         return perfil, lista
-    return perfil, [m for m in lista if m not in _saltados] or lista
+    fuera = _fuera_de_juego()  # fallo 99: también los agotados del día
+    return perfil, [m for m in lista if m not in fuera] or lista
 
 
 def modelo(tarea: str) -> ModeloDeTarea:
@@ -148,8 +177,9 @@ def modelo(tarea: str) -> ModeloDeTarea:
         return ModeloDeTarea("", tarea)
     origen = f"MODELO_{tarea.upper()} del .env" if os.getenv(f"MODELO_{tarea.upper()}", "").strip() else f"perfil {perfil}"
     reservas = f"; reservas: {', '.join(lista[1:])}" if lista[1:] else ""
-    saltados = [m for m in modelos_de(tarea, con_saltados=True)[1] if m not in lista] if _saltados else []  # fallo 95
-    saltados = f"; se salta {', '.join(saltados)}, fuera del plan" if saltados else ""
+    saltados = [m for m in modelos_de(tarea, con_saltados=True)[1] if m not in lista]  # fallos 95 y 99
+    saltados = ("; se salta " + ", ".join(f"{m} ({'fuera del plan' if m in _saltados else 'sin cupo hoy'})"
+                                          for m in saltados)) if saltados else ""
     _escribir(f"[gateway] {tarea}: {lista[0]} ({origen}{reservas}{saltados})")
     return ModeloDeTarea(lista[0], tarea, tuple(lista[1:]))
 
@@ -326,11 +356,20 @@ def escribir_cupos(momento: str = "Al empezar el informe") -> None:
     try:
         config = _config()
         _, reinicio = _cupo_gemini(config)
-        partes = [f"{m}: {_texto_cupo(n, limite, agotado, reinicio)}" for m, n, limite, agotado in cupos_gemini(config)]
+        cupos = cupos_gemini(config)
+        partes = [f"{m}: {_texto_cupo(n, limite, agotado, reinicio)}" for m, n, limite, agotado in cupos]
+        # Fallo 99: si al primero de algún perfil le quedan menos de las que suele gastar una ejecución, se avisa
+        por_ejecucion = int(((config.get("cupos") or {}).get("gemini") or {}).get("por_ejecucion") or 0)
+        principales = {_resolver(lista[0]) for lista in (config.get("perfiles") or {}).values() if lista}
+        cortos = [(m, 0 if agotado else max(limite - n, 0)) for m, n, limite, agotado in cupos
+                  if m in principales and (agotado or limite - n < por_ejecucion)]
     except Exception:
         return
     if partes:
         _escribir(f"[gateway] {momento}, cupo de Gemini (vuelve a empezar a las {reinicio}): " + "; ".join(partes))
+    for modelo, quedan in cortos if por_ejecucion else []:
+        _escribir(f"[gateway] Ojo: a {modelo} le quedan {quedan} peticiones hoy y una ejecución gasta unas "
+                  f"{por_ejecucion}: el resto de sus llamadas irán a sus reservas (más lentas o de menos calidad)")
 
 
 class _AvisoDeCupo(logging.Handler):
@@ -533,11 +572,13 @@ def _esperar_turno(kwargs: dict) -> float:
     if "mock_response" in kwargs:
         return 0.0  # las respuestas simuladas de los tests no van al proveedor
     try:
+        if modelo in _fuera_de_juego():
+            return 0.0  # fallo 99: un modelo sin cupo hoy no reserva hueco ni hace esperar a nadie
         limite = _limite_por_minuto(modelo)
         espera = _reservar_hueco(modelo, limite)
     except Exception:
         return 0.0  # el limitador nunca puede romper una llamada
-    if espera > 0:
+    if espera >= 0.5:  # fallo 99: el 16 nov salían «espera 0,0 s», que no dicen nada
         metadata = kwargs.get("metadata")
         tarea = metadata.get("aidm_tarea") if isinstance(metadata, dict) else ""
         segundos = f"{espera:.1f}".replace(".", ",")

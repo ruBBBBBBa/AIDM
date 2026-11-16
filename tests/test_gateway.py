@@ -421,7 +421,7 @@ assert list(gateway._saltados) == [redaccion[0]], gateway._saltados
 assert gobernanza == redaccion[1] and redaccion[0] not in gobernanza.reservas, (gobernanza, gobernanza.reservas)
 assert log.getvalue().count("no está en el plan de su proveedor") == 1, log.getvalue()
 assert f"[gateway] gobernanza: {redaccion[1]} (perfil redaccion; reservas: {', '.join(redaccion[2:])}; se salta " \
-       f"{redaccion[0]}, fuera del plan)" in log.getvalue(), log.getvalue()
+       f"{redaccion[0]} (fuera del plan))" in log.getvalue(), log.getvalue()
 # Un LLM creado antes de saberlo (los 4 de la propuesta se crean a la vez) tampoco lo llama
 llamados = []
 original, gateway._completion_registrada.original = (gateway._completion_registrada.original,
@@ -514,5 +514,39 @@ assert "s para no pasar de 5 peticiones por minuto" in log.getvalue()
 gateway._reservas_por_minuto.clear()
 assert all(gateway._esperar_turno({"model": "gemini/x", "mock_response": "ok"}) == 0 for _ in range(10))
 print("OK 13: como mucho 5 peticiones por minuto a cada Gemini; las demás esperan su turno, también entre hilos")
+
+# 14) Fallo 99: un Gemini con el cupo del día agotado se salta hasta las 09:00, como uno fuera del plan, y no reserva
+#     hueco en el limitador. Al empezar el informe, si le quedan menos de las que gasta una ejecución, el log avisa. El
+#     16 nov, con gemini-3.6-flash agotado, las fases del roadmap esperaron hasta 90 s por un hueco suyo
+gateway._saltados.clear()
+gateway._avisados_agotados.clear()
+gateway._reservas_por_minuto.clear()
+gateway.CUPOS_PATH = Path(tempfile.mkdtemp()) / "cupos_gemini.json"
+for _ in range(16):
+    gateway._anotar_gemini(flash)
+log = io.StringIO()
+with contextlib.redirect_stdout(log):
+    gateway.escribir_cupos("Al empezar el informe")
+assert f"[gateway] Ojo: a {flash} le quedan 4 peticiones hoy y una ejecución gasta unas 15" in log.getvalue(), log.getvalue()
+assert "Ojo: a gemini/gemini-3.5-flash-lite" not in log.getvalue()  # le quedan 20
+gateway._anotar_gemini(flash, agotado=True)  # el 429 del cupo diario
+log = io.StringIO()
+with contextlib.redirect_stdout(log):
+    bi = gateway.modelo("roadmap_bi")
+    otra = gateway.modelo("roadmap_ml")
+    espera = gateway._esperar_turno({"model": flash, "metadata": {"aidm_tarea": "roadmap_etl"}})
+    nuevos = gateway._sin_saltados(gateway.parametros(gateway.ModeloDeTarea(flash, "roadmap_etl", tuple(tecnico[1:])),
+                                                      model=flash))
+assert bi == tecnico[1] and flash not in bi.reservas, (bi, bi.reservas)
+assert f"se salta {flash} (sin cupo hoy)" in log.getvalue(), log.getvalue()
+assert log.getvalue().count(f"{flash} ha agotado el cupo del día: se salta hasta las 09:00") == 1, log.getvalue()
+assert espera == 0 and flash not in gateway._reservas_por_minuto  # no reserva hueco
+assert nuevos["model"] == tecnico[1] and all(f["model"] != flash for f in nuevos.get("fallbacks", []))
+log = io.StringIO()
+with contextlib.redirect_stdout(log):
+    gateway.escribir_cupos()
+assert f"Ojo: a {flash} le quedan 0 peticiones hoy" in log.getvalue()
+gateway.CUPOS_PATH = Path(tempfile.mkdtemp()) / "cupos_gemini.json"  # el resto del test, con el cupo entero
+print("OK 14: un Gemini sin cupo del día se salta hasta las 09:00 sin esperar turno, y el log avisa si queda poco")
 
 print("\nTodo bien: el gateway de modelos funciona (en la parte que se puede comprobar sin el LLM real).")
