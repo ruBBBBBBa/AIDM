@@ -2,6 +2,7 @@ from crewai import Crew, Process, Task
 from pydantic import BaseModel
 import gateway
 
+from agents import inventario
 from utils import _make_agent, _recent_chat_transcript, load_agents_config, contexto_cliente
 
 
@@ -48,9 +49,11 @@ def run_proposal_crew(
             f"- Propuesta de solución:\n{structure_proposal}\n"
             f"{contexto}"
             f"- Historial reciente:\n{transcript}\n"
-            "Ajusta la propuesta al tamaño del cliente y al alcance que pide: no añadas componentes que el caso no necesita y redactala acordemente"
+            "Ajusta la propuesta al tamaño del cliente y al alcance que pide: no añadas componentes que el caso no necesita y redactala acordemente\n"
+            f"{inventario.INSTRUCCION}"  # fallo 88: la lista cerrada de servicios, que leen costes, equipo y roadmap
         ),
-        expected_output="Una propuesta de arquitectura justificada y proporcionada al cliente, con la siguiente estructura: Arquitectura Propuesta:\n (...). Sin dibujar ninguna tabla ni gráfico, solo texto.",
+        expected_output="Una propuesta de arquitectura justificada y proporcionada al cliente, con la siguiente estructura: Arquitectura Propuesta:\n (...). Sin dibujar ninguna tabla ni gráfico, solo texto, "
+                        f"y al final el bloque {inventario.TITULO}.",
         agent=architect,
     )
 
