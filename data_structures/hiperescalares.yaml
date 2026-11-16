@@ -236,6 +236,13 @@ servicios_a_evitar:
         fecha: 2026-11-16
   azure:
     no_en_region: []
+    # Por comprobar a mano (16 nov): la tabla de productos por región de Microsoft se genera en el navegador y no se
+    # pudo leer. Mirar en https://azure.microsoft.com/es-es/explore/global-infrastructure/products-by-region/ (región
+    # Spain Central) y, si alguno no está, pasarlo a no_en_region con su alternativa, su fuente y la fecha.
+    por_comprobar: [Azure Machine Learning, Azure Databricks, Azure Synapse Analytics, Microsoft Fabric,
+                    Microsoft Purview, Azure Data Factory, Event Hubs, Stream Analytics, IoT Hub,
+                    Azure OpenAI y los modelos de Azure AI Foundry, Azure AI Vision, Azure AI Document Intelligence,
+                    Power BI Embedded]
     retirados:
       - servicio: Azure Data Lake Analytics
         buscar: [azure data lake analytics]
@@ -304,6 +311,11 @@ servicios_a_evitar:
         fuente: https://learn.microsoft.com/en-us/azure/ai-services/custom-vision-service/overview
         fecha: 2026-11-16
   google:
+    # Por comprobar a mano (16 nov) en europe-southwest1 (Madrid): la fila de Madrid de
+    # https://cloud.google.com/about/locations no se pudo leer, la página de regiones de Composer daba 404 y la tabla de
+    # modelos de Gemini por región salió cortada. Si alguno no está, pasarlo a no_en_region con su alternativa.
+    por_comprobar: [Dataflow, Dataproc, Pub/Sub, Cloud Composer, modelos Gemini de Vertex AI, Dataplex,
+                    Looker (Google Cloud core)]
     no_en_region:
       - servicio: Document AI
         buscar: [document ai]
