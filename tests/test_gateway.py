@@ -379,4 +379,71 @@ assert f"{flash}: quedan 11 de 20 peticiones hoy" in log.getvalue(), log.getvalu
 assert f"{lite}: quedan 20 de 20 peticiones hoy" in log.getvalue(), log.getvalue()
 print("OK 11: el cupo de Gemini se cuenta entre ejecuciones, vuelve a empezar a las 09:00 y un «sin cupo» lo agota")
 
+# 12) Fallo 95: un 403 de plan (tier_not_allowed) no se reintenta, el modelo se salta durante el resto del proceso y el
+#     log lo dice una sola vez. El 14 nov, Mistral Large 4 lo dio en las 7 llamadas de redacción, con 2 reintentos cada una
+TIER = ('{"object":"error","message":"This model is not available in your subscription tier","type":"tier_not_allowed",'
+        '"param":null,"code":"1910","raw_status_code":403}')
+redaccion = PERFILES["redaccion"]
+gateway._saltados.clear()
+decididos = []
+original_reintentos = gateway._num_reintentos.original
+gateway._num_reintentos.original = lambda **k: decididos.append(k["exception"]) or original_reintentos(**k)
+log = io.StringIO()
+try:
+    with contextlib.redirect_stdout(log):
+        llm = gateway.build_llm(gateway.modelo("arquitectura"))
+        llm.additional_params["mock_response"] = litellm.APIError(status_code=403, message=TIER, llm_provider="mistral",
+                                                                  model=redaccion[0])
+        llm.additional_params["fallbacks"][0]["mock_response"] = "Arquitectura de la reserva"
+        assert llm.call([{"role": "user", "content": "Escribe la arquitectura"}]) == "Arquitectura de la reserva"
+        gobernanza = gateway.modelo("gobernanza")  # la tarea siguiente ya no lo lleva
+        llm = gateway.build_llm(gateway.modelo("estrategia"))
+finally:
+    gateway._num_reintentos.original = original_reintentos
+assert not decididos, "un error de plan no pasa por los reintentos de LiteLLM"
+assert list(gateway._saltados) == [redaccion[0]], gateway._saltados
+assert gobernanza == redaccion[1] and redaccion[0] not in gobernanza.reservas, (gobernanza, gobernanza.reservas)
+assert log.getvalue().count("no está en el plan de su proveedor") == 1, log.getvalue()
+assert f"[gateway] gobernanza: {redaccion[1]} (perfil redaccion; reservas: {', '.join(redaccion[2:])}; se salta " \
+       f"{redaccion[0]}, fuera del plan)" in log.getvalue(), log.getvalue()
+# Un LLM creado antes de saberlo (los 4 de la propuesta se crean a la vez) tampoco lo llama
+llamados = []
+original, gateway._completion_registrada.original = (gateway._completion_registrada.original,
+                                                      lambda *a, **k: llamados.append(k["model"]) or respuesta_de(
+                                                          k["model"], parrafo * 3))
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        litellm.completion(model=redaccion[0], **gateway.parametros(gateway.ModeloDeTarea(
+            redaccion[0], "visualizacion", tuple(redaccion[1:]))), messages=[])
+finally:
+    gateway._completion_registrada.original = original
+assert llamados == [redaccion[1]], llamados
+# Sin reservas, el primer intento va sin reintentos: un error de plan se queda en uno; otro error, en los de siempre
+intentos = []
+
+
+def falla(error):
+    def completion(*a, **k):
+        intentos.append(k.get("num_retries"))
+        raise error
+    return completion
+
+
+for error, esperados in ((litellm.APIError(status_code=403, message=TIER, llm_provider="mistral", model="x"), [0]),
+                         (litellm.APIError(status_code=500, message="Internal error", llm_provider="mistral",
+                                           model="x"), [0, 1])):
+    intentos.clear()
+    original, gateway._completion_registrada.original = gateway._completion_registrada.original, falla(error)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            litellm.completion(model="mistral/otro", messages=[], num_retries=2, metadata={"aidm_tarea": "discovery"})
+    except litellm.APIError:
+        pass
+    finally:
+        gateway._completion_registrada.original = original
+    assert intentos == esperados, (error, intentos)
+assert "mistral/otro" in gateway._saltados
+gateway._saltados.clear()
+print("OK 12: un 403 de plan no se reintenta, el modelo se salta en las tareas siguientes y el log lo dice una vez")
+
 print("\nTodo bien: el gateway de modelos funciona (en la parte que se puede comprobar sin el LLM real).")
