@@ -245,6 +245,16 @@ def _registrar(tarea: str, modelo_usado: str, mensajes, respuesta: str, uso: dic
 CUPOS_PATH = Path("data_structures/cupos_gemini.json")
 _bloqueo_cupos = threading.Lock()
 _SIN_CUPO = re.compile(r"RESOURCE_EXHAUSTED|free_tier_requests|exceeded your current quota", re.IGNORECASE)
+# Fallo 92 (16 nov): el 14 nov, un 429 por minuto (quotaId GenerateRequestsPerMinutePerProjectPerModel-FreeTier, 5 por
+# minuto) dejó Gemini «agotado hasta las 09:00 (15 de 20)» cuando quedaban 5. Solo el cupo diario (quotaId …PerDay…,
+# «requests per day limit») lo deja agotado; el de por minuto lo espera el limitador del fallo 96.
+_CUPO_DIARIO = re.compile(r"PerDay|per day limit", re.IGNORECASE)
+
+
+def sin_cupo_diario(error) -> bool:
+    """Fallo 92: el error es el del cupo diario de Gemini, no el de por minuto (ni otro 429)."""
+    texto = str(error)
+    return bool(_SIN_CUPO.search(texto) and _CUPO_DIARIO.search(texto))
 
 
 def _cupo_gemini(config: dict | None = None) -> tuple[int, str]:
@@ -331,9 +341,11 @@ class _AvisoDeCupo(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            # El handler de LiteLLM, que va antes, deja el mensaje ya formateado (sin args): se lee del texto
+            # El handler de LiteLLM, que va antes, deja el mensaje ya formateado (sin args): se lee del texto. El error
+            # entero, si viene (exc_info), por si el mensaje llega recortado
             m = self._FALLO.match(record.getMessage())
-            if m and _SIN_CUPO.search(m.group(2)):
+            error = str(record.exc_info[1]) if record.exc_info and record.exc_info[1] else ""
+            if m and sin_cupo_diario(f"{m.group(2)} {error}"):  # fallo 92: solo el diario
                 _anotar_gemini(m.group(1), agotado=True)
         except Exception:
             pass
@@ -591,7 +603,7 @@ def _completion_registrada(*args, **kwargs):
         try:
             _registrar(tarea, str(kwargs.get("model", "")), kwargs.get("messages"), "", None,
                        time.monotonic() - inicio, f"{type(exc).__name__}: {exc}")
-            if _SIN_CUPO.search(str(exc)):  # fallo 92: Gemini sin cupo y sin reservas que respondan
+            if sin_cupo_diario(exc):  # fallo 92: Gemini sin cupo del día y sin reservas que respondan
                 _anotar_gemini(str(kwargs.get("model", "")), agotado=True)
         except Exception:
             pass  # el registro nunca puede romper la llamada

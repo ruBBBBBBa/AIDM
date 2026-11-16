@@ -337,17 +337,30 @@ finally:
     gateway._completion_registrada.original = original
 assert {m: n for m, n, _, _ in gateway.cupos_gemini()}[flash] == 1
 
-# Un «sin cupo» en la lista de reservas (lo escribe LiteLLM) o sin reservas (la excepción) lo deja agotado
-logging.getLogger("LiteLLM").error("Fallback attempt failed for model %s: %s", flash, "litellm.RateLimitError: "
-                                   "RESOURCE_EXHAUSTED Quota exceeded for metric: generate_content_free_tier_requests")
+# Un «sin cupo» del día en la lista de reservas (lo escribe LiteLLM) o sin reservas (la excepción) lo deja agotado.
+# Fallo 92 (16 nov): el de por minuto, no (el 14 nov dejó Gemini «agotado» con 15 de 20). Los textos son los de Google
+DIARIO = ('litellm.RateLimitError: geminiException - {"error": {"code": 429, "message": "You exceeded your current quota'
+          '. Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: '
+          '20, model: gemini-3.6-flash, description: Generate content requests per day limit exceeded on Free Tier.", '
+          '"status": "RESOURCE_EXHAUSTED", "details": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"'
+          ', "quotaValue": "20"}]}}')
+POR_MINUTO = ('litellm.RateLimitError: geminiException - {"error": {"code": 429, "message": "You exceeded your current '
+              'quota. Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests'
+              ', limit: 5, model: gemini-3.6-flash", "status": "RESOURCE_EXHAUSTED", "details": [{"quotaId": '
+              '"GenerateRequestsPerMinutePerProjectPerModel-FreeTier", "quotaValue": "5"}]}}')
+assert gateway.sin_cupo_diario(DIARIO) and not gateway.sin_cupo_diario(POR_MINUTO)
+assert not gateway.sin_cupo_diario("503 UNAVAILABLE This model is currently experiencing high demand")
+logging.getLogger("LiteLLM").error("Fallback attempt failed for model %s: %s", lite, POR_MINUTO)
 logging.getLogger("LiteLLM").error("Fallback attempt failed for model %s: %s", lite, "503 UNAVAILABLE high demand")
 estado = {m: (n, agotado) for m, n, _, agotado in gateway.cupos_gemini()}
-assert estado[flash] == (1, True) and estado[lite] == (0, False), estado  # un 503 no agota el cupo
+assert estado[lite] == (0, False), estado  # ni el de por minuto ni un 503 agotan el cupo del día
+logging.getLogger("LiteLLM").error("Fallback attempt failed for model %s: %s", flash, DIARIO)
+estado = {m: (n, agotado) for m, n, _, agotado in gateway.cupos_gemini()}
+assert estado[flash] == (1, True), estado
 
 
 def sin_cupo(*args, **kwargs):
-    raise litellm.RateLimitError("You exceeded your current quota (RESOURCE_EXHAUSTED)", llm_provider="gemini",
-                                 model=kwargs["model"])
+    raise litellm.RateLimitError(DIARIO, llm_provider="gemini", model=kwargs["model"])
 
 
 original, gateway._completion_registrada.original = gateway._completion_registrada.original, sin_cupo
