@@ -85,6 +85,12 @@ print("OK 2: los 12 prompts de estructura, propuesta y roadmap prohíben presupu
 costes = next(p for p in prompts["costes"] if "valora el coste de cada componente" in p)
 perfiles = next(p for p in prompts["costes"] if "identifica los perfiles profesionales" in p)
 equipo = next(p for p in prompts["costes"] if "define el equipo que se va a presupuestar" in p)
+# Fallo 85: lo que va en tiempo real se paga las horas que está encendido; el ERP de cada noche no es tiempo real;
+# el lago acumula; los dólares los convierte el programa. La arquitectura lleva la regla del tiempo real
+assert "730 al mes si va día y noche" in costes and "acumulativo true" in costes and "moneda USD" in costes
+assert "Un dato que llega del ERP cada noche no es tiempo real" in costes
+arquitectura_p = next(p for p in prompts["propuesta"] if "propon una arquitectura coherente" in p)
+assert "Un dato que viene del ERP cada noche es diario o nocturno, no tiempo real" in arquitectura_p
 # Fallo 86: el MVP y el resto del proyecto, cada perfil en su alcance (antes: solo el piloto)
 assert "Un perfil que solo hace falta para lo que va después del MVP" in perfiles
 assert "en resto_del_proyecto pon el equipo de lo que va después" in equipo

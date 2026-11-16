@@ -1,0 +1,8 @@
+# Fallo 85: datos fijos de los costes (agents/estimation_crew.py).
+#
+# Tipo de cambio para pasar a euros los precios públicos en dólares (los de AWS, por ejemplo). El modelo da el precio
+# en su moneda y el programa lo convierte; si cambia el tipo, basta con cambiarlo aquí.
+cambio:
+  usd_por_eur: 1.1052   # dólares por euro: tipo de referencia del BCE
+  fecha: 2026-11-13
+  fuente: https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html

@@ -233,4 +233,26 @@ assert "- Visión artificial · IA · solo después del MVP" in costes_p and "- 
 assert "Pon perfiles solo para los servicios de cada alcance" in perfiles_p
 print("OK 9: costes usa la fase del inventario y avisa de lo que falta o sobra; perfiles recibe el inventario")
 
+# 10) Fallo 85: el lago de datos acumula lo que entra cada mes; un precio en dólares se pasa a euros con el tipo fijo
+#     de data_structures/costes.yaml. El 12 nov, S3 salía a 12 €/mes fijos con 500 GB nuevos al mes, y los precios de
+#     AWS en dólares iban como euros con el mismo número
+cambio = ec._cambio()
+assert cambio["usd_por_eur"] > 1 and cambio["fecha"] and "ecb.europa.eu" in cambio["fuente"]
+lago = ComponenteCoste(componente="Amazon S3", categoria="infraestructura", precio_unitario_eur=0.024, unidades=500,
+                       unidad="GB", periodicidad="mensual", referencia="500 GB nuevos al mes", acumulativo=True)
+assert ec._coste_en_proyecto(lago, 10) == 12 * 10 * 11 / 2  # 12 € el mes 1, 24 € el 2… 120 € el 10: 660 €
+assert ec._coste_al_mes(lago, 10) == 120  # lo que queda funcionando, el último mes
+en_dolares = ComponenteCoste(componente="AWS Glue", categoria="infraestructura", precio_unitario_eur=0.44, unidades=60,
+                             unidad="DPU-hora", periodicidad="mensual", referencia="Precio público", moneda="$")
+assert en_dolares.moneda == "USD"
+convertido = ec._en_euros(en_dolares, cambio)
+assert abs(convertido.precio_unitario_eur - 0.44 / cambio["usd_por_eur"]) < 1e-9 and convertido.moneda == "EUR"
+assert "Precio en dólares (0,44 $) pasado a euros a" in convertido.referencia
+informe_85 = CostEstimationReport(componentes=[lago, en_dolares], supuestos=[], resumen_ejecutivo=ResumenEjecutivo(
+    meses_proyecto=10, presupuesto_cliente_max_eur=0, justificacion="x"))
+html = ec._format_cost_report(informe_85, "", None, caso)
+assert "12 €/mes el primer mes (crece cada mes con lo que entra)" in html and "660 €" in html
+assert f"{ec._cifra(0.44 / cambio['usd_por_eur'])} €/DPU-hora" in html
+print("OK 10: el lago de datos acumula lo que entra cada mes y los precios en dólares se pasan a euros")
+
 print("\nTodo bien: el fallo 5 está arreglado.")

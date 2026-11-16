@@ -15,6 +15,7 @@ import json
 import textwrap
 
 import litellm
+import yaml  # fallo 85: el tipo de cambio de data_structures/costes.yaml
 import progreso
 from agents import inventario as inventario_mod  # fallo 88
 from crewai import Agent, Crew, Process, Task
@@ -108,6 +109,7 @@ class ResumenEjecutivo(BaseModel):
 Categoria = Literal["infraestructura", "licencias", "formacion", "mantenimiento"]
 Periodicidad = Literal["mensual", "anual", "unico"]
 Fase = Literal["mvp", "proyecto_completo"]  # fallo 86
+Moneda = Literal["EUR", "USD"]  # fallo 85
 
 
 def _a_numero(valor: Any) -> Any:
@@ -173,7 +175,24 @@ class ComponenteCoste(BaseModel):
     # Fallo 86: el 12 nov, IoT, SageMaker, Rekognition y Macie se pagaban en los 4 meses del MVP aunque iban en la fase 2
     fase: Fase = Field(default="mvp", description="Desde qué alcance se paga: mvp si entra en el MVP (o si el cliente "
                                                   "no pide un MVP); proyecto_completo si solo entra después del MVP")
+    # Fallo 85: el 12 nov, los precios de AWS en dólares salían como euros con el mismo número, y S3 costaba lo mismo
+    # cada mes aunque entraban 500 GB nuevos cada mes
+    moneda: Moneda = Field(default="EUR", description="Moneda del precio unitario: EUR, o USD si el precio público "
+                                                      "está en dólares (el programa lo pasa a euros)")
+    acumulativo: bool = Field(default=False, description="true si es almacenamiento que crece cada mes con lo que "
+                                                         "entra (el lago de datos): entonces unidades es lo que entra "
+                                                         "en un mes, y el programa suma lo que se va acumulando")
     _cantidad: float | None = PrivateAttr(default=None)  # fallo 53: el uso que dio el modelo, antes de pasarlo a paquetes
+
+    @field_validator("moneda", mode="before")
+    @classmethod
+    def _moneda_sin_variantes(cls, valor: Any) -> Any:
+        """Fallo 85: «$», «dólares», «usd» → USD; «€», «euros» → EUR."""
+        if not isinstance(valor, str):
+            return valor
+        texto = _normalize_text(valor)
+        return "USD" if ("$" in valor or "usd" in texto or "dolar" in texto) else "EUR" if (
+            "€" in valor or "eur" in texto) else valor
 
     @field_validator("fase", mode="before")
     @classmethod
@@ -601,7 +620,10 @@ def _cifra(valor: float) -> str:
 
 def _coste_en_proyecto(c: ComponenteCoste, meses: int) -> float:
     """Lo que cuesta un componente en `meses` meses: lo mensual, cada mes; lo anual, la parte proporcional de esos
-    meses; lo único, una vez."""
+    meses; lo único, una vez. Fallo 85: lo acumulativo (el lago de datos) crece cada mes con lo que entra: el mes k
+    se paga k veces lo de un mes, así que en `meses` meses son meses·(meses+1)/2."""
+    if c.periodicidad == "mensual" and c.acumulativo:
+        return c.importe_eur * meses * (meses + 1) / 2
     if c.periodicidad == "mensual":
         return c.importe_eur * meses
     if c.periodicidad == "anual":
@@ -618,7 +640,10 @@ PARTE_MAXIMA_AL_MES = 0.05
 
 
 def _coste_al_mes(c: ComponenteCoste, meses: int) -> float:
-    """Lo mensual, tal cual; lo anual, entre 12; lo que se paga una vez, repartido entre los meses del proyecto."""
+    """Lo mensual, tal cual; lo anual, entre 12; lo que se paga una vez, repartido entre los meses del proyecto.
+    Fallo 85: lo acumulativo, lo del último mes valorado (lo que queda funcionando)."""
+    if c.periodicidad == "mensual" and c.acumulativo:
+        return c.importe_eur * meses
     if c.periodicidad == "mensual":
         return c.importe_eur
     if c.periodicidad == "anual":
@@ -707,6 +732,31 @@ def _fecha(texto: str) -> str:
     """'2026-10-29' -> '29/10/2026'; lo demás, tal cual."""
     m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", texto or "")
     return f"{m.group(3)}/{m.group(2)}/{m.group(1)}" if m else (texto or "")
+
+
+COSTES_YAML = Path(__file__).parent.parent / "data_structures" / "costes.yaml"
+
+
+def _cambio() -> dict:
+    """Fallo 85: el tipo de cambio fijo de data_structures/costes.yaml ({usd_por_eur, fecha, fuente}); 1 si no está."""
+    try:
+        datos = (yaml.safe_load(COSTES_YAML.read_text(encoding="utf-8")) or {}).get("cambio") or {}
+    except (OSError, yaml.YAMLError):
+        datos = {}
+    return {"usd_por_eur": float(datos.get("usd_por_eur") or 1.0), "fecha": str(datos.get("fecha") or ""),
+            "fuente": str(datos.get("fuente") or "")}
+
+
+def _en_euros(c: ComponenteCoste, cambio: dict | None = None) -> ComponenteCoste:
+    """Fallo 85: un precio en dólares, pasado a euros con el tipo fijo del yaml (y dicho en la referencia)."""
+    if c.moneda != "USD" or c.tarifa:
+        return c
+    cambio = cambio or _cambio()
+    tipo = cambio["usd_por_eur"]
+    return c.model_copy(update={
+        "precio_unitario_eur": c.precio_unitario_eur / tipo, "moneda": "EUR",
+        "referencia": (f"{c.referencia.rstrip('. ')}. Precio en dólares ({_cifra(c.precio_unitario_eur)} $) pasado a "
+                       f"euros a {_cifra(tipo)} $/€ (BCE, {_fecha(cambio['fecha'])}).")})
 
 
 def _con_precio_de_tabla(c: ComponenteCoste, avisar: bool = True) -> ComponenteCoste:
@@ -850,6 +900,8 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     # Fallo 53: los componentes que están en la tabla de precios llevan su precio; el resto, el del modelo
     # Fallo 87: sin filas de la nube del cliente en la tabla, sin avisos de «Tarifa desconocida»
     componentes = [_con_precio_de_tabla(c, avisar_tarifas) for c in report.componentes]
+    cambio = _cambio()  # fallo 85: los precios en dólares, a euros con el tipo fijo del yaml
+    componentes = [_en_euros(c, cambio) for c in componentes]
     # Fallo 88: la fase de cada componente es la de su servicio en el inventario de la arquitectura
     sin_valorar = fuera_de_lista = []
     if inventario:
@@ -1097,6 +1149,8 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         else:
             cuando = f"En {meses_txt}"
         importe = f"{_cifra(c.importe_eur)} {_UNIDAD[c.periodicidad]}"
+        if c.acumulativo and c.periodicidad == "mensual":  # fallo 85
+            importe += " el primer mes (crece cada mes con lo que entra)"
         #Un componente a 0 € solo cuadra si el cliente ya lo tiene; lo demás se avisa
         if not c.importe_eur:
             importe = ("0 € (cabe en el nivel gratuito)" if _en_gratuito(c)
@@ -1673,6 +1727,14 @@ def run_estimation_crew(
             "gratuito podría aplicarse. "
             "Que un servicio no tenga cuota no lo hace gratis: el cómputo, las ejecuciones o un endpoint se pagan por "
             "uso, así que estima el uso del piloto. "
+            # Fallo 85: el 12 nov, Rekognition en «tiempo real» se valoró a 20 h al mes, y S3 con 500 GB fijos
+            "Lo que va en tiempo real (un endpoint de inferencia, un modelo de visión, un clúster de streaming) se paga "
+            "todas las horas que está encendido: 730 al mes si va día y noche, o las de los turnos que diga el caso; "
+            "no lo valores por unas pocas horas de uso. Un dato que llega del ERP cada noche no es tiempo real. "
+            "El almacenamiento que crece con lo que entra cada mes (el lago de datos) va con acumulativo true y, en "
+            "unidades, lo que entra en un mes: el programa suma lo que se va acumulando. "
+            "Si el precio público que conoces está en dólares, pon ese número y moneda USD, sin convertirlo: el "
+            "programa lo pasa a euros con un tipo fijo. "
             "El coste del equipo (desarrollo e implantación) se calcula aparte con las tarifas de la empresa: NO lo "
             "incluyas como componente. Los totales, el horizonte y el encaje con el presupuesto se calculan después a "
             "partir de tus importes. En meses_proyecto pon los meses del alcance que se presupuesta (el piloto, si lo "

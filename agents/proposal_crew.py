@@ -6,6 +6,16 @@ from agents import inventario
 from utils import _make_agent, _recent_chat_transcript, load_agents_config, contexto_cliente
 
 
+# Fallo 85: el 12 nov, el informe llamaba «tiempo real» a los cuadros de ventas, que se cargan del ERP cada noche, y
+# la visión del embotellado iba «en tiempo real» con 20 h de inferencia al mes en los costes
+REGLA_TIEMPO_REAL = (
+    "Llama «tiempo real» solo a lo que llega en segundos o minutos (sensores, eventos). Un dato que viene del ERP cada "
+    "noche es diario o nocturno, no tiempo real, y lo que se muestre de él en un cuadro de mando también. Si algo va "
+    "en tiempo real (un endpoint de inferencia, un modelo de visión, un clúster), di cuántas horas está encendido: "
+    "todo el día o los turnos de la planta, porque es lo que se paga."
+)
+
+
 class ProposalResult(BaseModel):
     architecture: str
     governance: str
@@ -50,6 +60,7 @@ def run_proposal_crew(
             f"{contexto}"
             f"- Historial reciente:\n{transcript}\n"
             "Ajusta la propuesta al tamaño del cliente y al alcance que pide: no añadas componentes que el caso no necesita y redactala acordemente\n"
+            f"{REGLA_TIEMPO_REAL}\n"  # fallo 85
             f"{inventario.REGLA_ELEGIR}\n"  # fallo 89: una opción elegida por papel, sin «X o Y»
             f"{inventario.INSTRUCCION}"  # fallo 88: la lista cerrada de servicios, que leen costes, equipo y roadmap
         ),
