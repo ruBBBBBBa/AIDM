@@ -720,8 +720,21 @@ def fuentes_locales(html: str) -> str:
     html = _GOOGLE_FONTS.sub("", html)
     return html.replace("</head>", f"<style>{caras}</style>\n</head>", 1)
 
+# Fallo 97: los modelos escriben a veces la negrita con un espacio dentro («** texto**», «**texto **»), y CommonMark no
+# la reconoce: el informe enseñaba los asteriscos. Se quitan esos espacios en cada par de la misma línea, sin tocar los
+# bloques de código ni el código en línea.
+_NEGRITA_CON_ESPACIOS = re.compile(r"\*\*[ \t]*([^\s*](?:[^*\n]*?[^\s*])?)[ \t]*\*\*")
+_CODIGO = re.compile(r"(```.*?```|~~~.*?~~~|`[^`\n]*`)", re.DOTALL)
+
+
+def negritas_sin_espacios(texto: str) -> str:
+    """Fallo 97: «** texto**» y «**texto **» → «**texto**», fuera del código."""
+    partes = _CODIGO.split(texto or "")
+    return "".join(p if n % 2 else _NEGRITA_CON_ESPACIOS.sub(r"**\1**", p) for n, p in enumerate(partes))
+
+
 def md_to_html(text: str) -> str:
-    text = sin_otros_alfabetos(sin_emojis(text))
+    text = negritas_sin_espacios(sin_otros_alfabetos(sin_emojis(text)))  # fallo 97
     if not text or not text.strip():
         return "<p>No se ha generado contenido.</p>"
     tokens = _MD.parse(text)

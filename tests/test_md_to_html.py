@@ -71,4 +71,14 @@ assert not quedan, quedan
 assert md_to_html("🎯 ✨") == "<p>No se ha generado contenido.</p>"
 print("OK 7: fallo 65, sin emojis: ✅ y ❌ pasan a ✓ y ✗, y las flechas, las estrellas y las marcas se quedan")
 
-print("\nTodo bien: el fallo 11 está arreglado, y el 65 también.")
+# 8) Fallo 97: la negrita con un espacio dentro («** texto**», «**texto **») también se convierte; el código y un «**»
+#    suelto no se tocan
+assert md_to_html("** Plataforma recomendada:** AWS").strip() == "<p><strong>Plataforma recomendada:</strong> AWS</p>"
+assert "<strong>Delta Lake</strong> por su" in md_to_html("Se usa **Delta Lake ** por su time travel.")
+assert "<td><strong>Data Engineer</strong></td>" in md_to_html("| Perfil | Nivel |\n|---|---|\n| **Data Engineer ** | Senior |")
+assert "<strong>Ojo:</strong> texto <strong>otra</strong>" in md_to_html("**Ojo:** texto **otra**")
+assert "<code>** no **</code>" in md_to_html("Código `** no **` y **bien**")
+assert "** dentro **" in md_to_html("```\n** dentro **\n```") and "2 ** 3 = 8" in md_to_html("2 ** 3 = 8")
+print("OK 8: fallo 97, la negrita con espacios dentro se convierte; el código y un «**» suelto se quedan igual")
+
+print("\nTodo bien: el fallo 11 está arreglado, y el 65 y el 97 también.")
