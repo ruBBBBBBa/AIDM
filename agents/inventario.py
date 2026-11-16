@@ -10,7 +10,7 @@ antes y el log lo avisa.
 import logging
 import re
 
-from utils import _normalize_text, revisar_servicios
+from utils import PUERTA_DE_ENLACE, _normalize_text, necesita_puerta_de_enlace, revisar_servicios
 
 logger = logging.getLogger("aidm")
 
@@ -136,6 +136,20 @@ def nota_sin_decidir(abiertas: list[str]) -> str:
         return ""
     return ("> **Ojo: la arquitectura deja elecciones sin decidir** (" + "; ".join(abiertas) + "). Vale la primera de "
             "cada par, la del inventario de servicios: la otra es la alternativa descartada.\n\n")
+
+
+def con_puerta_de_enlace(filas: list[dict], problem_case: dict | None) -> tuple[list[dict], str]:
+    """Fallo 90: si hace falta la puerta de enlace de Power BI y el inventario no la trae, se añade (desde el MVP), y
+    la nota para la arquitectura lo dice. Así la valoran los costes."""
+    if not filas or not necesita_puerta_de_enlace(problem_case):
+        return filas, ""
+    if any(re.search(r"gateway|puerta de enlace", _normalize_text(f["servicio"])) for f in filas):
+        return filas, ""
+    logger.warning("[inventario] Power BI con los datos fuera de Azure y sin puerta de enlace en el inventario: se añade")
+    fila = {"servicio": PUERTA_DE_ENLACE, "capa": "visualización", "fase": "mvp", "alternativa": ""}
+    return filas + [fila], ("> **Ojo: falta la puerta de enlace de Power BI.** Con los datos fuera de Azure, Power BI "
+                            "Service solo llega a ellos a través de una puerta de enlace de datos local en una máquina "
+                            "Windows: se ha añadido al inventario y a los costes.\n\n")
 
 
 def comprobar(filas: list[dict], problem_case: dict | None) -> list[dict]:
