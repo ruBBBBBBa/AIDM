@@ -10,3 +10,5 @@ pyyaml
 lxml
 mcp
 markdown-it-py
+fastapi
+uvicorn
