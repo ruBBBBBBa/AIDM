@@ -174,7 +174,7 @@ Informe en la página, con el botón «Descargar informe (HTML)»
 | `data_structures/hiperescalares.yaml` | Cómo elige nube el agente de plataforma: pesos de cada criterio, datos de cada nube (región en España, ENS, soberanía, oferta híbrida, formación), palabras que delatan lo que usa el cliente y la valoración de mantener o migrar lo que ya tiene (`existente:`). |
 | `data_structures/agents.yaml` | Rol, objetivo y contexto de cada agente de CrewAI. |
 | `bd/costes_perfil.csv` | Tarifas por hora de cada perfil (Junior, Middle y Senior). |
-| `bd/precios_cloud.csv` | Precios de los servicios de la nube (de momento, Azure) que usan los costes. Se actualiza con `python bd/actualizar_precios.py` (con `--probar`, solo dice qué cambiaría). |
+| `bd/precios_cloud.csv` | Precios de los servicios de la nube (Azure y AWS, con las SKU de AWS en `bd/precios_aws.yaml`) y de las licencias, que usan los costes. Se actualiza con `python bd/actualizar_precios.py` (con `--probar`, solo dice qué cambiaría; con `--solo aws`, solo AWS) y acaba con un informe de cobertura. |
 | `data_structures/solution_builder_report_recovery.html` | Plantilla limpia del informe. La de trabajo, `solution_builder_report.html`, se sobrescribe en cada ejecución. |
 
 ---
