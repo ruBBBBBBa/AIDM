@@ -654,19 +654,35 @@ def _coste_al_mes(c: ComponenteCoste, meses: int) -> float:
 # Fallo 53: tabla de precios de los servicios cloud. El modelo elige la fila y da la cantidad de un mes en la unidad de
 # la fila (eventos, horas, GB…); el precio, el paquete en que se cobra («millón de eventos») y lo gratuito salen de
 # aquí. El 28 oct, Event Hubs salió a 0,3 €/mensaje × 720 millones = 216 M€/mes porque el precio era por millón.
-# Los precios se actualizan con bd/actualizar_precios.py (Azure Retail Prices API, en euros y sin clave).
+# Los precios se actualizan con bd/actualizar_precios.py (Azure Retail Prices API, en euros y sin clave; fallo 87: y la
+# Price List Bulk API de AWS, en dólares, con las SKU de bd/precios_aws.yaml).
 CSV_PRECIOS = Path(__file__).parent.parent / "bd" / "precios_cloud.csv"
+COSTES_YAML = Path(__file__).parent.parent / "data_structures" / "costes.yaml"
+
+
+def _cambio() -> dict:
+    """Fallo 85: el tipo de cambio fijo de data_structures/costes.yaml ({usd_por_eur, fecha, fuente}); 1 si no está."""
+    try:
+        datos = (yaml.safe_load(COSTES_YAML.read_text(encoding="utf-8")) or {}).get("cambio") or {}
+    except (OSError, yaml.YAMLError):
+        datos = {}
+    return {"usd_por_eur": float(datos.get("usd_por_eur") or 1.0), "fecha": str(datos.get("fecha") or ""),
+            "fuente": str(datos.get("fuente") or "")}
 
 
 def _cargar_precios() -> dict[str, dict]:
-    """Filas de bd/precios_cloud.csv por id. Una fila sin números válidos se salta y se avisa en el log."""
+    """Filas de bd/precios_cloud.csv por id. Una fila sin números válidos se salta y se avisa en el log. Fallo 87: una
+    fila en otra moneda (las de AWS, en dólares) se pasa a euros al leerla, con el tipo fijo de costes.yaml."""
     precios: dict[str, dict] = {}
     if not CSV_PRECIOS.exists():
         return precios
+    tipo = _cambio()["usd_por_eur"]
     with open(CSV_PRECIOS, encoding="utf-8-sig", newline="") as f:
         for fila in csv.DictReader(f, delimiter=";"):
             fila = {k.strip(): (v or "").strip() for k, v in fila.items() if k}
             try:
+                if fila.get("moneda") == "USD":  # fallo 87
+                    fila["precio_eur"] = float(fila["precio_origen"]) / tipo
                 fila.update(por_cada=float(fila["por_cada"]), precio_eur=float(fila["precio_eur"]),
                             gratis_al_mes=float(fila.get("gratis_al_mes") or 0))
             except (KeyError, ValueError):
@@ -735,19 +751,6 @@ def _fecha(texto: str) -> str:
     return f"{m.group(3)}/{m.group(2)}/{m.group(1)}" if m else (texto or "")
 
 
-COSTES_YAML = Path(__file__).parent.parent / "data_structures" / "costes.yaml"
-
-
-def _cambio() -> dict:
-    """Fallo 85: el tipo de cambio fijo de data_structures/costes.yaml ({usd_por_eur, fecha, fuente}); 1 si no está."""
-    try:
-        datos = (yaml.safe_load(COSTES_YAML.read_text(encoding="utf-8")) or {}).get("cambio") or {}
-    except (OSError, yaml.YAMLError):
-        datos = {}
-    return {"usd_por_eur": float(datos.get("usd_por_eur") or 1.0), "fecha": str(datos.get("fecha") or ""),
-            "fuente": str(datos.get("fuente") or "")}
-
-
 def _en_euros(c: ComponenteCoste, cambio: dict | None = None) -> ComponenteCoste:
     """Fallo 85: un precio en dólares, pasado a euros con el tipo fijo del yaml (y dicho en la referencia)."""
     if c.moneda != "USD" or c.tarifa:
@@ -777,9 +780,12 @@ def _con_precio_de_tabla(c: ComponenteCoste, avisar: bool = True) -> ComponenteC
     gratis = fila["gratis_al_mes"]
     uso = f"Uso estimado al mes: {_cifra(cantidad)} (unidad: {fila['unidad']})" + (
         f", de los que {_cifra(gratis)} son gratis" if gratis else "")
+    dolares = ""  # fallo 87: las filas de AWS están en dólares y se pasan a euros al leerlas
+    if fila.get("moneda") == "USD" and fila.get("precio_origen"):
+        dolares = f"; {_cifra(float(fila['precio_origen']))} $ al cambio de {_cifra(_cambio()['usd_por_eur'])} $/€"
     referencia = (f"{c.referencia.rstrip('. ')}. {uso}. Precio de la tabla: {_cifra(fila['precio_eur'])} € por "
                   f"{fila['cobro'] or fila['unidad']} ({fila.get('fuente') or 'tabla de precios'}, "
-                  f"{_fecha(fila.get('fecha', ''))}).")
+                  f"{_fecha(fila.get('fecha', ''))}{dolares}).")
     nuevo = c.model_copy(update={
         "tarifa": fila["id"], "precio_unitario_eur": fila["precio_eur"],
         "unidades": max(cantidad - gratis, 0) / fila["por_cada"], "unidad": fila["cobro"] or fila["unidad"],

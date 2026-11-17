@@ -185,7 +185,10 @@ import logging
 pro = ec.PRECIOS_CLOUD["power-bi-pro"]
 assert pro["precio_eur"] == 12.10 and ec.PRECIOS_CLOUD["power-bi-premium-por-usuario"]["precio_eur"] == 20.80
 assert "microsoft.com/es-es" in pro["fuente"] and pro["fecha"]
-assert [f["id"] for f in ec._filas_precios(caso(cloud_provider="AWS"), "Amazon S3, Athena y Power BI")] == ["power-bi-pro"]
+# Google Cloud aún no tiene filas: solo las licencias (desde el fallo 87, parte 2, AWS sí tiene)
+assert [f["id"] for f in ec._filas_precios(caso(cloud_provider="Google Cloud"), "BigQuery y Power BI")] == ["power-bi-pro"]
+assert {"aws-s3-standard", "aws-athena", "power-bi-pro"} <= {
+    f["id"] for f in ec._filas_precios(caso(cloud_provider="AWS"), "Amazon S3, Athena y Power BI")}
 assert "power-bi-pro" in ec._tabla_precios(en_aws, "Azure Data Factory y Power BI")  # con Azure, junto a las suyas
 en_sus_servidores = caso(cloud_provider="Azure")
 en_sus_servidores["plataforma_objetivo"] = {"value": "Microsoft Azure", "despliegue": "on_premises"}
@@ -212,5 +215,82 @@ finally:
 assert "484 €/mes" in html and "12,10 €/usuario al mes × 40 · precio de la tabla" in html  # 40 × 12,10
 assert "12 €/mes" in html  # S3 se queda con el precio del modelo
 print("OK 11: Power BI Pro y PPU están en la tabla con cualquier nube, y sin filas de la nube no hay avisos de tarifa")
+
+# 12) Fallo 87 (parte 2): los precios de AWS salen de la Price List Bulk API, con la SKU de cada fila en bd/precios_aws.yaml;
+#     se guardan en dólares y se pasan a euros al leerlos. Sin red: la API se simula
+import csv
+import yaml
+
+sys.path.insert(0, str(RAIZ / "bd"))
+import actualizar_precios as ap
+
+oferta = {"products": {"A": {"attributes": {"usagetype": "EUS2-Uso"}}, "B": {"attributes": {"usagetype": "EUS2-Otro"}}},
+          "terms": {"OnDemand": {"A": {"t": {"priceDimensions": {
+              "1": {"beginRange": "0", "unit": "GB-Mo", "pricePerUnit": {"USD": "0.023"}},
+              "2": {"beginRange": "51200", "unit": "GB-Mo", "pricePerUnit": {"USD": "0.022"}}}}},
+              "B": {"t": {"priceDimensions": {"1": {"beginRange": "0", "unit": "Messages",
+                                                    "pricePerUnit": {"USD": "0.000001"}}}}}}}}
+pedidas = []
+
+
+def pedir_simulado(url):
+    pedidas.append(url)
+    if url.endswith("region_index.json"):
+        return {"regions": {"eu-south-2": {"currentVersionUrl": "/archivo.json"}}} if "Buena" in url else {"regions": {}}
+    return oferta
+
+
+assert ap.precio_aws(oferta, "EUS2-Uso", 0) == (0.023, "GB-Mo") and ap.precio_aws(oferta, "EUS2-Uso", 51200)[0] == 0.022
+assert ap.precio_aws(oferta, "EUS2-Nada") is None
+config = {"region": "eu-south-2", "filas": [
+    {"id": "aws-s3", "servicio": "S3", "buscar": ["amazon s3"], "concepto": "c", "oferta": "Buena", "usagetype": "EUS2-Uso",
+     "unidad": "GB al mes", "por_cada": 1, "cobro": "GB al mes"},
+    {"id": "aws-iot", "servicio": "IoT", "buscar": ["iot core"], "concepto": "c", "oferta": "Buena",
+     "usagetype": "EUS2-Otro", "unidad": "mensaje", "por_cada": 1000000, "cobro": "millón de mensajes"},
+    {"id": "aws-x", "servicio": "Sin región", "buscar": ["x"], "concepto": "c", "oferta": "Mala", "usagetype": "EUS2-Uso",
+     "unidad": "u", "por_cada": 1, "cobro": "u"}],
+    "sin_fila": [{"servicio": "Amazon EC2", "motivo": "archivo enorme"}],
+    "licencias_sin_fila": [{"servicio": "Tableau", "motivo": "403"}]}
+carpeta_precios = Path(tempfile.mkdtemp())
+csv_prueba, config_prueba = carpeta_precios / "precios.csv", carpeta_precios / "precios_aws.yaml"
+shutil.copy(RAIZ / "bd" / "precios_cloud.csv", csv_prueba)
+config_prueba.write_text(yaml.safe_dump(config, allow_unicode=True), encoding="utf-8")
+original_csv = csv_prueba.read_bytes()
+with contextlib.redirect_stdout(io.StringIO()):
+    informe = ap.actualizar_todo(probar=True, solo="aws", pedir=pedir_simulado, hoy="2026-11-17",
+                                 csv_precios=csv_prueba, config_aws=config_prueba)
+assert csv_prueba.read_bytes() == original_csv, "--probar no escribe"
+assert not any("region_index" in u and "EC2" in u for u in pedidas)  # solo las ofertas de la lista
+assert informe["nueva"] == ["aws-s3: 0.023 $ por GB al mes", "aws-iot: 1 $ por millón de mensajes"], informe["nueva"]
+assert informe["sin_fila"] == ["Sin región: Mala no tiene precios en eu-south-2", "Amazon EC2: archivo enorme"]
+assert informe["licencias_sin_fila"] == ["Tableau: 403"]
+log = io.StringIO()
+with contextlib.redirect_stdout(log):
+    ap.actualizar_todo(solo="aws", pedir=pedir_simulado, hoy="2027-03-01", csv_precios=csv_prueba,
+                       config_aws=config_prueba)
+assert "Informe de cobertura" in log.getvalue()
+with open(csv_prueba, encoding="utf-8") as f:
+    escritas = {fila["id"]: fila for fila in csv.DictReader(f, delimiter=";")}
+assert escritas["aws-iot"]["moneda"] == "USD" and escritas["aws-iot"]["precio_origen"] == "1"
+assert escritas["aws-iot"]["precio_eur"] == "" and escritas["power-bi-pro"]["precio_eur"] == "12.10"  # las otras, igual
+assert any(l.startswith("power-bi-pro: precio del 2026-11-12") for l in ap.licencias_viejas(list(escritas.values()), "2027-03-01"))
+with contextlib.redirect_stdout(io.StringIO()):  # la segunda vez, sin cambios
+    otra = ap.actualizar_todo(solo="aws", pedir=pedir_simulado, hoy="2027-03-01", csv_precios=csv_prueba,
+                              config_aws=config_prueba)
+assert otra["igual"] == ["aws-s3: 0.023 $", "aws-iot: 1 $"] and not otra["cambia"]
+# Al leer la tabla, los dólares pasan a euros con el tipo fijo de costes.yaml, y la referencia lo dice
+ec_csv = ec.CSV_PRECIOS
+ec.CSV_PRECIOS = csv_prueba
+try:
+    leidas = ec._cargar_precios()
+finally:
+    ec.CSV_PRECIOS = ec_csv
+tipo = ec._cambio()["usd_por_eur"]
+assert abs(leidas["aws-iot"]["precio_eur"] - 1 / tipo) < 1e-9 and leidas["power-bi-pro"]["precio_eur"] == 12.10
+# Y en la tabla real del repo, las 18 filas de AWS
+filas_aws = [f for f in ec.PRECIOS_CLOUD.values() if f["proveedor"] == "AWS"]
+assert len(filas_aws) == 18 and abs(ec.PRECIOS_CLOUD["aws-athena"]["precio_eur"] - 5.65 / tipo) < 1e-9
+assert "aws-athena" in ec._tabla_precios(caso(cloud_provider="AWS"), "Consultas con Amazon Athena sobre S3")
+print("OK 12: los precios de AWS salen de la Price List Bulk API, en dólares, y se pasan a euros al leerlos")
 
 print("\nTodo bien: el fallo 67 funciona (en la parte que se puede comprobar sin el LLM real).")

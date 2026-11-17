@@ -1,0 +1,228 @@
+# Fallo 87 (parte 2): qué SKU de AWS se usa para cada fila de bd/precios_cloud.csv. Lo lee bd/actualizar_precios.py.
+#
+# Los precios salen de la Price List Bulk API de AWS: archivos públicos, sin claves, uno por servicio y región
+# (https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/<oferta>/current/region_index.json lleva al de la región).
+# Solo se descargan los servicios de esta lista, nunca el índice entero de EC2.
+#
+# Cada fila:
+# - id, servicio, buscar, concepto, unidad, cobro: como en bd/precios_cloud.csv. «buscar» son las palabras (en
+#   minúsculas, sin tildes) con las que la arquitectura nombra el servicio.
+# - oferta: el código del servicio en la API (AmazonS3, AWSGlue…).
+# - usagetype: el tipo de uso exacto de la región, que es lo que distingue la SKU (EUS2- es eu-south-2).
+# - desde: el primer tramo que se usa (beginRange de la API); 0 es el primero.
+# - por_cada: cuántas unidades de la API hay en el paquete en que se cobra («millón de mensajes» = 1000000). El precio de
+#   la fila es el de la API por por_cada.
+# - gratis_al_mes: lo gratuito al mes que no viene en la API (el nivel gratuito permanente), en la unidad de la fila.
+# AWS da los precios en dólares: el CSV guarda el precio y la moneda de origen, y estimation_crew los pasa a euros al
+# leerlos con el tipo fijo de data_structures/costes.yaml (fallo 85).
+region: eu-south-2
+filas:
+  - id: aws-s3-standard
+    servicio: Amazon S3 (Standard)
+    buscar: [amazon s3, s3 standard, bucket]
+    concepto: Almacenamiento S3 Standard (primeros 50 TB al mes)
+    oferta: AmazonS3
+    usagetype: EUS2-TimedStorage-ByteHrs
+    desde: 0
+    unidad: GB al mes
+    por_cada: 1
+    cobro: GB al mes
+  - id: aws-glue-etl
+    servicio: AWS Glue (trabajos ETL)
+    buscar: [aws glue, glue job, glue etl]
+    concepto: Trabajo ETL de Glue, por DPU-hora
+    oferta: AWSGlue
+    usagetype: EUS2-ETL-DPU-Hour
+    desde: 0
+    unidad: DPU-hora
+    por_cada: 1
+    cobro: DPU-hora
+  - id: aws-glue-catalogo
+    servicio: AWS Glue Data Catalog
+    buscar: [glue data catalog]
+    concepto: Objetos guardados en el catálogo (el primer millón es gratis)
+    oferta: AWSGlue
+    usagetype: EUS2-Catalog-Storage
+    desde: 0
+    unidad: objeto al mes
+    por_cada: 100000
+    cobro: 100.000 objetos al mes
+    gratis_al_mes: 1000000
+  - id: aws-athena
+    servicio: Amazon Athena
+    buscar: [athena]
+    concepto: Datos leídos por las consultas
+    oferta: AmazonAthena
+    usagetype: EUS2-DataScannedInTB
+    desde: 0
+    unidad: TB escaneado
+    por_cada: 1
+    cobro: TB escaneado
+  - id: aws-dms-t3-medium
+    servicio: AWS Database Migration Service (dms.t3.medium)
+    buscar: [database migration service, aws dms]
+    concepto: Instancia de replicación dms.t3.medium (una zona)
+    oferta: AWSDatabaseMigrationSvc
+    usagetype: EUS2-InstanceUsg:dms.t3.medium
+    desde: 0
+    unidad: hora
+    por_cada: 1
+    cobro: hora
+  - id: aws-lambda-computo
+    servicio: AWS Lambda (cómputo)
+    buscar: [lambda]
+    concepto: Cómputo de las funciones (x86), por GB-segundo
+    oferta: AWSLambda
+    usagetype: EUS2-Lambda-GB-Second
+    desde: 0
+    unidad: GB-segundo
+    por_cada: 1
+    cobro: GB-segundo
+    gratis_al_mes: 400000      # nivel gratuito permanente de Lambda
+  - id: aws-lambda-peticiones
+    servicio: AWS Lambda (peticiones)
+    buscar: [lambda]
+    concepto: Invocaciones de las funciones
+    oferta: AWSLambda
+    usagetype: EUS2-Request
+    desde: 0
+    unidad: petición
+    por_cada: 1000000
+    cobro: millón de peticiones
+    gratis_al_mes: 1000000     # nivel gratuito permanente de Lambda
+  - id: aws-kinesis-shard
+    servicio: Amazon Kinesis Data Streams (aprovisionado)
+    buscar: [kinesis data streams]
+    concepto: Hora de shard aprovisionado
+    oferta: AmazonKinesis
+    usagetype: EUS2-Storage-ShardHour
+    desde: 0
+    unidad: hora de shard
+    por_cada: 1
+    cobro: hora de shard
+  - id: aws-firehose-ingesta
+    servicio: Amazon Data Firehose
+    buscar: [firehose]
+    concepto: Datos que entran (Direct PUT, primeros 500 TB al mes)
+    oferta: AmazonKinesisFirehose
+    usagetype: EUS2-BilledBytes
+    desde: 0
+    unidad: GB
+    por_cada: 1
+    cobro: GB
+  - id: aws-iot-core-mensajes
+    servicio: AWS IoT Core (mensajería)
+    buscar: [iot core]
+    concepto: Mensajes MQTT (primeros 1.000 millones al mes)
+    oferta: AWSIoT
+    usagetype: EUS2-Messages
+    desde: 0
+    unidad: mensaje
+    por_cada: 1000000
+    cobro: millón de mensajes
+  - id: aws-eventbridge-eventos
+    servicio: Amazon EventBridge
+    buscar: [eventbridge]
+    concepto: Eventos propios publicados en el bus
+    oferta: AWSEvents
+    usagetype: EUS2-Event-64K-Chunks
+    desde: 0
+    unidad: evento
+    por_cada: 1000000
+    cobro: millón de eventos
+  - id: aws-step-functions
+    servicio: AWS Step Functions (Standard)
+    buscar: [step functions]
+    concepto: Transiciones de estado de los flujos Standard
+    oferta: AmazonStates
+    usagetype: EUS2-StateTransition
+    desde: 0
+    unidad: transición
+    por_cada: 1000
+    cobro: 1.000 transiciones
+    gratis_al_mes: 4000        # nivel gratuito permanente de Step Functions
+  - id: aws-kms-clave
+    servicio: AWS KMS (claves del cliente)
+    buscar: [kms, key management service]
+    concepto: Clave gestionada por el cliente, al mes
+    oferta: awskms
+    usagetype: eu-south-2-KMS-Keys
+    desde: 0
+    unidad: clave al mes
+    por_cada: 1
+    cobro: clave al mes
+  - id: aws-cloudtrail-datos
+    servicio: AWS CloudTrail (eventos de datos)
+    buscar: [cloudtrail]
+    concepto: Eventos de datos registrados (los de gestión, la primera copia, son gratis)
+    oferta: AWSCloudTrail
+    usagetype: EUS2-DataEventsRecorded
+    desde: 0
+    unidad: evento
+    por_cada: 100000
+    cobro: 100.000 eventos
+  - id: aws-vpn-conexion
+    servicio: AWS Site-to-Site VPN
+    buscar: [site-to-site vpn, vpn site-to-site]
+    concepto: Hora de conexión VPN
+    oferta: AmazonVPC
+    usagetype: EUS2-VPN-Usage-Hours:ipsec.1
+    desde: 0
+    unidad: hora
+    por_cada: 1
+    cobro: hora
+  - id: aws-redshift-serverless
+    servicio: Amazon Redshift Serverless
+    buscar: [redshift serverless]
+    concepto: Cómputo, por RPU-hora
+    oferta: AmazonRedshift
+    usagetype: EUS2-Redshift:ServerlessUsage
+    desde: 0
+    unidad: RPU-hora
+    por_cada: 1
+    cobro: RPU-hora
+  - id: aws-sagemaker-endpoint-m5-large
+    servicio: Amazon SageMaker AI (endpoint ml.m5.large)
+    buscar: [sagemaker]
+    concepto: Endpoint de inferencia en tiempo real ml.m5.large, encendido
+    oferta: AmazonSageMaker
+    usagetype: EUS2-Host:ml.m5.large
+    desde: 0
+    unidad: hora
+    por_cada: 1
+    cobro: hora
+  - id: aws-timestream-influxdb-xlarge
+    servicio: Amazon Timestream for InfluxDB (db.influx.xlarge)
+    buscar: [timestream for influxdb]
+    concepto: Instancia db.influx.xlarge, una zona
+    oferta: AmazonTimestream
+    usagetype: EUS2-InstanceUsage-Db.influx.xlarge
+    desde: 0
+    unidad: hora
+    por_cada: 1
+    cobro: hora
+
+# Lo que AIDM propone en AWS y todavía no tiene fila, con el motivo. Sale en el informe de cobertura.
+sin_fila:
+  - servicio: Amazon EC2 (la VM Windows de la puerta de enlace de Power BI, fallo 90)
+    motivo: el archivo de precios de EC2 de la región es enorme; por ahora, precio del modelo
+  - servicio: AWS Lake Formation
+    motivo: no se cobra aparte (se paga el almacenamiento y las consultas)
+  - servicio: AWS Glue Data Quality
+    motivo: se cobra como DPU-hora de Glue (la fila aws-glue-etl)
+  - servicio: AWS Security Hub y AWS Config
+    motivo: se cobran por comprobación y por elemento de configuración; sin elegir todavía la SKU
+  - servicio: Amazon QuickSight
+    motivo: se cobra por usuario y no va en el archivo de la región; sin elegir todavía
+  - servicio: Amazon SageMaker AI (entrenamiento, Canvas y otras instancias)
+    motivo: solo hay fila para el endpoint ml.m5.large; las demás, con el precio del modelo
+
+# Licencias y herramientas que no tienen API de precios: van como filas manuales en bd/precios_cloud.csv, con su fuente
+# y su fecha (el script no las toca, pero avisa de las que tengan más de 90 días). Las que no tienen fila, y por qué:
+licencias_sin_fila:
+  - servicio: Tableau (Creator, Explorer, Viewer)
+    motivo: la página de precios (tableau.com/es-es/pricing/teams-orgs) no se deja leer de forma automática (403); mirarla en el navegador
+  - servicio: Snowflake en AWS (crédito y almacenamiento)
+    motivo: la página de precios (snowflake.com/en/pricing-options) no se deja leer de forma automática (403); el precio depende de la edición y la región
+  - servicio: Databricks en AWS (DBU de Jobs, All-Purpose y SQL Serverless)
+    motivo: las tablas de databricks.com/product/pricing se cargan en el navegador («Loading…»); en AWS el nivel equivalente a Premium es Enterprise
