@@ -25,3 +25,6 @@ pruebas_modelos/resultados/
 
 # Fallo 92: las peticiones de hoy a Gemini, entre ejecuciones
 data_structures/cupos_gemini.json
+
+.idmenv/
+data_structures/solution_builder_report.html
