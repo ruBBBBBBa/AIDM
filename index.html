@@ -86,6 +86,12 @@
   @keyframes flash { from { background:var(--flash); } to { background:transparent; } }
 
   #scrim { display:none; }
+  .chatnav { display:none; align-items:center; justify-content:space-between; gap:10px;
+    padding:9px 14px; border-bottom:1px solid var(--line); background:var(--surface); }
+  .chatnav span { font-size:.83rem; color:var(--muted); }
+  .chatnav button { font-weight:600; padding:6px 12px; }
+  body.has-report:not(.done) .chatnav { display:flex; }
+
 
   #done { display:none; flex:1; min-height:0; min-width:0; flex-direction:column; gap:14px; }
   body.done #done { display:flex; } body.done .grid { display:none; } body.done #ficha { display:none !important; }
@@ -170,6 +176,53 @@
   .led { display:inline-block; width:7px; height:7px; margin-right:7px; border-radius:50%; background:#8a97a8; }
   .led.ok { background:#37c28d; } .led.bad { background:#ff7b7b; }
   .ev { margin:4px 0; padding:5px 0 5px 12px; border-left:2px solid var(--line); font-size:.82rem; color:var(--muted); overflow-wrap:anywhere; }
+
+  /* ---------- AIDM Intelligence: progreso real del servidor ---------- */
+  .intelligence {
+    position:absolute; inset:0; z-index:15; display:none; overflow-y:auto; overscroll-behavior:contain;
+    padding:clamp(18px,4vw,36px); color:#f5f8ff;
+    background:radial-gradient(ellipse at 50% 15%,rgba(72,118,239,.26),transparent 60%),
+               linear-gradient(145deg,#091527,#142847);
+  }
+  .intelligence.active { display:flex; justify-content:center; align-items:center; }
+  .intelligence-inner { width:100%; max-width:540px; margin:auto; text-align:center; }
+  .intelligence-brand { font-size:.74rem; font-weight:700; letter-spacing:.16em; text-transform:uppercase; color:#adc6ff; }
+  .intelligence-core {
+    position:relative; width:108px; height:108px; margin:26px auto 30px;
+    display:grid; place-items:center; border-radius:50%;
+    background:radial-gradient(circle,#2a5091,#172a48 72%);
+    box-shadow:0 0 55px rgba(75,125,253,.3),inset 0 0 20px rgba(122,170,255,.1);
+  }
+  .intelligence-core::before,.intelligence-core::after {
+    content:""; position:absolute; inset:-13px; border:2px dashed #80a8ff;
+    border-radius:50%; animation:intelligence-spin 9s linear infinite;
+  }
+  .intelligence-core::after { inset:-24px; border-color:#48d7c2; opacity:.55; animation-direction:reverse; animation-duration:15s; }
+  .intelligence-core strong { font-size:1.65rem; letter-spacing:.04em; }
+  @keyframes intelligence-spin { to { transform:rotate(360deg); } }
+  .intelligence h2 { font-size:clamp(1.35rem,3vw,1.85rem); line-height:1.25; margin:0 0 8px; }
+  .intelligence-description { max-width:430px; margin:0 auto 23px; color:#bdcae0; font-size:.92rem; }
+  .intelligence-steps { display:grid; gap:9px; text-align:left; }
+  .intelligence-step {
+    display:flex; align-items:center; gap:11px; padding:11px 13px; border-radius:10px;
+    border:1px solid #364966; background:rgba(255,255,255,.035); color:#b8c7dd; font-size:.87rem;
+  }
+  .intelligence-step.current { border-color:#7fa3ff; background:rgba(89,133,247,.18); color:#fff; }
+  .intelligence-step.complete { border-color:#317e70; color:#9ae5d3; }
+  .step-dot { width:10px; height:10px; border-radius:50%; flex:none; background:#7588a6; }
+  .intelligence-step.current .step-dot { background:#83aaff; box-shadow:0 0 14px #6695ff; }
+  .intelligence-step.complete .step-dot { background:#4ed3aa; }
+  .intelligence-progress { height:7px; margin-top:22px; background:#293e60; overflow:hidden; border-radius:20px; }
+  .intelligence-progress-fill { height:100%; width:0%; border-radius:20px; background:linear-gradient(90deg,#5685ff,#55dec0); transition:width .4s ease; }
+  .intelligence-status { min-height:22px; margin-top:12px; font-size:.84rem; color:#c5d5ef; overflow-wrap:anywhere; }
+  .intelligence-footnote { margin-top:13px; font-size:.72rem; color:#93a9c9; }
+  @media (max-width:600px) {
+    .intelligence { padding:16px; }
+    .intelligence-core { width:82px; height:82px; margin:23px auto 25px; }
+    .intelligence-core strong { font-size:1.3rem; }
+    .intelligence-step { padding:9px 11px; font-size:.81rem; }
+  }
+
 </style>
 </head>
 <body>
@@ -186,6 +239,28 @@
 <div class="wrap">
   <main class="grid">
     <section class="card chat">
+
+      <div id="intelligence" class="intelligence" role="status" aria-label="Generación de propuesta en curso">
+        <div class="intelligence-inner">
+          <div class="intelligence-brand">AIDM · Intelligence Engine</div>
+          <div class="intelligence-core" aria-hidden="true"><strong>AIDM</strong></div>
+          <h2>Construyendo tu solución</h2>
+          <p class="intelligence-description">Transformando los requisitos de tu proyecto en una propuesta tecnológica adaptada a tus objetivos.</p>
+          <div class="intelligence-steps">
+            <div class="intelligence-step" data-stage="0"><span class="step-dot"></span><span>Análisis de requisitos y necesidades</span></div>
+            <div class="intelligence-step" data-stage="1"><span class="step-dot"></span><span>Diseño de la solución tecnológica</span></div>
+            <div class="intelligence-step" data-stage="2"><span class="step-dot"></span><span>Evaluación y validación técnica</span></div>
+            <div class="intelligence-step" data-stage="3"><span class="step-dot"></span><span>Preparación del informe final</span></div>
+          </div>
+          <div class="intelligence-progress" role="progressbar" id="intelligenceProgress" aria-label="Progreso de generación" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="intelligenceFill" class="intelligence-progress-fill"></div>
+          </div>
+          <div id="intelligenceStatus" class="intelligence-status">Esperando datos de progreso…</div>
+          <div class="intelligence-footnote">Las cuatro etapas representan visualmente el progreso global comunicado por el servidor.</div>
+        </div>
+      </div>
+
+      <div class="chatnav" id="chatnav"><span>Informe generado</span><button id="verInforme" type="button">Ver informe</button></div>
       <div id="chat" aria-live="polite"></div>
       <div class="busy" id="busy"></div>
       <div class="stat" id="stat"></div>
@@ -207,7 +282,7 @@
   <section id="done">
     <div class="card okbar">
       <div><h2 id="doneTitle">Propuesta de solución</h2><p>Discovery completado. Descarga el informe o revísalo aquí.</p></div>
-      <div class="acciones"><button id="abrir" type="button">Abrir en pestaña nueva</button><button id="download" class="primary" type="button">Descargar informe (HTML)</button></div>
+      <div class="acciones"><button id="volverChat" type="button">← Volver al chat</button><button id="abrir" type="button">Abrir en pestaña nueva</button><button id="download" class="primary" type="button">Descargar informe (HTML)</button></div>
     </div>
     <iframe id="report" sandbox="allow-scripts allow-same-origin" title="Informe de la propuesta"></iframe>
   </section>
@@ -349,6 +424,7 @@ async function refreshEstado(silencioso) {
     if (busy) {
       const f = Math.max(0, Math.min(1, Number(e.fraccion) || 0));
       const b = $("busy"); b.classList.toggle("det", f > 0); b.style.setProperty("--p", (f * 100) + "%");
+      actualizarIntelligence(f, e.texto);
       progTxt = f > 0 ? Math.round(f * TOTAL_PASOS) + " de " + TOTAL_PASOS + " pasos" + (e.texto ? " · " + e.texto : "") : "";
     }
     return e;
@@ -356,10 +432,11 @@ async function refreshEstado(silencioso) {
 }
 
 function mostrarFinal(html, name) {
+  cerrarIntelligence();
   report = { html:html || "", name:name || "informe_aidm.html" };
   setSheet(false);
   $("doneTitle").textContent = prev.nombre_del_cliente ? "Propuesta de solución para " + prev.nombre_del_cliente : "Propuesta de solución";
-  document.body.classList.add("done");
+  document.body.classList.add("done", "has-report");
   if (report.html) $("report").srcdoc = report.html;
   else { $("report").srcdoc = "<p style='font-family:sans-serif;padding:24px'>No se ha encontrado el informe generado. Revisa la terminal.</p>"; $("download").disabled = true; $("abrir").disabled = true; }
 }
@@ -371,10 +448,25 @@ async function mostrarInforme() {
   } catch (e) { /* sin informe recuperable: se queda el chat */ }
 }
 
+function volverAlChat() {
+  document.body.classList.remove("done");
+  setSheet(false);
+  $("chat").scrollTop = $("chat").scrollHeight;
+  $("input").focus();
+}
+
+function volverAlInforme() {
+  if (!document.body.classList.contains("has-report")) return;
+  setSheet(false);
+  document.body.classList.add("done");
+}
+
 function resetPantalla() {
+  cerrarIntelligence();
+  report = { html:"", name:"informe_aidm.html" };
   messages = [{ role:"assistant", content:INTRO }]; prev = {};
   $("chat").replaceChildren(); showHero(); setSheet(false);
-  document.body.classList.remove("done"); $("report").srcdoc = ""; $("download").disabled = false; $("abrir").disabled = false;
+  document.body.classList.remove("done", "has-report"); $("report").srcdoc = ""; $("download").disabled = false; $("abrir").disabled = false;
 }
 
 // Nueva sesión: único sitio que borra el caso en el servidor.
@@ -393,6 +485,7 @@ async function init() {
   await refreshCaso();
   if (e && e.ocupado) {
     setBusy(true);   // la ejecución sigue en el servidor: se espera a que acabe sin tocarla
+    await refreshEstado(true);
     const w = setInterval(async () => {
       const s = await refreshEstado();
       if (s && !s.ocupado) { clearInterval(w); setBusy(false); await refreshCaso(); if (s.completado) await mostrarInforme(); }
@@ -401,8 +494,38 @@ async function init() {
   $("input").focus();
 }
 
+
+function actualizarIntelligence(fraccion, texto) {
+  if (!busy) return;
+  const f = Math.max(0, Math.min(1, Number(fraccion) || 0));
+  // No mostrar una evolución simulada. Si la API aún no comunica avance,
+  // la aplicación mantiene su indicador de espera original.
+  if (f <= 0) return;
+  $("intelligence").classList.add("active");
+  $("intelligenceFill").style.width = (100 * f) + "%";
+  $("intelligenceProgress").setAttribute("aria-valuenow", String(Math.round(100 * f)));
+  const etapa = Math.min(3, Math.floor(f * 4));
+  $("intelligence").querySelectorAll(".intelligence-step").forEach((el, i) => {
+    el.classList.toggle("complete", i < etapa);
+    el.classList.toggle("current", i === etapa);
+  });
+  const pasos = Math.round(f * TOTAL_PASOS);
+  $("intelligenceStatus").textContent = pasos + " de " + TOTAL_PASOS + " pasos" + (texto ? " · " + texto : "");
+}
+
+function cerrarIntelligence() {
+  $("intelligence").classList.remove("active");
+  $("intelligenceFill").style.width = "0%";
+  $("intelligenceProgress").setAttribute("aria-valuenow", "0");
+  $("intelligenceStatus").textContent = "Esperando datos de progreso…";
+  $("intelligence").querySelectorAll(".intelligence-step").forEach(el => {
+    el.classList.remove("complete", "current");
+  });
+}
+
 function setBusy(on) {
   busy = on;
+  if (!on) cerrarIntelligence();
   $("send").disabled = on; $("input").disabled = on; $("reset").disabled = on;
   $("busy").classList.toggle("on", on); if (!on) $("busy").classList.remove("det"); progTxt = "";
   document.querySelector(".top .orb").classList.toggle("think", on);
@@ -450,6 +573,8 @@ $("abrir").addEventListener("click", () => {
   const url = URL.createObjectURL(new Blob([report.html], { type:"text/html" }));
   window.open(url, "_blank"); setTimeout(() => URL.revokeObjectURL(url), 60000);
 });
+$("volverChat").addEventListener("click", volverAlChat);
+$("verInforme").addEventListener("click", volverAlInforme);
 $("reset").addEventListener("click", () => { if (!busy) nuevaSesion(); });
 $("ficha").addEventListener("click", () => setSheet(!document.body.classList.contains("sheet")));
 $("closeSheet").addEventListener("click", () => setSheet(false));
