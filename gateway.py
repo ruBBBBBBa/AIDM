@@ -103,6 +103,78 @@ def _saltar(modelo, error) -> None:
               "subscription tier»): no se reintenta y se salta durante el resto del proceso")
 
 
+# --- Fallo 100: el 503 y el 429 por minuto de Gemini no se reintentan en el mismo modelo ---
+# El 17 nov, 3.6 Flash dio 503 («high demand») desde las 09:27. LiteLLM reintentó cada llamada 2 veces en el mismo
+# modelo (3 peticiones por llamada), el cupo del día se acabó a las 09:32 sin una respuesta buena, y el limitador del 96,
+# que cuenta una petición por llamada, no llegaba a todas: salieron también 429 por minuto. Ninguno de los dos se arregla
+# repitiendo en el momento: la llamada pasa a la reserva sin reintentar y, con el 503, el modelo se aparta unos minutos
+# («apartar_minutos» en el yaml; 5 si no lo dice) para que las siguientes llamadas ni lo prueben.
+_SOBRECARGA = re.compile(r"\b503\b|UNAVAILABLE|high demand|ServiceUnavailable|overloaded", re.IGNORECASE)
+_LIMITE_POR_MINUTO = re.compile(r"PerMinute|per minute", re.IGNORECASE)
+APARTAR_MINUTOS = 5
+_apartados: dict[str, float] = {}  # modelo → hora (time.monotonic) hasta la que se aparta
+_bloqueo_apartados = threading.Lock()
+
+
+def motivo_sin_reintento(modelo, error) -> str:
+    """Fallo 100: «503 (alta demanda)» o «429 por minuto» si el error es de un modelo de Gemini y no se arregla
+    repitiendo en el mismo modelo; "" en cualquier otro caso (esos siguen con los reintentos del yaml). El 429 del
+    cupo diario no entra aquí: lo trata el fallo 92."""
+    if not str(modelo or "").startswith("gemini/"):
+        return ""
+    texto, codigo = str(error), getattr(error, "status_code", None)
+    if codigo == 503 or _SOBRECARGA.search(texto):
+        return "503 (alta demanda)"
+    es_429 = codigo == 429 or re.search(r"\b429\b|RESOURCE_EXHAUSTED|RateLimit", texto, re.IGNORECASE)
+    if es_429 and _LIMITE_POR_MINUTO.search(texto) and not _CUPO_DIARIO.search(texto):
+        return "429 por minuto"
+    return ""
+
+
+def _minutos_apartado(modelo, config: dict | None = None) -> float:
+    """Los minutos que se aparta un modelo tras un 503: los del yaml (los suyos o los de su proveedor) o 5."""
+    config = config if config is not None else _config()
+    proveedor = str(modelo).partition("/")[0]
+    reglas = {**((config.get("proveedores") or {}).get(proveedor) or {}),
+              **((config.get("modelos") or {}).get(str(modelo)) or {})}
+    try:
+        return float(reglas.get("apartar_minutos", APARTAR_MINUTOS))
+    except (TypeError, ValueError):
+        return float(APARTAR_MINUTOS)
+
+
+def _apartados_vigentes(ahora: float | None = None) -> set[str]:
+    """Los modelos apartados por un 503 que aún no han cumplido su tiempo."""
+    ahora = time.monotonic() if ahora is None else ahora
+    with _bloqueo_apartados:
+        for m in [m for m, hasta in _apartados.items() if hasta <= ahora]:
+            del _apartados[m]
+        return set(_apartados)
+
+
+def sin_reintentar(modelo, error, ahora: float | None = None) -> bool:
+    """Fallo 100: True si el error es de los que no se reintentan en el mismo modelo (503 o 429 por minuto de
+    Gemini). Con el 503, además, aparta el modelo unos minutos, y el log lo dice una sola vez por apartado."""
+    motivo = motivo_sin_reintento(modelo, error)
+    if not motivo:
+        return False
+    modelo, minutos = str(modelo), 0.0
+    nuevo = True
+    if motivo.startswith("503"):
+        try:
+            minutos = _minutos_apartado(modelo)
+        except Exception:
+            minutos = float(APARTAR_MINUTOS)
+        ahora = time.monotonic() if ahora is None else ahora
+        with _bloqueo_apartados:
+            nuevo = _apartados.get(modelo, 0.0) <= ahora
+            _apartados[modelo] = max(_apartados.get(modelo, 0.0), ahora + minutos * 60)
+    if nuevo:
+        aparte = f"; se aparta {minutos:g} minutos".replace(".", ",") if minutos > 0 else ""
+        _escribir(f"[gateway] {modelo} dio {motivo}: no se reintenta en el mismo modelo{aparte}")
+    return True
+
+
 def _fuera_de_juego() -> set[str]:
     """Fallo 95: los modelos fuera del plan. Fallo 99: y los de Gemini con el cupo del día agotado, hasta las 09:00. El
     16 nov, con gemini-3.6-flash agotado, cada llamada lo seguía probando primero y el limitador del 96 hacía esperar
@@ -113,7 +185,7 @@ def _fuera_de_juego() -> set[str]:
         agotados = set()
     for modelo in agotados:
         _avisar_agotado(modelo)
-    return set(_saltados) | agotados
+    return set(_saltados) | agotados | _apartados_vigentes()  # fallo 100: y los apartados por un 503
 
 
 _avisados_agotados: set[str] = set()
@@ -178,7 +250,7 @@ def modelo(tarea: str) -> ModeloDeTarea:
     origen = f"MODELO_{tarea.upper()} del .env" if os.getenv(f"MODELO_{tarea.upper()}", "").strip() else f"perfil {perfil}"
     reservas = f"; reservas: {', '.join(lista[1:])}" if lista[1:] else ""
     saltados = [m for m in modelos_de(tarea, con_saltados=True)[1] if m not in lista]  # fallos 95 y 99
-    saltados = ("; se salta " + ", ".join(f"{m} ({'fuera del plan' if m in _saltados else 'sin cupo hoy'})"
+    saltados = ("; se salta " + ", ".join(f"{m} ({'fuera del plan' if m in _saltados else 'apartado por 503' if m in _apartados_vigentes() else 'sin cupo hoy'})"
                                           for m in saltados)) if saltados else ""
     _escribir(f"[gateway] {tarea}: {lista[0]} ({origen}{reservas}{saltados})")
     return ModeloDeTarea(lista[0], tarea, tuple(lista[1:]))
@@ -610,7 +682,7 @@ def _llamar(original, args, kwargs):
     try:
         return original(*args, **{**kwargs, "num_retries": 0})
     except Exception as exc:
-        if fuera_del_plan(exc):
+        if fuera_del_plan(exc) or sin_reintentar(kwargs.get("model"), exc):  # fallo 100
             raise
     return original(*args, **{**kwargs, "num_retries": reintentos - 1})
 
@@ -620,6 +692,8 @@ def _num_reintentos(kwargs=None, exception=None, **resto):
     acompletion). Un error de plan no se reintenta: se salta el modelo y LiteLLM pasa a la siguiente reserva."""
     if fuera_del_plan(exception):
         _saltar((kwargs or {}).get("model"), exception)
+        return 0, kwargs
+    if sin_reintentar((kwargs or {}).get("model"), exception):  # fallo 100: Gemini con 503 o 429 por minuto
         return 0, kwargs
     return _num_reintentos.original(kwargs=kwargs, exception=exception, **resto)
 
