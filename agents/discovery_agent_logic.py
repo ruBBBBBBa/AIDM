@@ -166,7 +166,9 @@ def _parse_plan(raw_output: str, allowed_fields: set[str]) -> dict[str, Any]:
 _CIFRA = re.compile(r"\d+(?:[.,]\d+)*")
 _ENUMERACION = re.compile(r"\(\d{1,2}\)|(?:^|(?<=\s))\d{1,2}[.)](?=\s)")  # (1)  1.  2)
 _TODO = re.compile(r"\b100\s?%")  # «100 %» es otra forma de decir «todo»
-
+# Fallo 110: el 18 nov, Flash-Lite escribió «50 por ciento»; «ciento» se leía como 100, que el usuario no había dicho, y
+# se descartaron los KPIs. «por ciento» y «por cien» se cambian por «%» antes de buscar las cifras.
+_POR_CIENTO = re.compile(r"\bpor\s*cien(?:to)?\b", re.IGNORECASE)
 
 # Interpretación conservadora de números escritos en español para el filtro antifabricación.
 # Solo valida equivalencias numéricas: no cambia el texto guardado en los campos.
@@ -232,7 +234,7 @@ def _numeros_escritos(texto: str) -> set[str]:
 def _cifras(texto: str) -> set[str]:
     """Números que aparecen en un texto, sin separadores: '90.000' y '90000' cuentan igual.
     No cuentan los de una enumeración ni el «100 %»."""
-    limpio = _TODO.sub("", _ENUMERACION.sub("", texto or ""))
+    limpio = _TODO.sub("", _ENUMERACION.sub("", _POR_CIENTO.sub("%", texto or "")))  # fallo 110
     cifras = {c.replace(".", "").replace(",", "") for c in _CIFRA.findall(limpio)}
     return cifras | _numeros_escritos(limpio)
 

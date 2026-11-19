@@ -93,4 +93,16 @@ roto = _parse_plan('{"updates": [{"field_key": ', CAMPOS)
 assert roto["updates"] == [] and roto["assistant_reply"] == ""
 print("OK 4: un JSON con escapes no válidos se lee; uno que no se puede leer deja el turno sin cambios, sin romperlo")
 
+# 5) Fallo 110: «50 por ciento» es un 50 %, no un 50 y un 100
+from agents.discovery_agent_logic import _cifras, _sin_cifras_inventadas
+
+assert _cifras("Bajar los errores al 50 por ciento") == {"50"}
+assert _cifras("El 100 por cien de los pedidos") == set()  # como «100 %»: no cuenta
+assert _cifras("ciento veinte camiones") == {"120"}  # «ciento» suelto sigue siendo 100
+kpi = [{"field_key": "kpis_de_exito", "value": "Reducir las roturas de stock un 50 por ciento", "operation": "replace"}]
+assert _sin_cifras_inventadas(kpi, "Queremos bajar las roturas de stock un 50 %") == kpi
+inventado = [{**kpi[0], "value": "Reducir las roturas de stock un 30 por ciento"}]
+assert _sin_cifras_inventadas(inventado, "Queremos bajar las roturas de stock un 50 %") == []
+print("OK 5: «50 por ciento» cuenta como 50 %; un porcentaje que el usuario no ha dicho se sigue descartando")
+
 print("\nTodo bien: el discovery ya no pierde turnos por el formato.")
