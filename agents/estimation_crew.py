@@ -850,6 +850,31 @@ def _ya_lo_tiene(c: ComponenteCoste, tecnologias: list[str] | None = None) -> bo
     nombre = _normalize_text(c.componente)
     return any(t in nombre for t in tecnologias)
 
+# Fallo 101: licencias que hacen falta además de las que el cliente ya tiene
+_MAS_LICENCIAS = re.compile(r"\b(?:adicional(?:es)?|mas licencias|nuevas licencias|nuevos usuarios|ampliac\w*|ampliar"
+                            r"|additional|more licen[cs]es|new users|upgrade|subir de nivel)\b")
+
+
+def _sin_licencias_que_ya_tiene(componentes: list[ComponenteCoste], tecnologias: list[str] | None
+                                ) -> list[ComponenteCoste]:
+    """Fallo 101: una licencia de algo que el cliente ya usa según sus datos no se suma, salvo que el texto diga que
+    hacen falta más (licencias adicionales, usuarios nuevos, un nivel superior). Queda a 0 € y «ya lo tiene el
+    cliente». El 19 nov, el cliente tenía Power BI en Microsoft 365, BI decía que no había coste de licencias y costes
+    sumaba 10 de Power BI Pro."""
+    if not tecnologias:
+        return componentes
+    salida = []
+    for c in componentes:
+        nombre = _normalize_text(c.componente)
+        if (c.categoria == "licencias" and c.importe_eur and any(t in nombre for t in tecnologias)
+                and not _MAS_LICENCIAS.search(_normalize_text(f"{c.componente} {c.referencia}"))):
+            logger.warning("%s: el cliente ya lo tiene según sus datos; no se suma", c.componente)
+            c = c.model_copy(update={"precio_unitario_eur": 0, "tarifa": "", "moneda": "EUR", "referencia": (
+                f"{c.referencia.rstrip('. ')}. Ya lo tiene el cliente (está en sus datos): no se suma.")})
+        salida.append(c)
+    return salida
+
+
 # Fallo 57: un importe (450.000 €, 115K€, €500, $20) y las palabras de un total propio
 _IMPORTE = re.compile(r"\d[\d.,]*\s*(?:k|m|mil|millones?)?\s*(?:€|eur\b|euros?\b|\$)|[€$]\s*\d", re.IGNORECASE)
 _TOTAL = re.compile(r"\b(?:total(?:es)?|en conjunto|suman?|asciende[n]?)\b")
@@ -931,6 +956,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     componentes = [_sin_periodos_repetidos(c) for c in componentes]
     # Fallo 54: lo que el cliente ya usa, para comprobar los «ya lo tiene»
     tecnologias = _tecnologias_cliente(problem_case)
+    componentes = _sin_licencias_que_ya_tiene(componentes, tecnologias)  # fallo 101
 
     # Fallo 51 (C12): el modelo la escribe en markdown y con sangría; se quita la sangría y se convierte a HTML
     justificacion = _sin_valorar_presupuesto(textwrap.dedent(r.justificacion).strip())
@@ -1746,6 +1772,10 @@ def run_estimation_crew(
             "sus datos (escribe en referencia «Ya lo tiene el cliente»). No pongas 0 por el nivel gratuito: con tarifa, "
             "lo gratuito lo descuenta el programa; sin tarifa, pon el precio normal y di en referencia qué nivel "
             "gratuito podría aplicarse. "
+            # Fallo 101: el 19 nov sumó 10 licencias de Power BI Pro a un cliente que ya tenía Power BI
+            "No sumes licencias de lo que el cliente ya tiene según sus datos: ponlas a 0 con «Ya lo tiene el "
+            "cliente». Solo si hacen falta más de las que tiene, valora las que faltan y di en referencia que son "
+            "licencias adicionales y por qué. "
             "Que un servicio no tenga cuota no lo hace gratis: el cómputo, las ejecuciones o un endpoint se pagan por "
             "uso, así que estima el uso del piloto. "
             # Fallo 85: el 12 nov, Rekognition en «tiempo real» se valoró a 20 h al mes, y S3 con 500 GB fijos

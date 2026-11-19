@@ -110,4 +110,23 @@ assert llamada["env"]["INFRACOST_CURRENCY"] == "EUR" and llamada["env"]["INFRACO
 assert llamada["env"]["INFRACOST_API_KEY"] == "clave" and llamada["cmd"][1] == "breakdown"
 print("OK 5: Infracost se ejecuta con INFRACOST_CURRENCY=EUR e INFRACOST_CLI_CURRENCY=EUR")
 
+# 6) Fallo 101: una licencia de lo que el cliente ya tiene según sus datos no se suma, salvo que el texto diga que
+#    hacen falta más. El 19 nov, con Power BI en Microsoft 365, costes sumaba 10 licencias de Power BI Pro
+con_power_bi = {"stack_tecnologico_actual": {"description": "Stack", "value": "ERP antiguo, Microsoft 365 con Power BI"}}
+PRO = componente("Power BI Pro - licencias para usuarios de negocio", 9.9, 10, "usuario", "mensual",
+                 "Precio público de Power BI Pro.", "licencias")
+html = _format_cost_report(informe(SYNAPSE, PRO), problem_case=con_power_bi)
+assert "0 € (ya lo tiene el cliente)" in html and ">2.400 €</div>" in html, html  # solo Synapse: 600 €/mes × 4
+assert "(por revisar)" not in html
+mas = {**PRO, "referencia": "10 licencias adicionales para los usuarios de negocio nuevos, que hoy no tienen Power BI."}
+html = _format_cost_report(informe(SYNAPSE, mas), problem_case=con_power_bi)
+assert "0 € (ya lo tiene el cliente)" not in html and ">2.796 €</div>" in html, html  # 2.400 + 9,9 × 10 × 4
+html = _format_cost_report(informe(SYNAPSE, PRO), problem_case={})  # sin datos del cliente, como antes
+assert ">2.796 €</div>" in html
+tableau = {**PRO, "componente": "Tableau Creator"}  # una licencia de algo que no tiene se suma
+html = _format_cost_report(informe(SYNAPSE, tableau), problem_case=con_power_bi)
+assert ">2.796 €</div>" in html
+assert "No sumes licencias de lo que el cliente ya tiene" in prompts[0] and "licencias adicionales" in prompts[0]
+print("OK 6: una licencia de lo que el cliente ya tiene no se suma, salvo que haga falta más")
+
 print("\nTodo bien: el fallo 45 está arreglado (en la parte que se puede comprobar sin el LLM real).")
