@@ -87,12 +87,41 @@ def _extract_json_object(text: str) -> str:
         return "{}"
     return cleaned[start : end + 1]
 
+# Fallo 109: el 18 nov, Flash-Lite escribió «alg\u00ún» (un \u con solo dos cifras) en el JSON del discovery. json.loads
+# lo rechazó, el turno se quedó sin cambios ni respuesta y el asistente volvió a pedir el volumen. Ahora se quitan los
+# escapes no válidos y, si aún no se lee, se prueba json_repair (si está instalado). El log dice qué ha pasado.
+_ESCAPE_NO_VALIDO = re.compile(r'\\u(?![0-9a-fA-F]{4})[0-9a-fA-F]{0,3}|\\(?=[^"\\/bfnrtu])')
+
+
+def _leer_json(raw_output: str) -> Any:
+    """El objeto del JSON del modelo, o None si no se puede leer ni reparándolo."""
+    bruto = _extract_json_object(raw_output)
+    try:
+        return json.loads(bruto, strict=False)
+    except ValueError as exc:
+        error = exc
+    try:
+        payload = json.loads(_ESCAPE_NO_VALIDO.sub("", bruto), strict=False)
+        logger.warning("[discovery] El JSON del modelo traía escapes no válidos (%s): se han quitado", error)
+        return payload
+    except ValueError:
+        pass
+    try:
+        from json_repair import repair_json
+        payload = repair_json(bruto, return_objects=True)
+        if isinstance(payload, dict) and payload:
+            logger.warning("[discovery] El JSON del modelo no era válido (%s): se ha reparado con json_repair", error)
+            return payload
+    except Exception:
+        pass
+    logger.error("[discovery] No se ha podido leer el JSON del modelo (%s): el turno sale sin cambios", error)
+    return None
+
 
 def _parse_plan(raw_output: str, allowed_fields: set[str]) -> dict[str, Any]:
     parsed: dict[str, Any] = {"updates": [], "assistant_reply": "", "update_status": None, "campo_preguntado": None}
-    try:
-        payload = json.loads(_extract_json_object(raw_output), strict =False)
-    except Exception:
+    payload = _leer_json(raw_output)  # fallo 109
+    if not isinstance(payload, dict):
         return parsed
 
     updates = payload.get("updates")

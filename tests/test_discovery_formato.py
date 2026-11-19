@@ -83,4 +83,14 @@ respuesta = at.chat_message[-1].markdown[0].value
 assert respuesta == "Respuesta normal del discovery", f"el print con ≥ ha roto el turno: {respuesta[:80]}"
 print("OK 3: un print con '≥' ya no rompe el turno aunque la salida vaya a un archivo")
 
+# 4) Fallo 109: un \u con menos de 4 cifras («alg\u00ún», Flash-Lite, 18 nov) ya no hace perder el turno
+raw = r'''{"updates": [{"field_key": "enfoque_ai", "value": "Sí, alg\u00ún modelo de predicción de demanda", "operation": "replace"}],
+"assistant_reply": "¿Qu\u00e9 volumen de datos tenéis?", "campo_preguntado": "volumen_de_datos", "update_status": "pending fields"}'''
+plan = _parse_plan(raw, CAMPOS)
+assert plan["updates"][0]["value"] == "Sí, algún modelo de predicción de demanda", plan
+assert plan["assistant_reply"] == "¿Qué volumen de datos tenéis?" and plan["campo_preguntado"] == "volumen_de_datos"
+roto = _parse_plan('{"updates": [{"field_key": ', CAMPOS)
+assert roto["updates"] == [] and roto["assistant_reply"] == ""
+print("OK 4: un JSON con escapes no válidos se lee; uno que no se puede leer deja el turno sin cambios, sin romperlo")
+
 print("\nTodo bien: el discovery ya no pierde turnos por el formato.")

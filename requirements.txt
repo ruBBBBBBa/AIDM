@@ -12,3 +12,4 @@ mcp
 markdown-it-py
 fastapi
 uvicorn
+json-repair
