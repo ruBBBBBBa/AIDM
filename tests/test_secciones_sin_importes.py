@@ -304,4 +304,17 @@ pc.run_proposal_crew("ESTRUCTURA", aws_pbi, [], model_name="groq/openai/gpt-oss-
 assert "PUERTA DE ENLACE DE POWER BI" in vistos_90[0]
 print("OK 12: con Power BI y los datos fuera de Azure, la puerta de enlace entra en el prompt, el inventario y los costes")
 
-print("\nTodo bien: los fallos 44, 83, 88, 89 y 90 están arreglados.")
+# 13) Fallo 111: un servicio que la sección nombra solo para descartarlo no se marca. El 18 nov se marcaba
+#     «… en sustitución de Macie»
+assert nombres("Detección de PII con reglas propias, en sustitución de Amazon Macie.", EN_AWS) == []
+assert nombres("Amazon Macie no está disponible en Aragón: la PII se detecta con reglas propias.", EN_AWS) == []
+assert nombres("La PII se detecta con reglas propias (Amazon Macie, no disponible en la región).", EN_AWS) == []
+assert nombres("Se descarta Amazon Lookout for Vision: está retirado.", EN_AWS) == []
+# Se sigue marcando si se propone en otra frase, o si el descarte es de otra cosa
+assert nombres("PII con Amazon Macie. El visor nuevo va en lugar del actual.", EN_AWS) == ["Amazon Macie"]
+assert nombres("Clasificación de PII con Amazon Macie.\nMás adelante, reglas propias en sustitución de Amazon Macie.",
+               EN_AWS) == ["Amazon Macie"]
+assert nombres("- Amazon Macie\n- El portal antiguo no disponible", EN_AWS) == ["Amazon Macie"]
+print("OK 13: un servicio nombrado solo para descartarlo no se marca; si también se propone, sí")
+
+print("\nTodo bien: los fallos 44, 83, 88, 89, 90 y 111 están arreglados.")

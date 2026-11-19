@@ -361,16 +361,43 @@ def texto_servicios_a_evitar(problem_case: dict | None, config: dict | None = No
             "cerrados a clientes nuevos). No los nombres como opción; usa la alternativa:\n" + "\n".join(lineas))
 
 
+# Fallo 111: el 18 nov se marcaba una sección que decía «… en sustitución de Macie», como si propusiera Macie. Una mención
+# que solo descarta el servicio («en lugar de X», «X no está disponible», «se descarta X») no cuenta; si el texto lo
+# nombra también en otra frase sin descartarlo, sí.
+_DESCARTE_ANTES = re.compile(
+    r"(?:en sustitucion de|en lugar de|en vez de|sustituye a|sustituir a|alternativa a|se descarta|descartamos)"
+    r"\s+(?:[\w-]+\s+){0,3}$")
+_DESCARTE_DESPUES = re.compile(
+    r"^\W*(?:[\w-]+\s+){0,2}?(?:no (?:esta )?disponible|se descarta|queda descartad|descartad[oa]s?\b|retirad[oa]s?\b"
+    r"|no se (?:usa|propone))")
+_FIN_DE_FRASE = re.compile(r"[.!?;|\n]")
+
+
+def _solo_para_descartarlo(normal: str, inicio: int, fin: int) -> bool:
+    """Fallo 111: la mención entre inicio y fin está en una frase que descarta el servicio."""
+    antes = _FIN_DE_FRASE.split(normal[max(0, inicio - 80):inicio])[-1]
+    despues = _FIN_DE_FRASE.split(normal[fin:fin + 60])[0]
+    return bool(_DESCARTE_ANTES.search(antes) or _DESCARTE_DESPUES.search(despues))
+
+
 def revisar_servicios(texto: str, problem_case: dict | None, seccion: str,
                       config: dict | None = None) -> list[dict]:
-    """Fallo 83: los servicios a evitar que nombra un texto de una sección. Lo dice en el log, una línea por servicio."""
-    normal = _normalize_text(texto or "")
+    """Fallo 83: los servicios a evitar que nombra un texto de una sección. Lo dice en el log, una línea por servicio.
+    Fallo 111: no cuenta si todas las menciones lo nombran solo para descartarlo."""
+    # Línea a línea, para conservar los saltos de línea: separan los puntos de una lista igual que un punto
+    normal = "\n".join(_normalize_text(linea) for linea in (texto or "").splitlines())
     hallados = []
     for s in servicios_a_evitar(problem_case, config):
-        if any(re.search(rf"(?<![\w-]){re.escape(_normalize_text(b))}(?![\w-])", normal) for b in s.get("buscar") or []):
-            hallados.append(s)
-            logger.warning("[servicios] %s nombra %s (%s); en su lugar: %s", seccion, s["servicio"], s["motivo"],
-                           s["usar"])
+        menciones = [m for b in s.get("buscar") or []
+                     for m in re.finditer(rf"(?<![\w-]){re.escape(_normalize_text(b))}(?![\w-])", normal)]
+        if not menciones:
+            continue
+        if all(_solo_para_descartarlo(normal, m.start(), m.end()) for m in menciones):
+            logger.info("[servicios] %s nombra %s solo para descartarlo: no se marca", seccion, s["servicio"])
+            continue
+        hallados.append(s)
+        logger.warning("[servicios] %s nombra %s (%s); en su lugar: %s", seccion, s["servicio"], s["motivo"],
+                       s["usar"])
     return hallados
 
 
