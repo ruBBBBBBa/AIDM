@@ -106,3 +106,51 @@ assert _sin_cifras_inventadas(inventado, "Queremos bajar las roturas de stock un
 print("OK 5: «50 por ciento» cuenta como 50 %; un porcentaje que el usuario no ha dicho se sigue descartando")
 
 print("\nTodo bien: el discovery ya no pierde turnos por el formato.")
+# 6) Fallo 107 (a): una evidencia que solo dice que algo no se ha mencionado no se guarda (el 19 nov salieron tres)
+from agents import discovery_agent_logic as dal
+
+evidencias = [{"field_key": "evidencias", "operation": "merge", "value": [
+    "No se menciona volumen de datos ni madurez analítica detallada",
+    "Buscan servicio integral sin mencionar preferencias de arquitectura",
+    "Tienen un ERP antiguo y quieren cuadros de mando",
+    "Not mentioned: data volume"]},
+              {"field_key": "sector", "value": "Bodegas", "operation": "replace"}]
+limpias = dal._sin_notas_de_ausencia(evidencias)
+assert limpias == [{**evidencias[0], "value": ["Tienen un ERP antiguo y quieren cuadros de mando"]}, evidencias[1]], limpias
+solo_notas = [{"field_key": "evidencias", "operation": "merge", "value": ["No se ha especificado el plazo"]}]
+assert dal._sin_notas_de_ausencia(solo_notas) == []  # sin ninguna buena, el cambio no va
+assert dal._sin_notas_de_ausencia([{"field_key": "evidencias", "value": ["No tienen equipo de datos"]}])[0]["value"] \
+       == ["No tienen equipo de datos"]  # una respuesta negativa sí es un dato
+print("OK 6: las evidencias que solo dicen que algo no se ha mencionado no se guardan")
+
+# 7) Fallo 107 (b): si el usuario no ha respondido y el LLM repite la pregunta casi igual, se pasa a otro campo
+pregunta = ("¿Cuál es el objetivo principal del proyecto de Data & AI que queréis lograr con esta nueva plataforma? "
+            "Por ejemplo: optimización de procesos, análisis predictivo de cosechas, gestión logística, etc.")
+repetida = pregunta.replace("gestión logística", "gestión logística, mejora de la cadena de suministro")
+historial = [{"role": "assistant", "content": pregunta}, {"role": "user", "content": "Somos una bodega de 220 personas"}]
+antes = {dal.CAMPO_PREGUNTADO: "objetivo_del_proyecto",
+         "objetivo_del_proyecto": {"description": "Objetivos principales del proyecto", "value": ""},
+         "plazo_objetivo": {"description": "Plazo objetivo para tener la solución operativa", "value": ""}}
+respuesta, campo = dal._sin_repetir(repetida, "objetivo_del_proyecto", antes, antes, "Somos una bodega", historial)
+assert campo == "plazo_objetivo" and respuesta == dal.OTRA_PREGUNTA["es"] + "Plazo objetivo para tener la solución operativa"
+# Otra forma de preguntar, otro campo, o el campo ya respondido: no se toca
+otra = "Para centrar el proyecto: ¿qué os gustaría poder hacer dentro de un año que hoy no podéis?"
+assert dal._sin_repetir(otra, "objetivo_del_proyecto", antes, antes, "x", historial) == (otra, "objetivo_del_proyecto")
+assert dal._sin_repetir(repetida, "plazo_objetivo", antes, antes, "x", historial) == (repetida, "plazo_objetivo")
+respondido = {**antes, "objetivo_del_proyecto": {"description": "Objetivos", "value": "Predecir la demanda"}}
+assert dal._sin_repetir(repetida, "objetivo_del_proyecto", antes, respondido, "x", historial)[1] == "objetivo_del_proyecto"
+solo_ese = {k: v for k, v in antes.items() if k != "plazo_objetivo"}  # sin otro pendiente, se deja
+assert dal._sin_repetir(repetida, "objetivo_del_proyecto", solo_ese, solo_ese, "x", historial) == (repetida,
+                                                                                                    "objetivo_del_proyecto")
+# El prompt también lo pide
+enviados = []
+original_completar, original_modelo = dal.gateway.completar, dal.gateway.modelo
+dal.gateway.modelo = lambda tarea: "simulado/modelo"
+dal.gateway.completar = lambda **k: enviados.append(k["messages"][0]["content"]) or types.SimpleNamespace(
+    choices=[types.SimpleNamespace(message=types.SimpleNamespace(content='{"updates": [], "assistant_reply": "x"}'))])
+try:
+    dal._propose_plan_with_agent("hola", historial)
+finally:
+    dal.gateway.completar, dal.gateway.modelo = original_completar, original_modelo
+assert "no ha respondido a tu pregunta anterior, no la repitas igual" in enviados[0]
+print("OK 7: si el usuario no ha respondido, la pregunta no se repite con las mismas palabras")

@@ -1,4 +1,5 @@
 ﻿import json
+import difflib
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -261,6 +262,66 @@ def _sin_cifras_inventadas(updates: list[dict[str, Any]], textos_usuario: str) -
         limpios.append(upd)
     return limpios
 
+# Fallo 107 (a): una evidencia que solo dice que algo no se ha mencionado no es una frase del usuario
+_SOLO_AUSENCIA = re.compile(r"\b(?:no se (?:ha |han )?mencionad\w*|no se mencionan?|sin mencionar|no menciona\w*|"
+                            r"no se (?:ha )?(?:especificad\w*|indicad\w*|detallad\w*)|no se (?:especifica|indica|detalla)n?|"
+                            r"sin especificar|sin detallar|not mentioned|no mention)\b")
+
+
+def _sin_notas_de_ausencia(updates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fallo 107 (a): quita de las evidencias los valores que dicen que algo no se ha mencionado («No se menciona
+    volumen de datos…», «Buscan servicio integral sin mencionar…»). Son notas del modelo, no frases del cliente, y los
+    agentes las leían como datos. El 19 nov salieron tres en los dos primeros turnos."""
+    limpios: list[dict[str, Any]] = []
+    for upd in updates:
+        valor = upd.get("value")
+        if upd.get("field_key") != "evidencias" or not isinstance(valor, list):
+            limpios.append(upd)
+            continue
+        buenas = [v for v in valor if not (isinstance(v, str) and _SOLO_AUSENCIA.search(utils._normalize_text(v)))]
+        if len(buenas) < len(valor):
+            logger.warning("Evidencias descartadas: %d dicen que algo no se ha mencionado", len(valor) - len(buenas))
+        if buenas:
+            limpios.append({**upd, "value": buenas})
+    return limpios
+
+
+# Fallo 107 (b): si el usuario no ha respondido y el LLM repite la pregunta casi igual, se pasa a otro campo
+PARECIDO_MAXIMO = 0.8
+OTRA_PREGUNTA = {
+    "es": "Lo dejamos para más adelante. Para avanzar, necesito este dato: ",
+    "en": "Let's come back to that later. To move on, I need this: ",
+}
+
+
+def _se_repite(respuesta: str, anterior: str) -> bool:
+    """Fallo 107 (b): la respuesta es casi la misma pregunta que el turno anterior."""
+    a, b = utils._normalize_text(respuesta or ""), utils._normalize_text(anterior or "")
+    return bool(a and b) and difflib.SequenceMatcher(None, a, b).ratio() >= PARECIDO_MAXIMO
+
+
+def _sin_repetir(llm_reply: str, campo: str | None, problem_case_before: dict[str, Any],
+                 problem_case_after: dict[str, Any], user_prompt: str,
+                 chat_history: list[dict[str, str]] | None) -> tuple[str, str | None]:
+    """Fallo 107 (b): el 19 nov el turno 2 repitió con las mismas palabras la pregunta del objetivo, que el usuario no
+    había respondido. Si la respuesta repite la pregunta anterior sobre el mismo campo, que sigue sin dato, se pregunta
+    por el siguiente campo pendiente; ese queda para más adelante. Sin otro campo pendiente, se deja como está."""
+    anterior = _ultima_pregunta(chat_history)
+    pendientes = [p.partition(": ")[0] for p in _get_pending_fields(problem_case_after)]  # «campo: descripción»
+    if (not campo or campo != problem_case_before.get(CAMPO_PREGUNTADO) or not _se_repite(llm_reply, anterior)
+            or campo not in pendientes):
+        return llm_reply, campo
+    otros = [c for c in pendientes if c != campo]
+    if not otros:
+        return llm_reply, campo
+    siguiente = otros[0]
+    descripcion = (problem_case_after.get(siguiente) or {}).get("description") or siguiente
+    palabras = re.findall(r"[a-záéíóúñ']+", f"{user_prompt} {anterior}".lower())
+    idioma = "en" if sum(p in _PALABRAS_EN for p in palabras) > sum(p in _PALABRAS_ES for p in palabras) else "es"
+    print(f"[discovery] {campo}: la pregunta se repetía igual; se pasa a {siguiente}")
+    return OTRA_PREGUNTA[idioma] + descripcion, siguiente
+
+
 def _apply_plan(plan: dict[str, Any]) -> dict:
 # Cada cambio se construye por separado: si uno no tiene el formato esperado, se descarta solo ese.
     updates: list[FieldUpdate] = []
@@ -476,7 +537,10 @@ def _propose_plan_with_agent(user_prompt: str, chat_history: list[dict[str, str]
         "no aplica a su proyecto ('Confirmado por el usuario: no aplica') o que no lo sabe "
         "('Confirmado por el usuario: no lo sabe'). No lo uses en ningún otro caso.\n"
         "6. Haz UNA sola pregunta, clara y breve, sobre el campo pendiente más relevante, y pon su field_key en "
-        "'campo_preguntado' (null si no preguntas nada).\n"
+        "'campo_preguntado' (null si no preguntas nada). "
+        # Fallo 107 (b): el 19 nov repitió la pregunta del objetivo con las mismas palabras
+        "Si el usuario no ha respondido a tu pregunta anterior, no la repitas igual: hazla de otra forma, con un "
+        "ejemplo de respuesta, o pregunta por otro campo pendiente.\n"
         "7. Regla de cierre: si tras tus updates no quedan campos pendientes, usa update_status='completed' "
         "y un assistant_reply sin preguntas.\n"
         "8. Devuelve EXCLUSIVAMENTE un JSON válido, sin markdown ni texto extra, con este esquema "
@@ -538,6 +602,7 @@ def run_agent(user_prompt, chat_history: list[dict[str, str]] | None = None):
         m.get("content", "") for m in (chat_history or []) if m.get("role") == "user"
     ) + " " + str(user_prompt)
     plan["updates"] = _sin_cifras_inventadas(plan.get("updates", []), textos_usuario)
+    plan["updates"] = _sin_notas_de_ausencia(plan["updates"])  # fallo 107 (a)
     plan["updates"], repreguntar = _con_respuesta_cerrada(plan["updates"], problem_case_before, user_prompt,
                                                           _resultado(futuro))
     if repreguntar:
@@ -574,6 +639,9 @@ def run_agent(user_prompt, chat_history: list[dict[str, str]] | None = None):
         llm_reply = _repregunta(user_prompt, chat_history)
         _apuntar_repreguntado(campo_preguntado)
     completado = problem_case_after.get("status") == "completed"
+    if not repreguntar and not completado:  # fallo 107 (b): sin repetir la misma pregunta
+        llm_reply, campo_preguntado = _sin_repetir(llm_reply, campo_preguntado, problem_case_before,
+                                                   problem_case_after, user_prompt, chat_history)
     _guardar_campo_preguntado(None if completado else campo_preguntado)
     if completado:
         _apuntar_repreguntado(None)
