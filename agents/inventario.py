@@ -67,20 +67,37 @@ def leer(texto: str) -> tuple[str, list[dict]]:
     return sin_bloque, filas
 
 
+# Fallo 108: los guiones y rayas Unicode (‐ ‑ ‒ – — ―, y el signo menos) cuentan como el guion normal
+_GUIONES = dict.fromkeys(map(ord, "‐‑‒–—―−"), "-")
+
+
 def _clave(nombre: str) -> str:
-    """'Amazon S3 (capas Bronze y Gold)' → 's3': sin paréntesis ni el nombre de la nube, para comparar."""
-    normal = re.sub(r"\([^)]*\)", " ", _normalize_text(nombre or ""))
-    normal = re.sub(r"\s+", " ", normal).strip()
+    """'Amazon S3 (capas Bronze y Gold)' → 's3': sin paréntesis ni el nombre de la nube, para comparar.
+    Fallo 108: los paréntesis se quitan antes de normalizar, que se comía el «)» final y dejaba «s3 (capas…»."""
+    texto = re.sub(r"\([^)]*\)?", " ", (nombre or "").translate(_GUIONES))
+    normal = re.sub(r"\s+", " ", _normalize_text(texto)).strip()
     for prefijo in _PREFIJOS:
         if normal.startswith(prefijo):
             normal = normal[len(prefijo):]
     return normal.strip()
 
 
+def _base(nombre: str) -> str:
+    """Fallo 108: la clave sin lo que va detrás de « - », « – » o una coma: 'AWS DMS (DMS) - instancia t3.medium' →
+    'dms'. Es el nombre del servicio; lo demás es la instancia, el uso o las licencias."""
+    return re.split(r"\s-\s|,", _clave(nombre))[0].strip()
+
+
 def corresponde(servicio: str, componente: str) -> bool:
-    """Un componente de costes es de este servicio del inventario (o al revés)."""
-    a, b = _clave(servicio), _clave(componente)
-    return bool(a and b) and (a in b or b in a)
+    """Un componente de costes es de este servicio del inventario (o al revés).
+    Fallo 108: se comparan las bases y por palabras enteras, para que «Power BI (Microsoft 365)» y «Power BI Pro -
+    licencias» sean el mismo, pero «Kinesis Data Streams» y «Kinesis Data Firehose» no. Antes, con la cadena entera,
+    «Amazon S3» también casaba con «Glue Data Catalog sobre S3»."""
+    a, b = _base(servicio), _base(componente)
+    if not a or not b:
+        return False
+    dentro = lambda corto, largo: re.search(rf"(?<![\w-]){re.escape(corto)}(?![\w-])", largo) is not None
+    return dentro(a, b) or dentro(b, a)
 
 
 def tabla(filas: list[dict]) -> str:

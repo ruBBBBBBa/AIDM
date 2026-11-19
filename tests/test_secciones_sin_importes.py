@@ -317,4 +317,29 @@ assert nombres("Clasificación de PII con Amazon Macie.\nMás adelante, reglas p
 assert nombres("- Amazon Macie\n- El portal antiguo no disponible", EN_AWS) == ["Amazon Macie"]
 print("OK 13: un servicio nombrado solo para descartarlo no se marca; si también se propone, sí")
 
+# 14) Fallo 108: el cruce del inventario con los costes reconoce el mismo servicio aunque costes añada la instancia o
+#     las licencias, con guiones Unicode o con paréntesis; dos servicios distintos con nombre parecido no se juntan
+mismos = [("AWS Database Migration Service (DMS)", "AWS Database Migration Service (DMS) - instancia t3.medium"),
+          ("On-premises Data Gateway (Power BI)", "On‑premises Data Gateway (Power BI) – VM Windows EC2 t3.medium"),
+          ("Power BI (Microsoft 365)", "Power BI Pro - licencias para usuarios de negocio"),
+          ("Amazon S3 (capas Bronze, Silver y Gold)", "Amazon S3 Standard"),
+          ("Amazon Athena", "Amazon Athena, consultas sobre el lago")]
+distintos = [("Amazon Kinesis Data Streams", "Amazon Kinesis Data Firehose"),
+             ("Amazon S3", "AWS Glue Data Catalog, tablas sobre S3"), ("Amazon Redshift", "Amazon RDS"),
+             ("Power BI", "Power Automate"), ("Amazon API Gateway", "On-premises Data Gateway"),
+             ("AWS Lambda", "Amazon Lambda-Edge"), ("Amazon SageMaker AI", "Amazon Rekognition")]
+assert all(inventario.corresponde(a, b) and inventario.corresponde(b, a) for a, b in mismos), \
+    [(a, b) for a, b in mismos if not inventario.corresponde(a, b)]
+assert not any(inventario.corresponde(a, b) for a, b in distintos), \
+    [(a, b) for a, b in distintos if inventario.corresponde(a, b)]
+assert inventario._clave("Amazon S3 (capas Bronze, Silver y Gold)") == "s3"  # el «)» final ya no se queda
+from agents import estimation_crew as ec
+from agents.estimation_crew import ComponenteCoste
+inv = [{"servicio": s, "capa": "x", "fase": "mvp", "alternativa": ""} for s, _ in mismos[:3]]
+comps = [ComponenteCoste(componente=c, categoria="infraestructura", precio_unitario_eur=1, unidades=1, unidad="mes",
+                         periodicidad="mensual", referencia="x") for _, c in mismos[:3]]
+_, sin_valorar, fuera = ec._cruzar_con_inventario(comps, inv)
+assert sin_valorar == [] and fuera == [], (sin_valorar, fuera)
+print("OK 14: el cruce del inventario con los costes reconoce el mismo servicio y no junta servicios distintos")
+
 print("\nTodo bien: los fallos 44, 83, 88, 89, 90 y 111 están arreglados.")
