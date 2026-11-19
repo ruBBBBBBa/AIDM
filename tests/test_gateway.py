@@ -549,4 +549,92 @@ assert f"Ojo: a {flash} le quedan 0 peticiones hoy" in log.getvalue()
 gateway.CUPOS_PATH = Path(tempfile.mkdtemp()) / "cupos_gemini.json"  # el resto del test, con el cupo entero
 print("OK 14: un Gemini sin cupo del día se salta hasta las 09:00 sin esperar turno, y el log avisa si queda poco")
 
+# 15) Fallo 100: el 503 («high demand») y el 429 por minuto de Gemini no se reintentan en el mismo modelo, y el 503
+#     aparta el modelo unos minutos. El 17 nov, cada 503 de 3.6 Flash se reintentó 2 veces y el cupo del día se acabó
+#     sin una respuesta buena
+SOBRECARGA = "503 UNAVAILABLE This model is currently experiencing high demand. Please try again later."
+assert gateway.motivo_sin_reintento(flash, SOBRECARGA) == "503 (alta demanda)"
+assert gateway.motivo_sin_reintento(flash, POR_MINUTO) == "429 por minuto"
+assert gateway.motivo_sin_reintento(flash, DIARIO) == ""  # el del cupo diario lo trata el fallo 92
+assert gateway.motivo_sin_reintento("mistral/otro", SOBRECARGA) == ""  # fuera de Gemini, los reintentos de siempre
+assert gateway._minutos_apartado(flash, {"proveedores": {"gemini": {"apartar_minutos": 3}}}) == 3
+assert gateway._minutos_apartado(flash, {"proveedores": {"gemini": {"apartar_minutos": 3}},
+                                         "modelos": {flash: {"apartar_minutos": 1}}}) == 1
+assert gateway._minutos_apartado(flash, {}) == gateway.APARTAR_MINUTOS
+# En la lista de reservas, LiteLLM no reintenta: ni el 503 ni el 429 por minuto pasan por sus reintentos
+gateway._apartados.clear()
+decididos = []
+original_reintentos = gateway._num_reintentos.original
+gateway._num_reintentos.original = lambda **k: decididos.append(k["exception"]) or (2, k["kwargs"])
+try:
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert gateway._num_reintentos(kwargs={"model": lite}, exception=Exception(POR_MINUTO))[0] == 0
+        assert gateway._num_reintentos(kwargs={"model": lite}, exception=Exception(SOBRECARGA))[0] == 0
+        assert gateway._num_reintentos(kwargs={"model": "mistral/otro"}, exception=Exception(SOBRECARGA))[0] == 2
+finally:
+    gateway._num_reintentos.original = original_reintentos
+assert len(decididos) == 1, decididos
+# El 503 aparta el modelo: las tareas siguientes lo saltan, el log lo dice una vez, y a los minutos vuelve
+gateway._apartados.clear()
+log = io.StringIO()
+with contextlib.redirect_stdout(log):
+    assert gateway.sin_reintentar(flash, SOBRECARGA) and gateway.sin_reintentar(flash, SOBRECARGA)
+    bi = gateway.modelo("roadmap_bi")
+assert log.getvalue().count(f"[gateway] {flash} dio 503 (alta demanda): no se reintenta en el mismo modelo; se aparta") \
+       == 1, log.getvalue()
+assert bi == tecnico[1] and flash not in bi.reservas, (bi, bi.reservas)
+assert f"se salta {flash} (apartado por 503)" in log.getvalue(), log.getvalue()
+assert flash not in gateway._apartados_vigentes(time.monotonic() + gateway._minutos_apartado(flash) * 60 + 1)
+gateway._apartados.clear()
+with contextlib.redirect_stdout(io.StringIO()):  # el 429 por minuto no aparta
+    assert gateway.sin_reintentar(lite, POR_MINUTO)
+assert not gateway._apartados
+# Sin reservas, el primer intento va sin reintentos: un 503 de Gemini se queda en uno; un 500, en los de siempre
+gateway._reservas_por_minuto.clear()
+for error, esperados in ((litellm.ServiceUnavailableError(message=SOBRECARGA, llm_provider="gemini", model=lite), [0]),
+                         (litellm.APIError(status_code=500, message="Internal error", llm_provider="gemini", model=lite),
+                          [0, 1])):
+    intentos.clear()
+    original, gateway._completion_registrada.original = gateway._completion_registrada.original, falla(error)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            litellm.completion(model=lite, messages=[], num_retries=2, metadata={"aidm_tarea": "discovery"})
+    except (litellm.APIError, litellm.ServiceUnavailableError):
+        pass
+    finally:
+        gateway._completion_registrada.original = original
+    assert intentos == esperados, (error, intentos)
+gateway._apartados.clear()
+gateway._reservas_por_minuto.clear()
+print("OK 15: Gemini no reintenta el 503 ni el 429 por minuto en el mismo modelo, y el 503 lo aparta unos minutos")
+
+# Fallo 112: un 429 de Mistral no se reintenta; otro error suyo, sí. Y el 503 de Gemini no se reintenta (fallo 100)
+import gateway
+
+llamadas = []
+
+
+def original_que_falla(error):
+    def original(*args, **kwargs):
+        llamadas.append(kwargs.get("num_retries"))
+        raise Exception(error)
+    return original
+
+
+for error, esperadas in [("litellm.RateLimitError: MistralException - 429 Too Many Requests", [0]),
+                         ("litellm.InternalServerError: MistralException - 500", [0, 2])]:
+    llamadas.clear()
+    try:
+        gateway._llamar(original_que_falla(error), (),
+                        {"model": "mistral/ministral-14b-2512", "messages": [], "num_retries": 3})
+    except Exception:
+        pass
+    assert llamadas == esperadas, (error, llamadas)
+assert gateway._num_reintentos(kwargs={"model": "mistral/ministral-14b-2512"},
+                               exception=Exception("429 Too Many Requests"))[0] == 0
+assert gateway._num_reintentos(kwargs={"model": "gemini/gemini-3.6-flash"},
+                               exception=Exception("503 UNAVAILABLE: high demand"))[0] == 0
+assert gateway.motivo_sin_reintento("groq/openai/gpt-oss-20b", Exception("429 Too Many Requests")) == ""
+print("OK 16: Mistral con 429 y Gemini con 503 pasan a la reserva sin reintentar; los demás errores siguen reintentándose")
+
 print("\nTodo bien: el gateway de modelos funciona (en la parte que se puede comprobar sin el LLM real).")

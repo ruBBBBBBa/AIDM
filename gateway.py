@@ -120,12 +120,16 @@ def motivo_sin_reintento(modelo, error) -> str:
     """Fallo 100: «503 (alta demanda)» o «429 por minuto» si el error es de un modelo de Gemini y no se arregla
     repitiendo en el mismo modelo; "" en cualquier otro caso (esos siguen con los reintentos del yaml). El 429 del
     cupo diario no entra aquí: lo trata el fallo 92."""
+    texto, codigo = str(error), getattr(error, "status_code", None)
+    es_429 = codigo == 429 or re.search(r"\b429\b|RESOURCE_EXHAUSTED|RateLimit", texto, re.IGNORECASE)
+    # Fallo 112: el 18 nov, ministral dio 429 en el discovery y LiteLLM lo reintentó 3 veces (unos 8 s) antes de pasar a
+    # Flash-Lite, que respondió igualmente. Un 429 de Mistral pasa a la reserva sin reintentar.
+    if str(modelo or "").startswith("mistral/"):
+        return "429 (límite de velocidad)" if es_429 else ""
     if not str(modelo or "").startswith("gemini/"):
         return ""
-    texto, codigo = str(error), getattr(error, "status_code", None)
     if codigo == 503 or _SOBRECARGA.search(texto):
         return "503 (alta demanda)"
-    es_429 = codigo == 429 or re.search(r"\b429\b|RESOURCE_EXHAUSTED|RateLimit", texto, re.IGNORECASE)
     if es_429 and _LIMITE_POR_MINUTO.search(texto) and not _CUPO_DIARIO.search(texto):
         return "429 por minuto"
     return ""
