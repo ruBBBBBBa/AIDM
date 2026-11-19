@@ -900,6 +900,20 @@ def _cruzar_con_inventario(componentes: list[ComponenteCoste], inventario: list[
     return con_fase, sin_valorar, fuera_de_lista
 
 
+def _equipo_por_fases(equipo: dict) -> str:
+    """Fallo 113: el texto de una fila del equipo en el desglose, con el desarrollo y la implantación dentro si los hay
+    («Equipo: 99.288 € · desarrollo 80.472 € (3 meses), implantación 18.816 € (1 mes)»). Mismas cifras que la sección
+    «Estimación de coste del equipo», que salen de _calcular_equipo. Desde el fallo 86, con MVP y resto, solo salía
+    el total de cada alcance."""
+    texto = f"Equipo: {_rango(equipo['total_min'], equipo['total_max'])}"
+    impl = equipo.get("meses_implantacion") or 0
+    if not impl:
+        return texto
+    meses_dev = _meses_txt(equipo["meses_min"] - impl, equipo["meses_max"] - impl)
+    return (f"{texto} · desarrollo {_rango(equipo['desarrollo_min'], equipo['desarrollo_max'])} ({meses_dev}), "
+            f"implantación {_eur(equipo['implantacion'])} ({_meses_txt(impl, impl)})")
+
+
 def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", equipo: dict | None = None,
                         problem_case: dict | None = None, avisar_tarifas: bool = True,
                         inventario: list[dict] | None = None) -> str:
@@ -1111,10 +1125,10 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         filas.append((f"Contingencia ({r.contingencia_pct} %, solo escenario alto)", _eur(contingencia),
                       contingencia, "#64748b"))  # slate
     if resto:  # fallo 86: el equipo de cada alcance, con sus meses
-        filas.append((f"Equipo del MVP · {_meses_txt(mvp_min, mvp_max)}",
-                      f"Equipo: {_rango(equipo['total_min'], equipo['total_max'])}", equipo["total_max"], "#0f766e"))
+        filas.append((f"Equipo del MVP · {_meses_txt(mvp_min, mvp_max)}", _equipo_por_fases(equipo),
+                      equipo["total_max"], "#0f766e"))
         filas.append((f"Equipo del resto del proyecto · {_meses_txt(resto['meses_min'], resto['meses_max'])}",
-                      f"Equipo: {_rango(resto['total_min'], resto['total_max'])}", resto["total_max"], "#15803d"))
+                      _equipo_por_fases(resto), resto["total_max"], "#15803d"))
     elif equipo and equipo.get("meses_implantacion"):
         # Fallo 43: el desarrollo y la implantación, cada uno con sus meses
         impl = equipo["meses_implantacion"]

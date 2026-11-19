@@ -255,4 +255,32 @@ assert "12 €/mes el primer mes (crece cada mes con lo que entra)" in html and 
 assert f"{ec._cifra(0.44 / cambio['usd_por_eur'])} €/DPU-hora" in html
 print("OK 10: el lago de datos acumula lo que entra cada mes y los precios en dólares se pasan a euros")
 
+# 11) Fallo 113: con MVP y resto del proyecto, cada fila del equipo en el desglose lleva dentro el desarrollo y la
+#     implantación, con las mismas cifras que «Estimación de coste del equipo». Desde el fallo 86 solo salía el total
+mvp_113 = EquipoEstimado(perfiles=[PerfilEquipo(perfil="Data Engineer", nivel="Senior", horas_mes=160,
+                                                horas_mes_implantacion=80)], meses_min=4, meses_max=4, meses_implantacion=1)
+resto_113 = EquipoDelResto(perfiles=[PerfilEquipo(perfil="Data Engineer", nivel="Senior", horas_mes=160,
+                                                  horas_mes_implantacion=40)], meses_min=6, meses_max=6,
+                           meses_implantacion=2)
+calculado = _calcular_equipo(mvp_113, tarifas)
+calculado["resto"] = _calcular_equipo(resto_113, tarifas)
+tarifa_de = tarifas[("data engineer", "senior")]
+html = ec._format_cost_report(informe, "", calculado, dos)
+fila_mvp = (f"Equipo: {ec._eur(tarifa_de * (160 * 3 + 80))} · desarrollo {ec._eur(tarifa_de * 160 * 3)} (3 meses), "
+            f"implantación {ec._eur(tarifa_de * 80)} (1 mes)")
+fila_resto = (f"Equipo: {ec._eur(tarifa_de * (160 * 4 + 40 * 2))} · desarrollo {ec._eur(tarifa_de * 160 * 4)} "
+              f"(4 meses), implantación {ec._eur(tarifa_de * 40 * 2)} (2 meses)")
+assert fila_mvp in html and fila_resto in html, html
+for e in (calculado, calculado["resto"]):  # las mismas cifras que la sección del equipo
+    assert f"Desarrollo en {ec._meses_txt(e['meses_min'] - e['meses_implantacion'], e['meses_max'] - e['meses_implantacion'])}: " \
+           f"{ec._rango(e['desarrollo_min'], e['desarrollo_max'])}" in e["texto"]
+    assert f"Implantación en {ec._meses_txt(e['meses_implantacion'], e['meses_implantacion'])}: " \
+           f"{ec._eur(e['implantacion'])}" in e["texto"]
+assert "Equipo del MVP · 4 meses" in html and "Equipo del resto del proyecto · 6 meses" in html
+# Sin implantación en un alcance, su fila sigue con el total solo
+calculado["resto"] = _calcular_equipo(resto, tarifas)
+html = ec._format_cost_report(informe, "", calculado, dos)
+assert f"Equipo: {ec._eur(calculado['resto']['total_max'])}</div>" in html and fila_mvp in html
+print("OK 11: con MVP y resto, cada fila del equipo separa el desarrollo y la implantación")
+
 print("\nTodo bien: el fallo 5 está arreglado.")
