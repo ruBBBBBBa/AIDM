@@ -283,4 +283,53 @@ html = ec._format_cost_report(informe, "", calculado, dos)
 assert f"Equipo: {ec._eur(calculado['resto']['total_max'])}</div>" in html and fila_mvp in html
 print("OK 11: con MVP y resto, cada fila del equipo separa el desarrollo y la implantación")
 
+# 12) Fallo 103: si el proyecto no cabe en el presupuesto, también el equipo ajustado: las mismas personas con las
+#     horas recortadas en proporción hasta que el total quepa (el techo es el presupuesto menos lo que no es equipo). Y
+#     si lo que queda funcionando pasa del límite mensual, cuánto soporte cabe. El 19 nov, 382.410 € con 120.000 €
+calculado = _calcular_equipo(mvp, tarifas)
+calculado["resto"] = _calcular_equipo(resto, tarifas)
+corto = informe.model_copy(update={"resumen_ejecutivo": informe.resumen_ejecutivo.model_copy(
+    update={"presupuesto_cliente_max_eur": 60_000})})
+html = ec._format_cost_report(corto, "", calculado, dos)
+ajustado = calculado["ajustado"]
+no_equipo = 1_000 * 10 + 500 * 6                       # lo mismo que en el caso 8: 13.000 €
+factor = (60_000 - no_equipo) / completo_equipo if (completo_equipo := completo - no_equipo) else 0
+assert abs(ajustado["factor"] - factor) < 1e-9
+horas_de = int(160 * factor)
+assert ajustado["total_max"] == 7_200 / 160 * horas_de * 4  # Data Engineer Senior: 45 €/h
+equipo_aj = ajustado["total_max"] + ajustado["resto"]["total_max"]
+assert no_equipo + equipo_aj <= 60_000  # cabe
+assert f"<strong>Equipo ajustado al presupuesto:</strong> si 60.000 € es un tope, las horas de cada perfil tienen que " \
+       f"bajar al {int(100 * factor)} %" in html and f"total: {ec._eur(no_equipo + equipo_aj)}; encaje: alto" in html, html
+assert f"| Data Engineer | Senior | {horas_de} | 45 €/h |" in ajustado["texto"], ajustado["texto"]
+# Si cabe, no hay ajuste
+calculado = _calcular_equipo(mvp, tarifas)
+calculado["resto"] = _calcular_equipo(resto, tarifas)
+assert "Equipo ajustado" not in ec._format_cost_report(informe, "", calculado, dos) and "ajustado" not in calculado
+# Ni con el equipo a cero
+calculado = _calcular_equipo(mvp, tarifas)
+calculado["resto"] = _calcular_equipo(resto, tarifas)
+sin_sitio = corto.model_copy(update={"resumen_ejecutivo": corto.resumen_ejecutivo.model_copy(
+    update={"presupuesto_cliente_max_eur": 10_000})})
+assert "Ni con el equipo a cero cabe: lo que no es equipo ya cuesta 13.000 €" in ec._format_cost_report(
+    sin_sitio, "", calculado, dos)
+# El soporte, frente al límite mensual
+soporte = ComponenteCoste(componente="Soporte evolutivo", categoria="mantenimiento", precio_unitario_eur=2_000,
+                          unidades=1, unidad="mes", periodicidad="mensual", referencia="x")
+con_soporte = informe.model_copy(update={"componentes": informe.componentes + [soporte]})
+limite = {**dos, "restriccion_presupuestaria": {"description": "Presupuesto",
+                                                "value": "Hasta 200.000 €, y no más de 2.000 € al mes después"}}
+html = ec._format_cost_report(con_soporte, "", _calcular_equipo(mvp, tarifas) | {"resto": _calcular_equipo(resto, tarifas)},
+                              limite)
+assert "Para no pasarlo, el soporte tendría que quedarse en unos 500 €/mes (ahora, 2.000 €/mes)." in html, html
+# Y la sección del equipo lo enseña, con las horas de cada perfil
+equipo = mvp.model_copy(update={"resto_del_proyecto": resto})
+pobre = {**dos, "restriccion_presupuestaria": {"description": "Presupuesto", "value": "60.000 €"}}
+informe_simulado = corto  # lo que devuelve la tarea de costes simulada
+resultado = ec.run_estimation_crew("PROPUESTA SIMULADA", "groq/openai/gpt-oss-20b", problem_case=pobre)
+assert "### Equipo ajustado al presupuesto" in resultado.team_profiles, resultado.team_profiles[-800:]
+assert "#### Resto del proyecto, después del MVP" in resultado.team_profiles
+assert "Ajusta el equipo al tamaño del cliente" in next(p for p in prompts[::-1] if "identifica los perfiles" in p)
+print(f"OK 12: si no cabe, el equipo ajustado al presupuesto ({int(100 * factor)} % de las horas) y cuánto soporte cabe")
+
 print("\nTodo bien: el fallo 5 está arreglado.")

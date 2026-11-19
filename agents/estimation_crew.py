@@ -508,7 +508,36 @@ def _calcular_equipo(equipo: _EquipoDeUnAlcance, tarifas: dict[tuple[str, str], 
             "implantacion": implantacion,
             "horas_sin_tarifa": falta_dev, "horas_sin_tarifa_impl": falta_impl, "tarifa_minima": tarifa_minima,
             "falta_min": falta_min, "falta_max": falta_max,
+            "modelo": equipo,  # fallo 103: para recalcularlo con las horas ajustadas al presupuesto
             "texto": "\n".join(lineas)}
+
+
+def _equipo_ajustado(equipo: dict, factor: float) -> dict:
+    """Fallo 103: el mismo equipo (y el del resto del proyecto, si lo hay) con las horas de cada perfil y de cada
+    función sin tarifa multiplicadas por `factor` y redondeadas hacia abajo, calculado igual que el propuesto. Son las
+    mismas personas con menos horas: no lo estima nadie, se recorta en proporción."""
+    tarifas = _cargar_tarifas()
+
+    def escalar(alcance: _EquipoDeUnAlcance) -> _EquipoDeUnAlcance:
+        horas = lambda h: int(max(h, 0) * factor)
+        return alcance.model_copy(update={
+            "perfiles": [p.model_copy(update={"horas_mes": horas(p.horas_mes),
+                                              "horas_mes_implantacion": horas(p.horas_mes_implantacion)})
+                         for p in alcance.perfiles],
+            "funciones_sin_tarifa": [f.model_copy(update={"horas_mes": horas(f.horas_mes),
+                                                          "horas_mes_implantacion": horas(f.horas_mes_implantacion)})
+                                     for f in alcance.funciones_sin_tarifa]})
+
+    nivel = logger.level
+    logger.setLevel(logging.ERROR)  # los avisos del equipo ya salieron con el propuesto
+    try:
+        ajustado = _calcular_equipo(escalar(equipo["modelo"]), tarifas)
+        if equipo.get("resto"):
+            ajustado["resto"] = _calcular_equipo(escalar(equipo["resto"]["modelo"]), tarifas)
+    finally:
+        logger.setLevel(nivel)
+    ajustado["factor"] = factor
+    return ajustado
 
 
 def _encaje_presupuesto(total_min: float, total_max: float, presupuesto: int) -> tuple[str, str]:
@@ -1049,6 +1078,35 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     if not equipo:
         motivo += " Ojo: el total no incluye el equipo, que no se pudo calcular."
 
+    # Fallo 103: si el proyecto no cabe, también el equipo ajustado al presupuesto, por si el cliente lo da como tope.
+    # El techo del equipo es el presupuesto menos lo que no es equipo (escenario alto, con la contingencia); las horas
+    # de cada perfil bajan en proporción. El 19 nov, 11 perfiles llevaban el proyecto a 382.410 € con 120.000 €
+    ajuste_html = ""
+    if presupuesto > 0 and equipo and "modelo" in equipo and total_max + falta_max > presupuesto:
+        techo = presupuesto - sin_equipo_max
+        base = equipo_max + falta_max
+        if techo <= 0:
+            ajuste_html = (f"Ni con el equipo a cero cabe: lo que no es equipo ya cuesta {_eur(sin_equipo_max)}, por "
+                           f"encima del presupuesto del cliente ({_eur(presupuesto)}).")
+        elif base > 0 and (not resto or "modelo" in resto):
+            ajustado = _equipo_ajustado(equipo, techo / base)
+            equipo["ajustado"] = ajustado  # lo lee run_estimation_crew para la sección del equipo
+            aj_resto = ajustado.get("resto") or {}
+            aj_min = sin_equipo_min + ajustado["total_min"] + aj_resto.get("total_min", 0)
+            aj_max = sin_equipo_max + ajustado["total_max"] + aj_resto.get("total_max", 0)
+            aj_falta_min = ajustado["falta_min"] + aj_resto.get("falta_min", 0)
+            aj_falta_max = ajustado["falta_max"] + aj_resto.get("falta_max", 0)
+            aj_nivel = _encaje_presupuesto(aj_min + aj_falta_min, aj_max + aj_falta_max, presupuesto)[0]
+            ajuste_html = (
+                f"<strong>Equipo ajustado al presupuesto:</strong> si {_eur(presupuesto)} es un tope, las horas de "
+                f"cada perfil tienen que bajar al {int(100 * techo / base)} % de las propuestas (el detalle, en "
+                f"la sección del equipo). Equipo: "
+                f"{_rango(aj_min - sin_equipo_min, aj_max - sin_equipo_max)}; total: {_rango(aj_min, aj_max)}; "
+                f"encaje: {aj_nivel}. Son las mismas personas con menos horas, recortadas en proporción: revisa si "
+                f"así da para el alcance antes de presentarlo.")
+        if ajuste_html:
+            ajuste_html = f'<p style="color:var(--text);font-size:0.875rem;margin:0 0 0.5rem;">{ajuste_html}</p>'
+
     # Fallo 79: lo que queda funcionando cada mes (infraestructura, licencias y soporte), frente al límite mensual
     limite_mes = _limite_mensual(problem_case)
     al_mes = sum(_coste_al_mes(c, meses_max) for c in sumados if c.periodicidad != "unico")
@@ -1076,6 +1134,14 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     if limite_mes and al_mes > limite_mes[1]:
         avisos.append(f"Ojo: al mes, lo que queda funcionando cuesta unos {_eur(al_mes)}, por encima del límite "
                       f"mensual del cliente ({_rango(*limite_mes)}).")
+        # Fallo 103: el 19 nov el soporte era justo el límite mensual (2.000 €) y con la infraestructura lo pasaba
+        soporte_mes = sum(_coste_al_mes(c, meses_max) for c in sumados
+                          if c.categoria == "mantenimiento" and c.periodicidad != "unico")
+        if soporte_mes:
+            cabe = limite_mes[1] - (al_mes - soporte_mes)
+            avisos[-1] += (f" Para no pasarlo, el soporte tendría que quedarse en unos {_eur(cabe)}/mes (ahora, "
+                           f"{_eur(soporte_mes)}/mes)." if cabe > 0 else
+                           " Ni sin el soporte cabe: la infraestructura y las licencias ya lo pasan.")
 
     def _en_gratuito(c: ComponenteCoste) -> bool:
         """Fallo 53: a 0 € porque el uso cabe en lo gratuito de su fila de la tabla."""
@@ -1309,6 +1375,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         f'</div></div>'
         f'{aviso_html}'
         f'<p style="color:var(--text);font-size:0.875rem;margin:0 0 0.5rem;">{motivo}</p>'
+        f'{ajuste_html}'  # fallo 103
         # La justificación la escribe el LLM sin conocer el equipo: se dice a qué cifras se refiere
         f'<p style="color:var(--muted);font-size:0.875rem;margin:0;font-style:italic;">'
         f'Infraestructura, licencias, formación y soporte ({_rango(sin_equipo_min, sin_equipo_max)}, '
@@ -1843,6 +1910,10 @@ def run_estimation_crew(
             "resto del proyecto» o «Alcance: MVP y resto del proyecto». Un perfil que solo hace falta para lo que va "
             "después del MVP (por ejemplo, los de IA si la IA es de la fase 2) no va en el MVP. Si no hay MVP, hay un "
             "solo alcance. "
+            # Fallo 103: el 19 nov salieron 11 perfiles para una empresa de 220 empleados con 2 técnicos de IT
+            "Ajusta el equipo al tamaño del cliente (tamaño de la empresa) y a su equipo técnico: en una empresa "
+            "pequeña o mediana, pocos perfiles, que cubran varias funciones y a dedicación parcial salvo que el "
+            "trabajo pida jornada completa. "
             "Incluye solo los perfiles imprescindibles para cada alcance y, para cada uno, sus responsabilidades clave, las "
             "habilidades requeridas y si su dedicación es completa o parcial. "
             "Escribe un apartado por perfil, con su nombre como título y una lista debajo; no uses tablas. "
@@ -1991,6 +2062,13 @@ def run_estimation_crew(
                              + equipo["resto"]["texto"])
         else:
             team_profiles = team_profiles + "\n\n---\n\n## Estimación de Coste del Equipo\n\n" + equipo["texto"]
+        ajustado = equipo.get("ajustado")  # fallo 103: lo deja _format_cost_report si el proyecto no cabe
+        if ajustado:
+            team_profiles += (f"\n\n### Equipo ajustado al presupuesto\n\nSi el presupuesto del cliente es un tope, "
+                              f"las mismas personas con las horas al {int(100 * ajustado['factor'])} % de las "
+                              f"propuestas, recortadas en proporción (revisa si así da para el alcance):\n\n"
+                              + (f"#### MVP\n\n{ajustado['texto']}\n\n#### Resto del proyecto, después del MVP\n\n"
+                                 f"{ajustado['resto']['texto']}" if ajustado.get("resto") else ajustado["texto"]))
 
 
     return EstimationResult(
