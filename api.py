@@ -11,6 +11,15 @@ import re
 import shutil
 import sys
 import threading
+import time
+import urllib.request
+import urllib.parse
+import xml.etree.ElementTree as ET
+
+from email.utils import parsedate_to_datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timezone
+
 from datetime import datetime
 from pathlib import Path
 
@@ -156,6 +165,202 @@ def get_informe():
         return JSONResponse({"error": "Todavía no hay informe."}, status_code=404)
     return informe
 
+
+# ==========================================
+
+# AIDM TECH NEWS - Noticias tecnológicas
+
+# ==========================================
+
+_noticias_lock = threading.Lock()
+
+_noticias_cache = {
+
+    "timestamp": 0,
+
+    "items": []
+
+}
+
+NEWS_TOPICS = {
+
+    "IA y automatización": "inteligencia artificial empresas",
+
+    "Cloud": "cloud computing empresas",
+
+    "Datos y analítica": "big data analytics empresas"
+
+}
+
+def _leer_rss(tema, busqueda):
+
+    query = urllib.parse.urlencode({
+
+        "q": busqueda + " when:7d",
+
+        "hl": "es",
+
+        "gl": "ES",
+
+        "ceid": "ES:es"
+
+    })
+
+    url = "https://news.google.com/rss/search?" + query
+
+    req = urllib.request.Request(
+
+        url,
+
+        headers={"User-Agent": "Mozilla/5.0 AIDM-Tech-News"}
+
+    )
+
+    with urllib.request.urlopen(req, timeout=4) as respuesta:
+
+        contenido = respuesta.read(1_000_000)
+
+    root = ET.fromstring(contenido)
+
+    noticias = []
+
+    for item in root.findall("./channel/item")[:5]:
+
+        titulo = item.findtext("title", "").strip()
+
+        enlace = item.findtext("link", "").strip()
+
+        fecha = item.findtext("pubDate", "").strip()
+
+        fuente = item.findtext("source", "").strip()
+
+        if not titulo or not enlace.startswith("https://"):
+
+            continue
+
+        try:
+
+            fecha_iso = parsedate_to_datetime(
+
+                fecha
+
+            ).astimezone(timezone.utc).isoformat()
+
+        except (TypeError, ValueError, IndexError):
+
+            fecha_iso = None
+
+        noticias.append({
+
+            "titulo": titulo,
+
+            "url": enlace,
+
+            "fuente": fuente or "Google News",
+
+            "fecha": fecha_iso,
+
+            "categoria": tema
+
+        })
+
+    return noticias
+
+@app.get("/api/noticias")
+
+def obtener_noticias():
+
+    ahora = time.time()
+
+    with _noticias_lock:
+
+        cache = dict(_noticias_cache)
+
+    if ahora - cache["timestamp"] < 180:
+
+        return {
+
+            "noticias": cache["items"],
+
+            "actualizado": datetime.now(
+
+                timezone.utc
+
+            ).isoformat(),
+
+            "cache": True
+
+        }
+
+    resultados = []
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+
+        futuros = [
+
+            pool.submit(_leer_rss, tema, busqueda)
+
+            for tema, busqueda in NEWS_TOPICS.items()
+
+        ]
+
+        for futuro in futuros:
+
+            try:
+
+                resultados.extend(futuro.result(timeout=5))
+
+            except Exception:
+
+                continue
+
+    vistos = set()
+
+    unicas = []
+
+    for noticia in resultados:
+
+        clave = noticia["titulo"].lower()
+
+        if clave not in vistos:
+
+            vistos.add(clave)
+
+            unicas.append(noticia)
+
+    unicas.sort(
+
+        key=lambda noticia: noticia["fecha"] or "",
+
+        reverse=True
+
+    )
+
+    if unicas:
+
+        with _noticias_lock:
+
+            _noticias_cache["items"] = unicas[:9]
+
+            _noticias_cache["timestamp"] = ahora
+
+    with _noticias_lock:
+
+        disponibles = list(_noticias_cache["items"])
+
+    return {
+
+        "noticias": disponibles,
+
+        "actualizado": datetime.now(
+
+            timezone.utc
+
+        ).isoformat(),
+
+        "cache": False
+
+    }
 
 if __name__ == "__main__":
     import webbrowser
