@@ -322,6 +322,33 @@ def _sin_repetir(llm_reply: str, campo: str | None, problem_case_before: dict[st
     return OTRA_PREGUNTA[idioma] + descripcion, siguiente
 
 
+# Fallo 107 (c): una frase que da el discovery o el caso por completado («El discovery se considera completado»)
+_DICE_COMPLETADO = re.compile(r"\b(?:discovery|el caso|the case|tengo todo)\b[^.?!]*\b(?:completad[oa]|completed?)\b"
+                              r"|\b(?:completad[oa]|completed?)\b[^.?!]*\b(?:discovery|el caso|the case)\b")
+
+# Fallo 107 (d): el 20 nov el último turno guardó el equipo técnico y en la misma respuesta volvía a preguntar por él
+YA_LO_TENGO = {
+    "es": "Gracias, eso ya lo tengo. Para avanzar, necesito este dato: ",
+    "en": "Thanks, I already have that. To move on, I need this: ",
+}
+
+
+def _sin_preguntar_lo_dicho(llm_reply: str, campo: str | None, problem_case_after: dict[str, Any], user_prompt: str,
+                            chat_history: list[dict[str, str]] | None) -> tuple[str, str | None]:
+    """Fallo 107 (d): si la pregunta es por un campo que ya tiene dato (de este turno o de antes), se pregunta por el
+    primer campo pendiente. Sin campos pendientes, o sin campo preguntado, se deja como está."""
+    datos = problem_case_after.get(campo) if campo else None
+    pendientes = [p.partition(": ")[0] for p in _get_pending_fields(problem_case_after)]
+    if not isinstance(datos, dict) or "value" not in datos or campo in pendientes or not pendientes:
+        return llm_reply, campo
+    siguiente = pendientes[0]
+    descripcion = (problem_case_after.get(siguiente) or {}).get("description") or siguiente
+    palabras = re.findall(r"[a-záéíóúñ']+", f"{user_prompt} {_ultima_pregunta(chat_history)}".lower())
+    idioma = "en" if sum(p in _PALABRAS_EN for p in palabras) > sum(p in _PALABRAS_ES for p in palabras) else "es"
+    print(f"[discovery] {campo}: ya tiene dato; se pregunta por {siguiente}")
+    return YA_LO_TENGO[idioma] + descripcion, siguiente
+
+
 def _apply_plan(plan: dict[str, Any]) -> dict:
 # Cada cambio se construye por separado: si uno no tiene el formato esperado, se descarta solo ese.
     updates: list[FieldUpdate] = []
@@ -628,12 +655,17 @@ def run_agent(user_prompt, chat_history: list[dict[str, str]] | None = None):
     campo_preguntado = plan.get("campo_preguntado")
 
     # Si el LLM da el caso por cerrado pero quedan campos sin dato real, su despedida no vale: se pregunta por lo que falta.
-    if plan.get("update_status") == "completed" and problem_case_after.get("status") != "completed":
-        pending = _get_pending_fields(problem_case_after)
-        if pending:
-            campo_preguntado, _, primero = pending[0].partition(": ")
-            llm_reply = f"Aún me faltan {len(pending)} datos para cerrar el caso. Empecemos por este: {primero or campo_preguntado}"
-    
+    # Fallo 107 (c): también si lo dice solo en el texto. El 17 nov, con el caso vacío, «El discovery se considera
+    # completado…»; si no marca update_status='completed', el texto pasaba tal cual
+    pending = _get_pending_fields(problem_case_after)
+    if pending and problem_case_after.get("status") != "completed" and (
+            plan.get("update_status") == "completed" or _DICE_COMPLETADO.search(utils._normalize_text(llm_reply or ""))):
+        campo_preguntado, _, primero = pending[0].partition(": ")
+        llm_reply = f"Aún me faltan {len(pending)} datos para cerrar el caso. Empecemos por este: {primero or campo_preguntado}"
+    elif not repreguntar:  # fallo 107 (d): no se pregunta por lo que ya está dicho
+        llm_reply, campo_preguntado = _sin_preguntar_lo_dicho(llm_reply, campo_preguntado, problem_case_after,
+                                                              user_prompt, chat_history)
+
     if repreguntar:  # fallo 68: la misma pregunta otra vez, en vez de la que traía el LLM
         campo_preguntado = problem_case_before[CAMPO_PREGUNTADO]
         llm_reply = _repregunta(user_prompt, chat_history)
