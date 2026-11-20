@@ -85,4 +85,34 @@ for agente in AGENTES:
         assert "Tableau" in historia or "Looker" in historia, f"la experiencia de {agente} solo menciona Power BI"
 print("OK 3: el rol y el objetivo de los 7 agentes no fijan marcas, y su experiencia cubre varias nubes y herramientas")
 
+# 4) Fallo 102: las etiquetas del flujo del roadmap y los chips de las tarjetas salen del inventario, no fijas de la
+#    plantilla («Azure Data Factory», «ADLS Gen2»…); la fase sin servicios lleva la plataforma
+from bs4 import BeautifulSoup
+
+INVENTARIO_AWS = [{"servicio": s, "capa": c, "fase": "mvp", "alternativa": ""} for s, c in [
+    ("Amazon Kinesis Data Streams", "ingesta"), ("AWS Database Migration Service (DMS)", "ingesta"),
+    ("AWS Glue Data Catalog", "ingesta"), ("Amazon S3 (capas Bronze, Silver y Gold)", "almacenamiento"),
+    ("AWS Glue", "procesamiento"), ("Amazon Athena", "analítica"), ("Amazon SageMaker AI", "analítica / IA"),
+    ("Power BI (Microsoft 365)", "visualización"), ("AWS KMS", "seguridad")]]
+EN_AWS = {**CASO_AWS, "plataforma_objetivo": {"value": "Amazon Web Services (AWS)"}}
+etiquetas = rb.etiquetas_del_flujo(INVENTARIO_AWS, EN_AWS)
+assert etiquetas == {"roadmap-sources": "Sistemas del cliente",
+                     "roadmap-ingestion": "Kinesis Data Streams · Database Migration Service",
+                     "roadmap-storage": "S3", "roadmap-etl": "Glue", "roadmap-modeling": "Athena",
+                     "roadmap-ml": "SageMaker AI", "roadmap-bi": "Power BI"}, etiquetas
+sin_bi = [f for f in INVENTARIO_AWS if f["capa"] != "visualización"]
+assert rb.etiquetas_del_flujo(sin_bi, EN_AWS)["roadmap-bi"] == "Amazon Web Services (AWS)"
+rb.inject_roadmap_into_html(*["Texto de la fase."] * 7, etiquetas=etiquetas)
+sopa = BeautifulSoup(copia.read_text(encoding="utf-8"), "html.parser")
+flujo = [s.get_text(strip=True) for s in sopa.select(".rdm-pipe-tech")]
+chips = [s.get_text(strip=True) for s in sopa.select("#rdm-stages-container .rdm-tech-chip")]
+assert flujo == list(etiquetas.values()) and chips == list(etiquetas.values()), (flujo, chips)
+assert not any(a in " ".join(flujo + chips) for a in SOLO_AZURE)
+subtitulo = sopa.select_one("#card-roadmap-ingestion .section-header-text > span").get_text()
+assert subtitulo == "Estrategia y pipelines con Kinesis Data Streams · Database Migration Service", subtitulo
+# La plantilla se rellena en su sitio: la ejecución de arriba, sin inventario ni plataforma, dejó los chips ocultos y
+# no borrados, así que esta los ha vuelto a poner
+assert not sopa.select("#rdm-stages-container .rdm-tech-chip[hidden]")
+print("OK 4: las etiquetas del flujo y los chips del roadmap salen del inventario, sin los de Azure de la plantilla")
+
 print("\nTodo bien: el fallo 6 está arreglado (en la parte que se puede comprobar sin el LLM real).")

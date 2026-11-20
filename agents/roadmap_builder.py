@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -8,7 +9,7 @@ from dotenv import load_dotenv
 import gateway
 import progreso
 from agents import inventario
-from utils import (_make_agent, con_nota_de_servicios, contexto_cliente, load_agents_config, load_problem_case,
+from utils import (PLATAFORMA_OBJETIVO, _make_agent, _normalize_text, con_nota_de_servicios, contexto_cliente, load_agents_config, load_problem_case,
                    parse_html, md_to_html, sin_importes, sin_emojis)
 
 load_dotenv(".env")
@@ -75,6 +76,77 @@ EXTENSION = (f"\nExtensión: {PALABRAS_POR_FASE} palabras como máximo. Ve a lo 
              "ni repetir lo que ya dice la propuesta." if PALABRAS_POR_FASE else "")
 
 
+# Fallo 102: las etiquetas del flujo del roadmap (el nodo de cada fase y el chip de su tarjeta) salían fijas de la
+# plantilla, con servicios de Azure («Azure Data Factory», «ADLS Gen2», «Azure ML»…) aunque la solución fuera en AWS.
+# Ahora salen del inventario de servicios, por la capa de cada uno; la fase sin servicios lleva la plataforma.
+_CAPAS_DE_FASE = [  # por orden: «analítica / IA» es de ML, no de modelado
+    ("roadmap-sources", ("fuente", "origen")),
+    ("roadmap-ingestion", ("ingesta", "ingestion")),
+    ("roadmap-storage", ("almacenamiento", "storage", "lago")),
+    ("roadmap-ml", ("ia", "ml", "ai", "mlops", "inteligencia artificial", "machine learning")),
+    ("roadmap-etl", ("procesamiento", "orquestacion", "transformacion", "etl", "calidad")),
+    ("roadmap-modeling", ("analitica", "modelado", "semantica", "consulta")),
+    ("roadmap-bi", ("visualizacion", "bi", "informes", "dashboards")),
+]
+_SIN_NUBE = re.compile(r"^(?:amazon|aws|azure|microsoft|google cloud|google|oci|oracle|ibm)\s+", re.IGNORECASE)
+
+
+def _fase_de_capa(capa: str) -> str | None:
+    palabras = set(re.findall(r"[a-z]+", _normalize_text(capa or "")))
+    for div_id, claves in _CAPAS_DE_FASE:
+        if any((c in palabras) if " " not in c else (c in _normalize_text(capa)) for c in claves):
+            return div_id
+    return None
+
+
+def etiquetas_del_flujo(filas: list[dict], problem_case: dict | None) -> dict[str, str]:
+    """Fallo 102: la etiqueta de cada fase del roadmap ({div_id: texto}): sus servicios del inventario, sin el nombre
+    de la nube ni los paréntesis, dos como mucho. La fase sin servicios lleva la plataforma objetivo (las fuentes, «los
+    sistemas del cliente»)."""
+    servicios: dict[str, list[str]] = {div_id: [] for div_id in _ROADMAP_IDS}
+    for f in filas or []:
+        div_id = _fase_de_capa(f.get("capa", ""))
+        nombre = _SIN_NUBE.sub("", re.sub(r"\s*\([^)]*\)", "", f.get("servicio", ""))).strip()
+        if div_id and nombre and nombre not in servicios[div_id]:
+            servicios[div_id].append(nombre)
+    plataforma = (problem_case or {}).get(PLATAFORMA_OBJETIVO)
+    nube = plataforma.get("value", "") if isinstance(plataforma, dict) else ""
+    return {div_id: " · ".join(nombres[:2]) if nombres
+            else ("Sistemas del cliente" if div_id == "roadmap-sources" else nube)
+            for div_id, nombres in servicios.items()}
+
+
+def _poner_etiquetas(soup, etiquetas: dict[str, str]) -> None:
+    """Fallo 102: cambia en el HTML la etiqueta del nodo del flujo, el chip de la tarjeta y, si nombra la herramienta
+    («Estrategia y pipelines con Azure Data Factory»), el subtítulo de la tarjeta. La plantilla se rellena en su sitio
+    y vale para la ejecución siguiente: un chip vacío se oculta (no se borra) y el subtítulo guarda su base."""
+    for div_id, texto in etiquetas.items():
+        nodo = soup.find("div", class_="rdm-pipe-node", onclick=re.compile(re.escape(f"'{div_id}'")))
+        tech = nodo.find("span", class_="rdm-pipe-tech") if nodo else None
+        if tech is not None:
+            tech.string = texto
+        tarjeta = soup.find("div", id=f"card-{div_id}")
+        if tarjeta is None:
+            continue
+        chip = tarjeta.find("span", class_="rdm-tech-chip")
+        subtitulo = tarjeta.select_one(".section-header-text > span")
+        if subtitulo is not None:
+            if not subtitulo.has_attr("data-base"):
+                viejo = chip.get_text(strip=True) if chip is not None else ""
+                actual = subtitulo.get_text()
+                subtitulo["data-base"] = (actual.replace(f" con {viejo}", "") if viejo and f" con {viejo}" in actual
+                                          else actual)
+                subtitulo["data-con"] = "1" if viejo and f" con {viejo}" in actual else ""
+            base = subtitulo["data-base"]
+            subtitulo.string = f"{base} con {texto}" if subtitulo.get("data-con") and texto else base
+        if chip is not None:
+            chip.string = texto
+            if texto:
+                chip.attrs.pop("hidden", None)
+            else:
+                chip["hidden"] = ""
+
+
 def inject_roadmap_into_html(
     data_sources_output: str,
     ingestion_output: str,
@@ -83,8 +155,10 @@ def inject_roadmap_into_html(
     modeling_output: str,
     ml_output: str,
     bi_output: str,
+    etiquetas: dict[str, str] | None = None,
 ) -> None:
-    """Inyecta los 7 outputs individuales del roadmap en sus respectivos divs en el HTML."""
+    """Inyecta los 7 outputs individuales del roadmap en sus respectivos divs en el HTML.
+    Fallo 102: y, con `etiquetas`, las del flujo y las de cada tarjeta (las de etiquetas_del_flujo)."""
     if not REPORT_PATH.exists():
         raise FileNotFoundError(
             f"El archivo HTML no existe en {REPORT_PATH}. "
@@ -105,6 +179,8 @@ def inject_roadmap_into_html(
         body = fragment.find("body") or fragment
         for child in list(body.children):
             target.append(child.__copy__())
+    if etiquetas:
+        _poner_etiquetas(soup, etiquetas)
 
     REPORT_PATH.write_text(str(soup), encoding="utf-8")
     print(f"[roadmap_builder] Roadmap inyectado en {REPORT_PATH}")
@@ -403,7 +479,7 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
                            for n, texto in enumerate(captured_outputs)]
 
     if len(captured_outputs) == 7:
-        inject_roadmap_into_html(*captured_outputs)
+        inject_roadmap_into_html(*captured_outputs, etiquetas=etiquetas_del_flujo(filas, problem_case))  # fallo 102
         print("[roadmap_builder] Roadmap inyectado en HTML exitosamente.\n")
     else:
         print(f"[roadmap_builder] WARN: Se esperaban 7 outputs pero se capturaron {len(captured_outputs)}. No se inyecta HTML.\n")
