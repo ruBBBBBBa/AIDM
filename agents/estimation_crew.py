@@ -54,8 +54,8 @@ def _patch_crewai_union_schema() -> None:
                          enrich_descriptions=enrich_descriptions, in_progress=in_progress)
 
         _su._json_schema_to_pydantic_type = _patched
-    except Exception:
-        pass
+    except Exception as exc:  # revisión: sin el parche, Groq rechaza los esquemas con uniones
+        logger.warning("No se pudo aplicar el parche de CrewAI para los esquemas con uniones: %s", exc)
 
 
 _patch_crewai_union_schema()
@@ -87,8 +87,8 @@ def _patch_crewai_force_required() -> None:
             return result
 
         _su.force_additional_properties_false = _patched
-    except Exception:
-        pass
+    except Exception as exc:  # revisión: sin el parche, Groq rechaza los esquemas con required vacío
+        logger.warning("No se pudo aplicar el parche de CrewAI para required vacío: %s", exc)
 
 
 _patch_crewai_force_required()

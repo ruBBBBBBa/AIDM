@@ -28,8 +28,9 @@ litellm.drop_params = True
 try:
     import crewai.llms.cache as _crewai_cache
     _crewai_cache.mark_cache_breakpoint = lambda msg: msg
-except Exception:
-    pass
+except Exception as _exc:  # revisión: si cambia CrewAI, que se sepa por qué Groq rechaza los mensajes
+    logging.getLogger("aidm").warning("No se pudo quitar el cache_breakpoint de CrewAI (%s): Groq puede rechazar los "
+                                      "mensajes", _exc)
 
 
 LIST_FIELDS = {"evidencias"}

@@ -9,6 +9,7 @@ que usa el cliente); el LLM solo la explica. Así la recomendación es la misma 
 """
 import csv
 import json
+import logging
 import re
 from pathlib import Path
 
@@ -24,6 +25,7 @@ CONFIG = Path("data_structures/hiperescalares.yaml")
 REPORT_PATH = Path("data_structures/solution_builder_report.html")
 TARIFAS = Path("bd/costes_perfil.csv") #Fallo 71: La misma tabla de tarifas que usan los costes
 SECCION = "content-platform"
+logger = logging.getLogger("aidm")
 CRITERIOS = ("continuidad", "ecosistema", "datos_ia", "cumplimiento", "talento")
 NOMBRES_CRITERIOS = {"continuidad": "Continuidad", "ecosistema": "Ecosistema", "datos_ia": "Datos e IA",
                      "cumplimiento": "Cumplimiento", "talento": "Talento"}
@@ -164,8 +166,11 @@ def _tarifa_migracion(e: dict) -> float:
             for fila in csv.DictReader(f, skipinitialspace=True):
                 if _normalize_text(fila.get("Perfil") or "") == _normalize_text(e.get("perfil_migracion", "")):
                     return float(fila[f"{e.get('nivel_migracion', 'Middle')} (€/h)"])
-    except (OSError, KeyError, ValueError):
-        pass
+    except (OSError, KeyError, ValueError) as exc:  # revisión: que se sepa que la migración va con la tarifa del yaml
+        logger.warning("[plataforma] No se pudo leer la tarifa de migración de %s (%s)", TARIFAS, exc)
+    logger.warning("[plataforma] %s %s no está en %s: la migración va a %s €/h (hiperescalares.yaml)",
+                   e.get("perfil_migracion", ""), e.get("nivel_migracion", "Middle"), TARIFAS,
+                   e.get("coste_hora_migracion_eur", 30))
     return float(e.get("coste_hora_migracion_eur", 30))
 
 
