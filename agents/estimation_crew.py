@@ -792,6 +792,26 @@ def _en_euros(c: ComponenteCoste, cambio: dict | None = None) -> ComponenteCoste
                        f"euros a {_cifra(tipo)} $/€ (BCE, {_fecha(cambio['fecha'])}).")})
 
 
+# Fallo 101: las filas que son una capacidad encendida todo el mes, con lo mínimo al mes de la más pequeña. El 17 nov,
+# el Eventhouse de Fabric salía a 150 €/h × 730 = 109.500 €/mes; una F2 todo el mes son 2 × 730 CU-hora
+_MINIMO_AL_MES = {"azure-fabric-capacidad-cu": (2 * 730, "una capacidad F2 encendida todo el mes")}
+
+
+def _sin_coste_propio(c: ComponenteCoste) -> bool:
+    """Fallo 101: el componente lleva una fila de la tabla a 0 € (Lake Formation: los permisos no se cobran)."""
+    fila = PRECIOS_CLOUD.get((c.tarifa or "").strip().lower())
+    return bool(fila) and not fila["precio_eur"]
+
+
+def _con_fila_sin_coste(c: ComponenteCoste, problem_case: dict | None) -> ComponenteCoste:
+    """Fallo 101: un componente a 0 € sin fila que es un servicio sin coste propio de la tabla (de la nube del cliente)
+    la lleva, para que el informe diga qué se paga en vez de «por revisar». El 19 nov, Lake Formation salía así."""
+    if c.tarifa or c.importe_eur:
+        return c
+    fila = next((f for f in _filas_precios(problem_case, c.componente) if not f["precio_eur"]), None)
+    return _con_precio_de_tabla(c.model_copy(update={"tarifa": fila["id"], "unidades": 1})) if fila else c
+
+
 def _con_precio_de_tabla(c: ComponenteCoste, avisar: bool = True) -> ComponenteCoste:
     """Fallo 53: si el componente trae una fila de la tabla, su precio es el de la tabla. El modelo da la cantidad de
     un mes en la unidad de la fila (144.000.000 eventos); aquí se quita lo gratuito y se pasa al paquete en que se
@@ -815,6 +835,14 @@ def _con_precio_de_tabla(c: ComponenteCoste, avisar: bool = True) -> ComponenteC
     referencia = (f"{c.referencia.rstrip('. ')}. {uso}. Precio de la tabla: {_cifra(fila['precio_eur'])} € por "
                   f"{fila['cobro'] or fila['unidad']} ({fila.get('fuente') or 'tabla de precios'}, "
                   f"{_fecha(fila.get('fecha', ''))}{dolares}).")
+    if not fila["precio_eur"]:  # fallo 101: una fila a 0 € es un servicio sin coste propio, y se dice qué se paga
+        referencia = (f"{c.referencia.rstrip('. ')}. Sin coste propio: {fila['concepto']} "
+                      f"({fila.get('fuente') or 'tabla de precios'}, {_fecha(fila.get('fecha', ''))}).")
+    minimo = _MINIMO_AL_MES.get(fila["id"])
+    if minimo and cantidad < minimo[0]:  # fallo 101: una capacidad está encendida todo el mes salvo que se pause
+        logger.warning("%s: %s %s al mes, menos que %s", c.componente, _cifra(cantidad), fila["unidad"], minimo[1])
+        referencia += (f" Ojo: {minimo[1]} son {_cifra(minimo[0])} {fila['unidad']} al mes; con menos, la capacidad "
+                       "tendría que estar en pausa el resto del tiempo.")
     nuevo = c.model_copy(update={
         "tarifa": fila["id"], "precio_unitario_eur": fila["precio_eur"],
         "unidades": max(cantidad - gratis, 0) / fila["por_cada"], "unidad": fila["cobro"] or fila["unidad"],
@@ -977,6 +1005,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     componentes = [_con_precio_de_tabla(c, avisar_tarifas) for c in report.componentes]
     cambio = _cambio()  # fallo 85: los precios en dólares, a euros con el tipo fijo del yaml
     componentes = [_en_euros(c, cambio) for c in componentes]
+    componentes = [_con_fila_sin_coste(c, problem_case) for c in componentes]  # fallo 101
     # Fallo 88: la fase de cada componente es la de su servicio en el inventario de la arquitectura
     sin_valorar = fuera_de_lista = []
     if inventario:
@@ -1148,8 +1177,8 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         return bool(c.tarifa) and (c._cantidad or 0) > 0
 
     # Fallo 54: un 0 € vale si cabe en lo gratuito de la tabla o si el cliente lo tiene de verdad (está en sus datos)
-    a_cero = [c for c in componentes if not c.importe_eur and not _en_gratuito(c)
-              and (c.tarifa or not _ya_lo_tiene(c, tecnologias))]
+    a_cero = [c for c in componentes if not c.importe_eur and not _en_gratuito(c) and not _sin_coste_propio(c)
+              and (c.tarifa or not _ya_lo_tiene(c, tecnologias))]  # fallo 101: lo sin coste propio no se avisa
     if a_cero:
         nombres = _lista([c.componente for c in a_cero])
         avisos.append(f"Ojo: {escape(nombres)} {'va' if len(a_cero) == 1 else 'van'} a 0 €, así que no suman nada al "
@@ -1266,7 +1295,8 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
             importe += " el primer mes (crece cada mes con lo que entra)"
         #Un componente a 0 € solo cuadra si el cliente ya lo tiene; lo demás se avisa
         if not c.importe_eur:
-            importe = ("0 € (cabe en el nivel gratuito)" if _en_gratuito(c)
+            importe = ("0 € (sin coste propio)" if _sin_coste_propio(c)  # fallo 101
+                       else "0 € (cabe en el nivel gratuito)" if _en_gratuito(c)
                        else "0 € (ya lo tiene el cliente)" if not c.tarifa and _ya_lo_tiene(c, tecnologias)
                        else '<span style="color:#b45309;">0 € (por revisar)</span>')
         elif any(c is x for x in fuera):  # fallo 59
@@ -1849,6 +1879,10 @@ def run_estimation_crew(
             "Lo que va en tiempo real (un endpoint de inferencia, un modelo de visión, un clúster de streaming) se paga "
             "todas las horas que está encendido: 730 al mes si va día y noche, o las de los turnos que diga el caso; "
             "no lo valores por unas pocas horas de uso. Un dato que llega del ERP cada noche no es tiempo real. "
+            # Fallo 101: el 17 nov, el Eventhouse de Fabric salió a 150 €/h × 730 = 109.500 €/mes
+            "Una capacidad (Microsoft Fabric F2, F4…) está encendida 730 horas al mes salvo que se pause: con la fila "
+            "de CU-hora, una F2 todo el mes son 2 × 730 = 1.460 CU-hora; sus cargas (almacén, Eventhouse, informes) "
+            "gastan esa capacidad y no van como componentes aparte. "
             "El almacenamiento que crece con lo que entra cada mes (el lago de datos) va con acumulativo true y, en "
             "unidades, lo que entra en un mes: el programa suma lo que se va acumulando. "
             "Si el precio público que conoces está en dólares, pon ese número y moneda USD, sin convertirlo: el "

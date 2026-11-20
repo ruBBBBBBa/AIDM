@@ -232,8 +232,6 @@ filas:
 
 # Lo que AIDM propone en AWS y todavía no tiene fila, con el motivo. Sale en el informe de cobertura.
 sin_fila:
-  - servicio: AWS Lake Formation
-    motivo: no se cobra aparte (se paga el almacenamiento y las consultas)
   - servicio: AWS Glue Data Quality
     motivo: se cobra como DPU-hora de Glue (la fila aws-glue-etl)
   - servicio: AWS Security Hub y AWS Config

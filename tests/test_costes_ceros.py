@@ -129,4 +129,40 @@ assert ">2.796 €</div>" in html
 assert "No sumes licencias de lo que el cliente ya tiene" in prompts[0] and "licencias adicionales" in prompts[0]
 print("OK 6: una licencia de lo que el cliente ya tiene no se suma, salvo que haga falta más")
 
+# 7) Fallo 101 (cont.): las filas que faltaban, de las fuentes oficiales. Lake Formation no tiene coste propio (los
+#    permisos no se cobran): sale «sin coste propio» y no «por revisar». Fabric se paga por CU-hora con la capacidad
+#    encendida todo el mes: una F2 son 2 × 730 CU-hora (el 17 nov, el Eventhouse salía a 109.500 €/mes). Document
+#    Intelligence se cobra por 1.000 páginas, con la cantidad en páginas
+precios = ec.PRECIOS_CLOUD
+assert precios["aws-lake-formation-permisos"]["precio_eur"] == 0
+assert "lake-formation/pricing" in precios["aws-lake-formation-permisos"]["fuente"]
+assert precios["azure-fabric-capacidad-cu"]["fuente"] == "Azure Retail Prices API (spaincentral)"
+assert all("westeurope; en spaincentral solo están los medidores Batch" in precios[i]["fuente"] for i in
+           ("azure-document-intelligence-read", "azure-document-intelligence-precompilado",
+            "azure-document-intelligence-personalizado"))
+assert all(precios[i]["fecha"] == "2026-11-20" for i in ("aws-lake-formation-permisos", "azure-fabric-capacidad-cu"))
+en_aws = {"plataforma_objetivo": {"value": "Amazon Web Services (AWS)"},
+          "stack_tecnologico_actual": {"description": "Stack", "value": "ERP antiguo"}}
+LAKE = componente("AWS Lake Formation - gobierno y catalogación de datos", 0, 0, "N/A", "mensual",
+                  "Lake Formation sin coste adicional (AWS)")
+html = _format_cost_report(informe(SYNAPSE, LAKE), problem_case=en_aws)
+assert "0 € (sin coste propio)" in html and "(por revisar)" not in html and "Ojo: AWS Lake Formation" not in html, html
+assert "Sin coste propio: Permisos sobre el catálogo" in html and "precio de la tabla" in html
+con_tarifa = {**LAKE, "tarifa": "aws-lake-formation-permisos", "unidades": 1}
+assert "0 € (sin coste propio)" in _format_cost_report(informe(SYNAPSE, con_tarifa), problem_case=en_aws)
+precio_cu = precios["azure-fabric-capacidad-cu"]["precio_eur"]
+F2 = componente("Microsoft Fabric F2", 0, 2 * 730, "CU-hora", "mensual", "Capacidad F2 encendida todo el mes")
+f2 = ec._con_precio_de_tabla(ComponenteCoste(**{**F2, "tarifa": "azure-fabric-capacidad-cu"}))
+assert abs(f2.importe_eur - 2 * precio_cu * 730) < 1e-6 and 240 < f2.importe_eur < 300, f2.importe_eur  # unos 249 €/mes
+assert "Ojo:" not in f2.referencia
+pocas = ec._con_precio_de_tabla(ComponenteCoste(**{**F2, "tarifa": "azure-fabric-capacidad-cu", "unidades": 40}))
+assert "Ojo: una capacidad F2 encendida todo el mes son 1.460 CU-hora al mes" in pocas.referencia, pocas.referencia
+paginas = ec._con_precio_de_tabla(ComponenteCoste(**componente(
+    "Azure AI Document Intelligence", 0, 5_000, "página", "mensual", "5.000 facturas al mes"),
+    tarifa="azure-document-intelligence-precompilado"))
+assert abs(paginas.importe_eur - 5 * 8.9771) < 1e-9  # 5.000 páginas son 5 paquetes de 1.000
+assert "1.460 CU-hora" in prompts[0] and "Eventhouse" in prompts[0]
+print("OK 7: Lake Formation sin coste propio, Fabric por CU-hora encendida todo el mes y Document Intelligence "
+      "por 1.000 páginas")
+
 print("\nTodo bien: el fallo 45 está arreglado (en la parte que se puede comprobar sin el LLM real).")
