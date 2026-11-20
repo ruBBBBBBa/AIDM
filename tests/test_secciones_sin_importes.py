@@ -342,4 +342,20 @@ _, sin_valorar, fuera = ec._cruzar_con_inventario(comps, inv)
 assert sin_valorar == [] and fuera == [], (sin_valorar, fuera)
 print("OK 14: el cruce del inventario con los costes reconoce el mismo servicio y no junta servicios distintos")
 
+# 15) Fallo 83: la columna «Alternativa descartada» del inventario no cuenta para el aviso. El 20 nov la arquitectura
+#     salía con seis servicios marcados que solo estaban en esa columna; si el texto o la columna Servicio lo nombran, sí
+bloque_alt = ("La PII se detecta con AWS Glue.\n\nINVENTARIO DE SERVICIOS\n"
+              "- AWS Glue | gobierno | MVP | Amazon Macie\n- Amazon SageMaker AI | IA | completo | Amazon Lookout for Vision")
+sbc.run_proposal_crew = lambda *a, **k: ProposalResult(architecture=bloque_alt, governance="G.", data_ai_strategy="D.",
+                                                       bi_visualization="B.")
+sbc.propose_solution("ESTRUCTURA", EN_AWS, [])
+assert not inyectado["architecture"].startswith("> **Ojo: esta sección nombra"), inyectado["architecture"][:200]
+assert "| AWS Glue | gobierno | MVP | Amazon Macie |" in inyectado["architecture"]  # la tabla sigue con su alternativa
+propone = "Visión con Amazon Lookout for Vision.\n\nINVENTARIO DE SERVICIOS\n- Amazon Macie | gobierno | MVP | AWS Glue"
+sbc.run_proposal_crew = lambda *a, **k: ProposalResult(architecture=propone, governance="G.", data_ai_strategy="D.",
+                                                       bi_visualization="B.")
+sbc.propose_solution("ESTRUCTURA", EN_AWS, [])
+assert "**Amazon Lookout for Vision**" in inyectado["architecture"] and "**Amazon Macie**" in inyectado["architecture"]
+print("OK 15: la columna «Alternativa descartada» del inventario no dispara el aviso de servicios a evitar")
+
 print("\nTodo bien: los fallos 44, 83, 88, 89, 90 y 111 están arreglados.")

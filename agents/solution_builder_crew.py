@@ -10,7 +10,7 @@ from agents.estimation_crew import run_estimation_crew
 from agents.proposal_crew import run_proposal_crew
 import re
 
-from utils import con_nota_de_servicios, md_to_html, nota_servicios, parse_html, revisar_servicios, sin_importes
+from utils import md_to_html, nota_servicios, parse_html, revisar_servicios, sin_importes
 
 load_dotenv(".env")
 
@@ -113,9 +113,17 @@ def propose_solution(
         for campo in ("architecture", "governance", "data_ai_strategy", "bi_visualization")
     })
     # Fallo 83: si una sección nombra un servicio que no está en la región o está retirado, lo dice el log y la sección
-    # lleva una nota visible al principio
+    # lleva una nota visible al principio. La columna «Alternativa descartada» del inventario no cuenta: nombra justo lo
+    # que no se usa (el 20 nov marcaba seis servicios que el texto no proponía)
+    tabla_inv = inventario.tabla(filas) if filas else ""
+    tabla_sin_alternativas = inventario.tabla([{**f, "alternativa": ""} for f in filas]) if filas else ""
+
+    def _revisable(campo: str, texto: str) -> str:
+        return texto.replace(tabla_inv, tabla_sin_alternativas) if campo == "architecture" and tabla_inv else texto
+
     proposal = proposal.model_copy(update={
-        campo: con_nota_de_servicios(getattr(proposal, campo), problem_case, campo)
+        campo: nota_servicios(revisar_servicios(_revisable(campo, getattr(proposal, campo)), problem_case, campo))
+        + getattr(proposal, campo)
         for campo in ("architecture", "governance", "data_ai_strategy", "bi_visualization")
     })
     hallados = revisar_servicios(re.sub(r"<[^>]+>", " ", estimation.cost_estimation or ""), problem_case, "costes")
