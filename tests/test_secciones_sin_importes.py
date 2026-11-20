@@ -377,4 +377,40 @@ assert nombres("Al estar retirado el ERP antiguo, la previsión va en Amazon For
 print("OK 16: «al estar retirado», «no estar disponible», «para suplir (…)», «en reemplazo de» y «reemplaza a» "
       "descartan; si el servicio es el que se propone, se sigue marcando")
 
+# 17) Fallo 105: con datos en los servidores del cliente, Data Factory necesita un self-hosted integration runtime; va en
+#     el prompt de arquitectura y costes y, si el inventario no lo trae, se añade (desde la fase de Data Factory)
+ERP_LOCAL = {"stack_tecnologico_actual": {"description": "", "value": "SAP Business One on-premises, Excel"}}
+azure_local, aws_local = {**EN_AZURE, **ERP_LOCAL}, {**EN_AWS, **ERP_LOCAL}
+hibrido = {**CASO, "plataforma_objetivo": {"value": "Microsoft Azure", "despliegue": "hibrido"}}
+assert utils.necesita_integration_runtime(azure_local) and utils.necesita_integration_runtime(hibrido)
+assert not utils.necesita_integration_runtime(EN_AZURE) and not utils.necesita_integration_runtime(aws_local)
+assert "self-hosted integration runtime" in utils.regla_integration_runtime(azure_local)
+assert utils.regla_integration_runtime(EN_AZURE) == ""
+con_adf = [{"servicio": "Azure Data Factory", "capa": "ingesta", "fase": "proyecto_completo", "alternativa": ""},
+           {"servicio": "Azure SQL Database", "capa": "almacenamiento", "fase": "mvp", "alternativa": ""}]
+filas_105, nota_105 = inventario.con_integration_runtime(con_adf, azure_local)
+assert filas_105[-1] == {"servicio": utils.INTEGRATION_RUNTIME, "capa": "ingesta", "fase": "proyecto_completo",
+                         "alternativa": ""} and "Ojo: falta el self-hosted integration runtime" in nota_105
+con_ir = con_adf + [{"servicio": "Self-hosted Integration Runtime (VM)", "capa": "ingesta", "fase": "mvp",
+                     "alternativa": ""}]
+assert inventario.con_integration_runtime(con_ir, azure_local) == (con_ir, "")  # ya lo trae: no se duplica
+assert inventario.con_integration_runtime(con_adf[1:], azure_local) == (con_adf[1:], "")  # sin Data Factory, nada
+assert inventario.con_integration_runtime(con_adf, EN_AZURE) == (con_adf, "")  # sin datos en sus servidores, nada
+bloque_105 = "Data Factory copia el ERP a Azure SQL.\n\nINVENTARIO DE SERVICIOS\n" \
+             "- Azure Data Factory | ingesta | MVP | —\n- Azure SQL Database | almacenamiento | MVP | —"
+sbc.run_proposal_crew = lambda *a, **k: ProposalResult(architecture=bloque_105, governance="G.", data_ai_strategy="D.",
+                                                       bi_visualization="B.")
+sbc.run_estimation_crew = lambda *a, **k: recibido.update(k) or EstimationResult(cost_estimation="<div>c</div>",
+                                                                                 team_profiles="P.")
+sbc.propose_solution("ESTRUCTURA", azure_local, [])
+assert "Ojo: falta el self-hosted integration runtime" in inyectado["architecture"]
+assert f"| {utils.INTEGRATION_RUNTIME} | ingesta | MVP | — |" in inyectado["architecture"]
+assert recibido["inventario"][-1]["servicio"] == utils.INTEGRATION_RUNTIME  # lo valoran los costes
+vistos_90.clear()
+Crew.kickoff = kickoff_que_mira
+pc.run_proposal_crew("ESTRUCTURA", azure_local, [], model_name="groq/openai/gpt-oss-20b")
+assert "INTEGRATION RUNTIME DE DATA FACTORY" in vistos_90[0]
+print("OK 17: con datos en sus servidores y Data Factory, el integration runtime entra en el prompt, el inventario y "
+      "los costes")
+
 print("\nTodo bien: los fallos 44, 83, 88, 89, 90 y 111 están arreglados.")

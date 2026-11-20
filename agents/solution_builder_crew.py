@@ -97,8 +97,10 @@ def propose_solution(
         arquitectura, filas = inventario.leer(proposal.architecture)
         inventario.comprobar(filas, problem_case)
         filas, nota_puerta = inventario.con_puerta_de_enlace(filas, problem_case)  # fallo 90
+        filas, nota_runtime = inventario.con_integration_runtime(filas, problem_case)  # fallo 105
         if filas:
-            nota = inventario.nota_sin_decidir(inventario.sin_decidir(arquitectura, filas)) + nota_puerta  # fallo 89
+            nota = (inventario.nota_sin_decidir(inventario.sin_decidir(arquitectura, filas))  # fallo 89
+                    + nota_puerta + nota_runtime)
             proposal = proposal.model_copy(update={
                 "architecture": f"{nota}{arquitectura}\n\n{inventario.tabla(filas)}"})
         # Fallo 46: la tarea de costes solo necesita los componentes y sus volúmenes, que están en la arquitectura

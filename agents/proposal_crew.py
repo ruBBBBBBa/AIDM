@@ -3,7 +3,8 @@ from pydantic import BaseModel
 import gateway
 
 from agents import inventario
-from utils import _make_agent, _recent_chat_transcript, load_agents_config, contexto_cliente, regla_puerta_de_enlace
+from utils import (_make_agent, _recent_chat_transcript, load_agents_config, contexto_cliente, regla_integration_runtime,
+                   regla_puerta_de_enlace)
 
 
 # Fallo 85: el 12 nov, el informe llamaba «tiempo real» a los cuadros de ventas, que se cargan del ERP cada noche, y
@@ -62,6 +63,7 @@ def run_proposal_crew(
             "Ajusta la propuesta al tamaño del cliente y al alcance que pide: no añadas componentes que el caso no necesita y redactala acordemente\n"
             f"{REGLA_TIEMPO_REAL}\n"  # fallo 85
             f"{regla_puerta_de_enlace(problem_case)}"  # fallo 90: Power BI con los datos fuera de Azure
+            f"{regla_integration_runtime(problem_case)}"  # fallo 105: Data Factory con datos en sus servidores
             f"{inventario.REGLA_ELEGIR}\n"  # fallo 89: una opción elegida por papel, sin «X o Y»
             f"{inventario.INSTRUCCION}"  # fallo 88: la lista cerrada de servicios, que leen costes, equipo y roadmap
         ),

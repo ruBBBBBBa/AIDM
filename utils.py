@@ -458,6 +458,51 @@ def regla_puerta_de_enlace(problem_case: dict | None) -> str:
             "gratuito.\n")
 
 
+# --- Fallo 105: Data Factory con los datos en los servidores del cliente necesita un self-hosted integration runtime ---
+# Azure Data Factory (y los pipelines de Synapse o Fabric) solo llegan a los datos de una red privada (el ERP en sus
+# servidores) a través de un self-hosted integration runtime: un programa en una máquina Windows de esa red, o en una VM
+# con acceso a ella (learn.microsoft.com/azure/data-factory/create-self-hosted-integration-runtime). El 17 nov la
+# propuesta leía el ERP de sus servidores con Data Factory sin él, ni en el inventario ni en los costes.
+INTEGRATION_RUNTIME = ("Self-hosted integration runtime de Data Factory, en una máquina Windows con acceso a los "
+                       "servidores del cliente")
+_EN_SUS_SERVIDORES = re.compile(r"\bon[- ]?prem\w*|\ben local\b|\bservidor(?:es)? propios?\b|\bsus servidores\b"
+                                r"|\bservidor(?:es)? (?:local|locales|del cliente)\b|\bcpd propio\b")
+
+
+def datos_en_sus_servidores(problem_case: dict | None) -> bool:
+    """Fallo 105: la plataforma va en sus servidores o es híbrida, o el caso dice que algo está en local (on-premises)."""
+    plataforma = (problem_case or {}).get(PLATAFORMA_OBJETIVO)
+    if isinstance(plataforma, dict) and plataforma.get("despliegue") in ("on_premises", "hibrido"):
+        return True
+    texto = " ".join(str(d.get("value") or "") for c, d in (problem_case or {}).items()
+                     if c in ("stack_tecnologico_actual", "modelo_de_despliegue", "volumen_de_datos")
+                     and isinstance(d, dict))
+    return bool(_EN_SUS_SERVIDORES.search(_normalize_text(texto)))
+
+
+def necesita_integration_runtime(problem_case: dict | None) -> bool:
+    """Fallo 105: la nube es Azure y hay datos en los servidores del cliente."""
+    if not datos_en_sus_servidores(problem_case):
+        return False
+    try:
+        config = yaml.safe_load(HIPERESCALARES_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    return _clave_de_nube(problem_case, config) == "azure"
+
+
+def regla_integration_runtime(problem_case: dict | None) -> str:
+    """Fallo 105: la regla para los prompts de arquitectura y costes, o "" si no hace falta."""
+    if not necesita_integration_runtime(problem_case):
+        return ""
+    return ("INTEGRATION RUNTIME DE DATA FACTORY: hay datos en los servidores del cliente. Si Azure Data Factory (o los "
+            "pipelines de Synapse o Fabric) los lee, necesita un self-hosted integration runtime: un programa en una "
+            "máquina Windows de su red, o en una VM con acceso a ella por la VPN. Inclúyelo en la arquitectura, en el "
+            "inventario de servicios (capa ingesta, desde la fase en que se lea de sus servidores) y en los costes: la "
+            "máquina se paga si es nueva (una VM, todas las horas que está encendida), el programa es gratuito y las "
+            "actividades que corren en él se cobran a la tarifa de self-hosted de Data Factory.\n")
+
+
 # Fallo 44: los importes salen solo en la sección de costes, donde se suman en Python. Arquitectura, BI y el
 # roadmap los ponían igualmente («~500 €/mes», «6.000 €/año») aunque REGLA_PRESUPUESTO se lo prohíbe
 _CANTIDAD = r"\d(?:[\d.,]*\d)?(?:\s*(?:mil(?:lones)?(?:\s+de)?|[km])(?![a-záéíóúñ]))?"

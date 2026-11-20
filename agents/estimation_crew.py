@@ -24,7 +24,8 @@ import gateway
 
 from utils import (_CANTIDAD_RE, _IMPORTE as _IMPORTE_CLIENTE, _make_agent, _normalize_text, _valor_cantidad, build_llm,
                    contexto_cliente, es_valor_de_relleno, load_agents_config, md_to_html,
-                   necesita_puerta_de_enlace, PUERTA_DE_ENLACE, regla_puerta_de_enlace)
+                   necesita_puerta_de_enlace, PUERTA_DE_ENLACE, regla_integration_runtime,
+                   regla_puerta_de_enlace)
 
 logger = logging.getLogger("aidm")
 
@@ -1941,6 +1942,7 @@ def run_estimation_crew(
             f"{plantilla_costes}\n\n"
             f"{datos_cliente}"
             f"{regla_puerta_de_enlace(problem_case)}"  # fallo 90
+            f"{regla_integration_runtime(problem_case)}"  # fallo 105
             f"{lista_servicios}"  # fallo 88
             "Arquitectura propuesta (componentes y volúmenes):\n"
             f"{componentes or proposal_context}"

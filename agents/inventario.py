@@ -10,7 +10,8 @@ antes y el log lo avisa.
 import logging
 import re
 
-from utils import PUERTA_DE_ENLACE, _normalize_text, necesita_puerta_de_enlace, revisar_servicios
+from utils import (INTEGRATION_RUNTIME, PUERTA_DE_ENLACE, _normalize_text, necesita_integration_runtime,
+                   necesita_puerta_de_enlace, revisar_servicios)
 
 logger = logging.getLogger("aidm")
 
@@ -167,6 +168,22 @@ def con_puerta_de_enlace(filas: list[dict], problem_case: dict | None) -> tuple[
     return filas + [fila], ("> **Ojo: falta la puerta de enlace de Power BI.** Con los datos fuera de Azure, Power BI "
                             "Service solo llega a ellos a través de una puerta de enlace de datos local en una máquina "
                             "Windows: se ha añadido al inventario y a los costes.\n\n")
+
+
+def con_integration_runtime(filas: list[dict], problem_case: dict | None) -> tuple[list[dict], str]:
+    """Fallo 105: si el inventario trae Data Factory, hay datos en los servidores del cliente y falta el self-hosted
+    integration runtime, se añade (desde la fase de Data Factory), y la nota para la arquitectura lo dice."""
+    if not filas or not necesita_integration_runtime(problem_case):
+        return filas, ""
+    factory = next((f for f in filas if "data factory" in _normalize_text(f["servicio"])), None)
+    if factory is None or any(re.search(r"integration runtime|\bshir\b", _normalize_text(f["servicio"])) for f in filas):
+        return filas, ""
+    logger.warning("[inventario] Data Factory con datos en los servidores del cliente y sin self-hosted integration "
+                   "runtime en el inventario: se añade")
+    fila = {"servicio": INTEGRATION_RUNTIME, "capa": "ingesta", "fase": factory["fase"], "alternativa": ""}
+    return filas + [fila], ("> **Ojo: falta el self-hosted integration runtime de Data Factory.** Con datos en los "
+                            "servidores del cliente, Data Factory solo llega a ellos a través de él, en una máquina "
+                            "Windows con acceso a su red: se ha añadido al inventario y a los costes.\n\n")
 
 
 def comprobar(filas: list[dict], problem_case: dict | None) -> list[dict]:
