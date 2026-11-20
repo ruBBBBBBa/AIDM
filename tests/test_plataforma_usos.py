@@ -108,4 +108,17 @@ plataforma.senales(caso(stack_tecnologico_actual="SAP, Excel, SharePoint, Teams,
 assert [len(p) for _, p in llamadas] == [4, 3], [len(p) for _, p in llamadas]
 print("OK 7: 7 herramientas en un campo con «nada de»: dos llamadas, de 4 y 3 preguntas")
 
+# 8) Fallo 104: si un campo niega una herramienta y otro la nombra sin negarla, cuenta, y no sale en «No cuenta». El 19
+#    nov, Power BI salía a la vez en «Lo que ha pesado» y en «No cuenta, aunque el cliente lo nombra»
+llamadas = simular({"Power BI": ("no_la_usa", 0.92)})
+dos_campos = caso(stack_tecnologico_actual="Microsoft 365 con Power BI y SAP Business One",
+                  tamano_equipo_tecnico="Dos técnicos de IT; no usan Power BI más allá de algún informe suelto")
+s = plataforma.senales(dos_campos, CONFIG)
+assert "power bi" in s["ecosistemas"]["microsoft"] and "Power BI" not in s["no_cuentan"], s
+# Si todos los campos que la nombran la niegan, sigue en «No cuenta», como antes
+llamadas = simular({"Power BI": ("no_la_usa", 0.92)})
+s = plataforma.senales(caso(tamano_equipo_tecnico="Dos técnicos; no usan Power BI"), CONFIG)
+assert s["no_cuentan"] == {"Power BI": "no_la_usa"} and "power bi" not in s["ecosistemas"].get("microsoft", []), s
+print("OK 8: lo que un campo niega y otro nombra sin negar cuenta, y no sale también en «No cuenta»")
+
 print("\nTodo bien: el fallo 69 está arreglado.")

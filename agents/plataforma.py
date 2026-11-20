@@ -79,6 +79,7 @@ def _sin_lo_que_no_usa(problem_case: dict, config: dict) -> tuple[str, dict, lis
     palabras = [p for e in config["ecosistemas"].values() for p in e.get("palabras", [])]
     claves = {p: prov for prov, datos in config["proveedores"].items() for p in datos.get("claves", [])}
     partes, quitadas, dejadas = [], {}, []
+    palabra_de = {}  # fallo 104: la palabra con la que se busca cada nombre quitado
     for campo, original in _textos(problem_case).items():
         texto = _normalize_text(original)
         nombradas = [p for p in dict.fromkeys(palabras + list(claves)) if re.search(_palabra(p), texto)]
@@ -90,10 +91,15 @@ def _sin_lo_que_no_usa(problem_case: dict, config: dict) -> tuple[str, dict, lis
                 if opcion in NO_CUENTA and confianza >= decisiones.CONFIANZA_MINIMA:
                     texto = re.sub(_palabra(p), " ", texto)
                     quitadas[nombre] = opcion
+                    palabra_de[nombre] = p
                     if opcion == "la_deja" and p in claves and claves[p] not in dejadas:
                         dejadas.append(claves[p])
         partes.append(texto)
-    return " | ".join(partes), quitadas, dejadas
+    usadas = " | ".join(partes)
+    # Fallo 104: lo que otro campo nombra sin negarlo sigue contando, así que no va en «No cuenta». El 19 nov, Power BI
+    # salía a la vez en «Lo que ha pesado» (stack_tecnologico_actual) y en «No cuenta» (otro campo decía que no lo usan)
+    quitadas = {n: o for n, o in quitadas.items() if not re.search(_palabra(palabra_de[n]), usadas)}
+    return usadas, quitadas, dejadas
 
 
 
