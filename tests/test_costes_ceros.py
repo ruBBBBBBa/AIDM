@@ -165,4 +165,28 @@ assert "1.460 CU-hora" in prompts[0] and "Eventhouse" in prompts[0]
 print("OK 7: Lake Formation sin coste propio, Fabric por CU-hora encendida todo el mes y Document Intelligence "
       "por 1.000 páginas")
 
+# 8) Fallo 90 (cont.): con Power BI y los datos en AWS, el programa de la puerta de enlace va «sin coste propio» (no «va
+#    a 0 €») y la VM Windows donde se instala lleva la fila de EC2 Windows aunque la arquitectura no diga «VM Windows».
+#    El 20 nov salieron «Microsoft Power BI Gateway va a 0 €» y «Amazon EC2» con el precio del modelo
+aws_pbi = {**en_aws, "herramienta_de_visualizacion": {"description": "BI", "value": "Power BI (Microsoft 365)"}}
+PROGRAMA = componente("Microsoft Power BI Gateway", 0, 1, "instalación", "mensual",
+                      "Software gratuito de Microsoft instalado en la instancia EC2")
+VM = componente("Amazon EC2", 0.045, 730, "hora", "mensual", "Instancia con Windows Server para Power BI Gateway 24/7")
+html = _format_cost_report(informe(SYNAPSE, PROGRAMA, VM), problem_case=aws_pbi)
+assert "Ojo: Microsoft Power BI Gateway" not in html and html.count("0 € (sin coste propio)") == 1, html
+assert "El programa de la puerta de enlace (on-premises data gateway): sin coste propio" in html
+vm_eur = ec.PRECIOS_CLOUD["aws-ec2-windows-t3-medium"]["precio_eur"]
+assert f"{vm_eur * 730:.2f}".replace(".", ",")[:5] in html and "EUS2-BoxUsage:t3.medium" in html, html
+# Una VM a 0 € no toma la fila sin coste del programa; sin Power BI o en Azure, la VM queda como la dio el modelo
+vm_a_cero = componente("Power BI Gateway en VM Windows (EC2)", 0, 1, "mes", "mensual", "Gratis")
+assert "Ojo: Power BI Gateway en VM Windows (EC2) va a 0 €" in _format_cost_report(informe(SYNAPSE, vm_a_cero),
+                                                                                   problem_case=aws_pbi)
+assert "EUS2-BoxUsage" not in _format_cost_report(informe(SYNAPSE, VM), problem_case=en_aws)
+# Y las dos filas van al prompt de costes aunque el texto no las nombre así
+prompts.clear()
+ec.run_estimation_crew("Power BI lee de Athena a través de una instancia EC2.", "groq/openai/gpt-oss-20b",
+                       problem_case=aws_pbi)
+assert "aws-ec2-windows-t3-medium" in prompts[0] and "licencia-power-bi-gateway" in prompts[0]
+print("OK 8: el programa de la puerta de enlace va sin coste propio y su VM Windows lleva la fila de EC2 Windows")
+
 print("\nTodo bien: el fallo 45 está arreglado (en la parte que se puede comprobar sin el LLM real).")

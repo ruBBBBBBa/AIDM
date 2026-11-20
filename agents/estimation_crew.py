@@ -24,7 +24,7 @@ import gateway
 
 from utils import (_CANTIDAD_RE, _IMPORTE as _IMPORTE_CLIENTE, _make_agent, _normalize_text, _valor_cantidad, build_llm,
                    contexto_cliente, es_valor_de_relleno, load_agents_config, md_to_html,
-                   regla_puerta_de_enlace)
+                   necesita_puerta_de_enlace, PUERTA_DE_ENLACE, regla_puerta_de_enlace)
 
 logger = logging.getLogger("aidm")
 
@@ -808,8 +808,33 @@ def _con_fila_sin_coste(c: ComponenteCoste, problem_case: dict | None) -> Compon
     la lleva, para que el informe diga qué se paga en vez de «por revisar». El 19 nov, Lake Formation salía así."""
     if c.tarifa or c.importe_eur:
         return c
-    fila = next((f for f in _filas_precios(problem_case, c.componente) if not f["precio_eur"]), None)
+    con_maquina = _MAQUINA.search(_normalize_text(c.componente))  # fallo 90: la VM de la puerta de enlace sí se paga
+    fila = next((f for f in _filas_precios(problem_case, c.componente) if not f["precio_eur"]
+                 and not (f["id"] == _FILA_PROGRAMA_PUERTA and con_maquina)), None)
     return _con_precio_de_tabla(c.model_copy(update={"tarifa": fila["id"], "unidades": 1})) if fila else c
+
+
+# Fallo 90: con Power BI y los datos en AWS, el programa de la puerta de enlace va «sin coste propio» (como Lake
+# Formation) y la VM Windows donde se instala lleva la fila de EC2 Windows. El 20 nov salieron «Microsoft Power BI
+# Gateway va a 0 €» y «Amazon EC2» con el precio del modelo: la arquitectura no decía «VM Windows» y la fila no llegó
+_FILA_PROGRAMA_PUERTA = "licencia-power-bi-gateway"
+_FILA_VM_PUERTA = "aws-ec2-windows-t3-medium"
+_MAQUINA = re.compile(r"\b(?:ec2|vm|maquina virtual|instancia|virtual machine)\b")
+
+
+def _con_fila_de_vm_windows(c: ComponenteCoste, problem_case: dict | None) -> ComponenteCoste:
+    """Fallo 90: la máquina de la puerta de enlace de Power BI sin fila (EC2, VM… con Windows o la puerta de enlace)
+    lleva la de EC2 Windows, si la nube del cliente es AWS y el uso va en horas."""
+    fila = PRECIOS_CLOUD.get(_FILA_VM_PUERTA)
+    if c.tarifa or not fila or not necesita_puerta_de_enlace(problem_case):
+        return c
+    texto = _normalize_text(f"{c.componente} {c.referencia}")
+    en_horas = _normalize_text(c.unidad).split()[:1] in (["hora"], ["horas"], ["hour"], ["hours"], ["hrs"])
+    if (not en_horas or not _MAQUINA.search(texto) or not re.search(r"\b(?:windows|gateway|puerta de enlace)\b", texto)
+            or fila not in _filas_precios(problem_case, PUERTA_DE_ENLACE)):  # solo con AWS
+        return c
+    logger.warning("%s: es la VM de la puerta de enlace de Power BI; se usa la fila %s", c.componente, fila["id"])
+    return _con_precio_de_tabla(c.model_copy(update={"tarifa": fila["id"]}))
 
 
 def _con_precio_de_tabla(c: ComponenteCoste, avisar: bool = True) -> ComponenteCoste:
@@ -1003,6 +1028,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     # Fallo 53: los componentes que están en la tabla de precios llevan su precio; el resto, el del modelo
     # Fallo 87: sin filas de la nube del cliente en la tabla, sin avisos de «Tarifa desconocida»
     componentes = [_con_precio_de_tabla(c, avisar_tarifas) for c in report.componentes]
+    componentes = [_con_fila_de_vm_windows(c, problem_case) for c in componentes]  # fallo 90
     cambio = _cambio()  # fallo 85: los precios en dólares, a euros con el tipo fijo del yaml
     componentes = [_en_euros(c, cambio) for c in componentes]
     componentes = [_con_fila_sin_coste(c, problem_case) for c in componentes]  # fallo 101
@@ -1824,10 +1850,13 @@ def run_estimation_crew(
     )
 
     # Fallo 53: la tabla de precios de la empresa, con las filas de la nube del cliente
-    tabla_precios = _tabla_precios(problem_case, componentes or proposal_context)
+    # Fallo 90: con puerta de enlace de Power BI, sus filas (VM Windows y programa) van aunque el texto no las nombre así
+    texto_precios = (componentes or proposal_context) + (
+        f"\n{PUERTA_DE_ENLACE}; power bi gateway" if necesita_puerta_de_enlace(problem_case) else "")
+    tabla_precios = _tabla_precios(problem_case, texto_precios)
     # Fallo 87: si la nube del cliente no tiene filas (el 12 nov, AWS), no se le piden tarifas de sus servicios y no se
     # avisa de las desconocidas; si tampoco hay licencias que ofrecer, el JSON va sin el campo tarifa
-    filas_nube = [f for f in _filas_precios(problem_case, componentes or proposal_context) if not _es_licencia(f)]
+    filas_nube = [f for f in _filas_precios(problem_case, texto_precios) if not _es_licencia(f)]
     plantilla_costes = _plantilla_costes(con_tarifa=bool(tabla_precios))
     if tabla_precios and not filas_nube:
         pricing_note += ("\nLa tabla de precios solo tiene las licencias de abajo: pon tarifa solo en ellas. Los "
