@@ -13,6 +13,10 @@
 # - por_cada: cuántas unidades de la API hay en el paquete en que se cobra («millón de mensajes» = 1000000). El precio de
 #   la fila es el de la API por por_cada.
 # - gratis_al_mes: lo gratuito al mes que no viene en la API (el nivel gratuito permanente), en la unidad de la fila.
+# - formato (fallo 90): csv para las ofertas cuyo archivo de la región no cabe en memoria en JSON (EC2); se lee línea a
+#   línea.
+# - filtros (fallo 90): atributos que tiene que tener el producto, además del usagetype (en EC2, el sistema operativo,
+#   el tipo de término…). Si con ellos queda más de un precio, la fila no se actualiza y el informe lo dice.
 # AWS da los precios en dólares: el CSV guarda el precio y la moneda de origen, y estimation_crew los pasa a euros al
 # leerlos con el tipo fijo de data_structures/costes.yaml (fallo 85).
 region: eu-south-2
@@ -106,6 +110,8 @@ filas:
     concepto: Datos que entran (Direct PUT, primeros 500 TB al mes)
     oferta: AmazonKinesisFirehose
     usagetype: EUS2-BilledBytes
+    filtros:
+      operation: PutRecord   # PutRecordBatch es otra SKU, al mismo precio
     desde: 0
     unidad: GB
     por_cada: 1
@@ -126,6 +132,8 @@ filas:
     concepto: Eventos propios publicados en el bus
     oferta: AWSEvents
     usagetype: EUS2-Event-64K-Chunks
+    filtros:
+      operation: PutEvents   # los eventos de socios son otra SKU
     desde: 0
     unidad: evento
     por_cada: 1000000
@@ -201,11 +209,29 @@ filas:
     unidad: hora
     por_cada: 1
     cobro: hora
+  # Fallo 90: la VM Windows de la puerta de enlace de Power BI. El archivo de EC2 de la región pesa unos 265 MB: se lee
+  # el CSV línea a línea (formato: csv). El mismo usagetype es Linux, Windows, Windows con SQL Server, bajo demanda o
+  # reservado: los filtros tienen que dejar una sola fila, y si dejan más, la fila no se actualiza.
+  - id: aws-ec2-windows-t3-medium
+    servicio: Amazon EC2 Windows (t3.medium)
+    buscar: [ec2 windows, windows ec2, vm windows, maquina virtual windows, instancia windows]
+    concepto: Instancia EC2 t3.medium con Windows Server (licencia incluida), bajo demanda y compartida
+    oferta: AmazonEC2
+    formato: csv
+    usagetype: EUS2-BoxUsage:t3.medium
+    filtros:
+      operation: RunInstances:0002     # Windows, licencia incluida
+      tenancy: Shared
+      termType: OnDemand               # sin las reservas de 1 y 3 años
+      capacityStatus: Used             # sin AllocatedCapacityReservation ni UnusedCapacityReservation
+      preInstalledSw: NA               # sin las variantes con SQL Server
+    desde: 0
+    unidad: hora
+    por_cada: 1
+    cobro: hora
 
 # Lo que AIDM propone en AWS y todavía no tiene fila, con el motivo. Sale en el informe de cobertura.
 sin_fila:
-  - servicio: Amazon EC2 (la VM Windows de la puerta de enlace de Power BI, fallo 90)
-    motivo: el archivo de precios de EC2 de la región es enorme; por ahora, precio del modelo
   - servicio: AWS Lake Formation
     motivo: no se cobra aparte (se paga el almacenamiento y las consultas)
   - servicio: AWS Glue Data Quality

@@ -287,10 +287,73 @@ finally:
     ec.CSV_PRECIOS = ec_csv
 tipo = ec._cambio()["usd_por_eur"]
 assert abs(leidas["aws-iot"]["precio_eur"] - 1 / tipo) < 1e-9 and leidas["power-bi-pro"]["precio_eur"] == 12.10
-# Y en la tabla real del repo, las 18 filas de AWS
-filas_aws = [f for f in ec.PRECIOS_CLOUD.values() if f["proveedor"] == "AWS"]
-assert len(filas_aws) == 18 and abs(ec.PRECIOS_CLOUD["aws-athena"]["precio_eur"] - 5.65 / tipo) < 1e-9
+# Y en la tabla real del repo, las filas de AWS (19 desde el fallo 90, con la de EC2 Windows)
+filas_aws = [f for f in ec.PRECIOS_CLOUD.values() if f["proveedor"] == "AWS" and f["moneda"] == "USD"]
+assert len(filas_aws) == 19 and abs(ec.PRECIOS_CLOUD["aws-athena"]["precio_eur"] - 5.65 / tipo) < 1e-9
 assert "aws-athena" in ec._tabla_precios(caso(cloud_provider="AWS"), "Consultas con Amazon Athena sobre S3")
 print("OK 12: los precios de AWS salen de la Price List Bulk API, en dólares, y se pasan a euros al leerlos")
+
+# 13) Fallo 90: la VM Windows de la puerta de enlace sale del CSV de EC2 (265 MB en JSON), leído línea a línea y
+#     saltando los metadatos de antes de la cabecera. El mismo usagetype es Linux, Windows, Windows con SQL Server,
+#     bajo demanda o reservado: los filtros tienen que dejar una sola fila, y si dejan más, la fila no se actualiza
+CSV_EC2 = (
+    '"FormatVersion","v1.0"\n"Disclaimer","Informativo"\n"Publication Date","2026-11-20T03:48:50Z"\n'
+    '"Version","20261120034850"\n"OfferCode","AmazonEC2"\n'
+    '"SKU","OfferTermCode","RateCode","TermType","PriceDescription","EffectiveDate","StartingRange","EndingRange",'
+    '"Unit","PricePerUnit","Currency","usageType","operation","Tenancy","CapacityStatus","Pre Installed S/W",'
+    '"Operating System"\n')
+filas_ec2 = [  # (TermType, precio, operación, capacidad, software)
+    ("OnDemand", "0.0640000000", "RunInstances:0002", "Used", "NA"),  # la buena
+    ("Reserved", "0.0410000000", "RunInstances:0002", "Used", "NA"),
+    ("OnDemand", "0.0416000000", "RunInstances", "Used", "NA"),  # Linux
+    ("OnDemand", "0.0640000000", "RunInstances:0002", "UnusedCapacityReservation", "NA"),
+    ("OnDemand", "0.5440000000", "RunInstances:0006", "Used", "SQL Std"),
+    ("OnDemand", "0.1280000000", "RunInstances:0002", "Used", "SQL Web")]
+for n, (termino, precio, operacion, capacidad, software) in enumerate(filas_ec2):
+    CSV_EC2 += (f'"SKU{n}","T","R","{termino}","x","2026-11-01","0","Inf","Hrs","{precio}","USD",'
+                f'"EUS2-BoxUsage:t3.medium","{operacion}","Shared","{capacidad}","{software}","Windows"\n')
+CSV_EC2 += '"SKU9","T","R","OnDemand","x","2026-11-01","0","Inf","Hrs","0.0832","USD","EUS2-BoxUsage:t3.large",' \
+           '"RunInstances:0002","Shared","Used","NA","Windows"\n'
+
+
+def abrir_simulado(url, timeout=None):
+    assert url.endswith("/eu-south-2/index.csv"), url
+    return io.BytesIO(CSV_EC2.encode("utf-8"))
+
+
+datos_ec2 = ap.leer_csv_aws("https://x/eu-south-2/index.csv", {"EUS2-BoxUsage:t3.medium"}, abrir=abrir_simulado)
+assert len(datos_ec2["products"]) == 6  # solo las del usagetype pedido; t3.large no
+FILTROS = {"operation": "RunInstances:0002", "tenancy": "Shared", "termType": "OnDemand", "capacityStatus": "Used",
+           "preInstalledSw": "NA"}
+assert ap.precio_aws(datos_ec2, "EUS2-BoxUsage:t3.medium", 0, FILTROS) == (0.064, "Hrs")
+try:  # sin el filtro de software, también la de SQL Web: no se elige ninguna
+    ap.precio_aws(datos_ec2, "EUS2-BoxUsage:t3.medium", 0, {k: v for k, v in FILTROS.items() if k != "preInstalledSw"})
+    raise AssertionError("con dos filas tenía que parar")
+except ap.VariasFilas as error:
+    assert "2 precios" in str(error)
+fila_ec2 = {"id": "aws-ec2-win", "servicio": "EC2 Windows", "buscar": ["ec2 windows"], "concepto": "c",
+            "oferta": "AmazonEC2", "formato": "csv", "usagetype": "EUS2-BoxUsage:t3.medium", "filtros": FILTROS,
+            "unidad": "hora", "por_cada": 1, "cobro": "hora"}
+pedidas.clear()
+leidos = []
+filas_prueba = []
+informe = ap.actualizar_aws(filas_prueba, {"region": "eu-south-2", "filas": [fila_ec2]},
+                            pedir=lambda url: pedidas.append(url) or {"regions": {"eu-south-2": {
+                                "currentVersionUrl": "/offers/v1.0/aws/AmazonEC2/1/eu-south-2/index.json"}}},
+                            hoy="2026-11-20", leer_csv=lambda url, tipos: leidos.append((url, tipos)) or datos_ec2)
+assert informe["nueva"] == ["aws-ec2-win: 0.064 $ por hora"] and filas_prueba[0]["precio_origen"] == "0.064"
+assert leidos == [(ap.API_AWS + "/offers/v1.0/aws/AmazonEC2/1/eu-south-2/index.csv", {"EUS2-BoxUsage:t3.medium"})]
+assert not any(u.endswith("eu-south-2/index.json") for u in pedidas)  # el JSON de EC2 no se baja
+sin_filtro = {**fila_ec2, "filtros": {"operation": "RunInstances:0002"}}
+informe = ap.actualizar_aws([], {"region": "eu-south-2", "filas": [sin_filtro]},
+                            pedir=lambda url: {"regions": {"eu-south-2": {"currentVersionUrl": "/a/eu-south-2/index.json"}}},
+                            leer_csv=lambda url, tipos: datos_ec2)
+assert informe["sin_fila"][0].startswith("EC2 Windows: 4 precios para EUS2-BoxUsage:t3.medium"), informe
+# En la tabla real: la fila de EC2 Windows, de la API, y la puerta de enlace la encuentra con AWS
+ec2 = ec.PRECIOS_CLOUD["aws-ec2-windows-t3-medium"]
+assert ec2["precio_origen"] == "0.064" and "AmazonEC2" in ec2["fuente"] and ec2["fecha"] == "2026-11-20"
+assert "aws-ec2-windows-t3-medium" in ec._tabla_precios(caso(cloud_provider="AWS"),
+                                                        "On-premises Data Gateway (Power BI) – VM Windows EC2 t3.medium")
+print("OK 13: la VM Windows de la puerta de enlace sale del CSV de EC2, con una sola fila tras los filtros")
 
 print("\nTodo bien: el fallo 67 funciona (en la parte que se puede comprobar sin el LLM real).")

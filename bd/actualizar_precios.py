@@ -19,6 +19,7 @@ script. «buscar» son las palabras (sin tildes, separadas por «|») con las qu
 """
 import argparse
 import csv
+import io
 import json
 import re
 import sys
@@ -153,41 +154,102 @@ COLUMNAS_NUEVAS = ["moneda", "precio_origen"]
 DIAS_LICENCIA = 90
 
 
-def precio_aws(datos: dict, usagetype: str, desde: float = 0) -> tuple[float, str] | None:
-    """(precio por unidad de la API en USD, unidad de la API) del tramo que empieza en `desde`, o None si no está."""
+def _clave_atributo(nombre: str) -> str:
+    """Fallo 90: el nombre de un atributo sin mayúsculas ni signos, para que el del JSON («preInstalledSw») y el de la
+    cabecera del CSV («Pre Installed S/W») sean el mismo."""
+    return re.sub(r"[^a-z0-9]", "", (nombre or "").lower())
+
+
+class VariasFilas(ValueError):
+    """Fallo 90: los filtros de una fila del yaml dejan más de un precio: no se elige ninguno."""
+
+
+def precio_aws(datos: dict, usagetype: str, desde: float = 0, filtros: dict | None = None) -> tuple[float, str] | None:
+    """(precio por unidad de la API en USD, unidad de la API) del tramo que empieza en `desde`, o None si no está.
+    Fallo 90: con `filtros` ({atributo: valor}), solo los productos con esos atributos: en EC2, el mismo usagetype es
+    Linux, Windows, Windows con SQL Server…, bajo demanda o reservado. Si queda más de un precio, VariasFilas."""
+    filtros = {_clave_atributo(k): str(v) for k, v in (filtros or {}).items()}
+    hallados = []
     for sku, producto in (datos.get("products") or {}).items():
-        if (producto.get("attributes") or {}).get("usagetype") != usagetype:
+        atributos = {_clave_atributo(k): str(v) for k, v in (producto.get("attributes") or {}).items()}
+        if atributos.get("usagetype") != usagetype or any(atributos.get(k) != v for k, v in filtros.items()):
             continue
         for termino in ((datos.get("terms") or {}).get("OnDemand") or {}).get(sku, {}).values():
             for dim in (termino.get("priceDimensions") or {}).values():
                 if float(dim.get("beginRange") or 0) == float(desde) and "USD" in (dim.get("pricePerUnit") or {}):
-                    return float(dim["pricePerUnit"]["USD"]), dim.get("unit", "")
-    return None
+                    hallados.append((float(dim["pricePerUnit"]["USD"]), dim.get("unit", "")))
+    if len(hallados) > 1:
+        raise VariasFilas(f"{len(hallados)} precios para {usagetype} con esos filtros: no se elige ninguno")
+    return hallados[0] if hallados else None
 
 
-def archivos_aws(ofertas: set[str], region: str, pedir=pedir) -> dict[str, dict]:
-    """El archivo de precios de cada oferta en la región, o {"error": motivo}."""
+def leer_csv_aws(url: str, usagetypes: set[str], abrir=urllib.request.urlopen) -> dict:
+    """Fallo 90: el archivo de una oferta en CSV, leído línea a línea (el de EC2 en eu-south-2 pesa unos 265 MB y en
+    JSON no cabe en memoria), con solo las filas de esos usagetypes, en la forma del JSON para precio_aws. Antes de la
+    cabecera, el CSV trae unas líneas de metadatos (versión, fecha de publicación…) que se saltan. Cada fila es un
+    producto: la misma SKU sale varias veces (bajo demanda y reservas), y sus atributos llevan el TermType."""
+    productos, terminos = {}, {}
+    with abrir(url, timeout=120) as respuesta:
+        lineas = io.TextIOWrapper(respuesta, encoding="utf-8")
+        cabecera = None
+        for linea in lineas:
+            if linea.startswith('"SKU"'):
+                cabecera = next(csv.reader([linea]))
+                break
+        if cabecera is None:
+            return {"error": "el CSV no trae la cabecera de precios"}
+        for n, valores in enumerate(csv.reader(lineas)):
+            fila = dict(zip(cabecera, valores))
+            if fila.get("usageType") not in usagetypes:
+                continue
+            clave = f"{fila.get('SKU')}#{n}"
+            productos[clave] = {"attributes": {k: v for k, v in fila.items() if k not in ("PricePerUnit", "Currency")}}
+            terminos[clave] = {"t": {"priceDimensions": {"d": {
+                "beginRange": fila.get("StartingRange") or 0, "unit": fila.get("Unit", ""),
+                "pricePerUnit": {fila.get("Currency") or "USD": fila.get("PricePerUnit")}}}}}
+    return {"products": productos, "terms": {"OnDemand": terminos}}
+
+
+def archivos_aws(ofertas: set[str], region: str, pedir=pedir, en_csv: dict[str, set[str]] | None = None,
+                 leer_csv=leer_csv_aws) -> dict[str, dict]:
+    """El archivo de precios de cada oferta en la región, o {"error": motivo}. Fallo 90: las ofertas de `en_csv`
+    ({oferta: usagetypes}) se leen del CSV, línea a línea."""
     archivos = {}
     for oferta in sorted(ofertas):
         try:
             indice = pedir(f"{API_AWS}/offers/v1.0/aws/{oferta}/current/region_index.json")
             ruta = ((indice.get("regions") or {}).get(region) or {}).get("currentVersionUrl")
-            archivos[oferta] = pedir(API_AWS + ruta) if ruta else {"error": f"{oferta} no tiene precios en {region}"}
+            if not ruta:
+                archivos[oferta] = {"error": f"{oferta} no tiene precios en {region}"}
+            elif oferta in (en_csv or {}):
+                archivos[oferta] = leer_csv(API_AWS + ruta.replace("index.json", "index.csv"), en_csv[oferta])
+            else:
+                archivos[oferta] = pedir(API_AWS + ruta)
         except Exception as error:  # sin red, la API caída…: esas filas se quedan como están
             archivos[oferta] = {"error": f"no se pudo consultar la API ({error})"}
     return archivos
 
 
-def actualizar_aws(filas: list[dict], config: dict, pedir=pedir, hoy: str = "") -> dict[str, list[str]]:
+def actualizar_aws(filas: list[dict], config: dict, pedir=pedir, hoy: str = "",
+                   leer_csv=leer_csv_aws) -> dict[str, list[str]]:
     """Actualiza (o añade) en `filas` las de AWS de la configuración. Devuelve el informe: cambia, igual, nueva, sin_fila."""
     region = config.get("region", "eu-south-2")
     entradas = config.get("filas") or []
-    archivos = archivos_aws({e["oferta"] for e in entradas}, region, pedir)
+    en_csv: dict[str, set[str]] = {}  # fallo 90: las ofertas grandes (EC2), en CSV
+    for e in entradas:
+        if e.get("formato") == "csv":
+            en_csv.setdefault(e["oferta"], set()).add(e["usagetype"])
+    archivos = archivos_aws({e["oferta"] for e in entradas}, region, pedir, en_csv, leer_csv)
     por_id = {f["id"]: f for f in filas}
     informe = {"cambia": [], "igual": [], "nueva": [], "sin_fila": []}
     for e in entradas:
         datos = archivos[e["oferta"]]
-        resultado = None if "error" in datos else precio_aws(datos, e["usagetype"], e.get("desde", 0))
+        try:
+            resultado = None if "error" in datos else precio_aws(datos, e["usagetype"], e.get("desde", 0),
+                                                                  e.get("filtros"))
+        except VariasFilas as error:  # fallo 90: la fila se queda como está y el informe lo dice
+            informe["sin_fila"].append(f"{e['servicio']}: {error}")
+            continue
         if resultado is None:
             motivo = datos.get("error") or f"no está la SKU {e['usagetype']} (tramo {e.get('desde', 0)})"
             informe["sin_fila"].append(f"{e['servicio']}: {motivo}")
@@ -204,7 +266,8 @@ def actualizar_aws(filas: list[dict], config: dict, pedir=pedir, hoy: str = "") 
         if antes is None:
             filas.append(nueva)
             informe["nueva"].append(f"{e['id']}: {numero(precio)} $ por {e['cobro']}")
-        elif antes.get("precio_origen") and float(antes["precio_origen"]) == precio:
+        # Fallo 90: se compara como se escribe (0,0000002 × 1.000.000 da 0,19999999999999998, que no es «0.2»)
+        elif antes.get("precio_origen") and numero(float(antes["precio_origen"])) == numero(precio):
             informe["igual"].append(f"{e['id']}: {numero(precio)} $")
             antes.update(nueva)
         else:
