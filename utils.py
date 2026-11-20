@@ -217,7 +217,8 @@ REGLAS_DATOS_CLIENTE = (
     "- Si necesitas un dato que no está, no lo inventes: escribe «Por confirmar: …» si hay que preguntárselo al "
     "cliente, o «Se asume: …» si es una suposición tuya para poder avanzar, y di de qué depende.\n"
     "- No escribas cifras del cliente que no estén aquí: porcentajes actuales, volúmenes, ahorros, costes por "
-    "incidencia, fechas o número de usuarios.\n"
+    "incidencia, fechas, número de usuarios o cuántas personas tiene un equipo. Si un dato confirmado no trae la cifra "
+    "(«un equipo de soporte IT»), escríbelo sin ella.\n"  # el 20 nov, «equipo de IT de 2 a 3 personas» sin que lo dijera
 )
 
 REGLA_PRESUPUESTO = (

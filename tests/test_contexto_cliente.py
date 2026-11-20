@@ -72,6 +72,8 @@ print("OK 1: confirmado, no lo sabe, no aplica y sin dato, cada uno en su grupo 
 assert texto.count("15 licencias Pro") == 1, "las notas repetidas deben salir una vez"
 assert "«Por confirmar: …»" in texto and "«Se asume: …»" in texto
 assert "No escribas cifras del cliente que no estén aquí" in texto
+# El 20 nov gobernanza y ETL escribían «equipo de IT de 2 a 3 personas» sin que el cliente diera la cifra
+assert "cuántas personas tiene un equipo" in texto and "escríbelo sin ella" in texto
 print("OK 2: las notas van sin duplicados y las reglas «Por confirmar / Se asume» cierran el bloque")
 
 # 3) Casos raros: «Confirmado por el usuario: X» es un dato, y un caso vacío no rompe nada
