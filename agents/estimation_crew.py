@@ -1,4 +1,5 @@
 import csv
+import difflib
 import logging
 
 import os
@@ -995,7 +996,10 @@ def _cruzar_con_inventario(componentes: list[ComponenteCoste], inventario: list[
     valorado, y lo que se valora sin estar en el inventario (infraestructura y licencias)."""
     con_fase = []
     for c in componentes:
-        fila = next((f for f in inventario if inventario_mod.corresponde(f["servicio"], c.componente)), None)
+        # La fila más parecida, no la primera: el 20 nov «AWS Glue Data Quality» tomaba la fase de «AWS Glue» (MVP)
+        base = inventario_mod._base(c.componente)
+        fila = max((f for f in inventario if inventario_mod.corresponde(f["servicio"], c.componente)), default=None,
+                   key=lambda f: difflib.SequenceMatcher(None, inventario_mod._base(f["servicio"]), base).ratio())
         con_fase.append(c.model_copy(update={"fase": fila["fase"]}) if fila and fila["fase"] != c.fase else c)
     sin_valorar = [f["servicio"] for f in inventario
                    if not any(inventario_mod.corresponde(f["servicio"], c.componente) for c in componentes)]

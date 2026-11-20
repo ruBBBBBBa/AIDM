@@ -340,6 +340,14 @@ comps = [ComponenteCoste(componente=c, categoria="infraestructura", precio_unita
                          periodicidad="mensual", referencia="x") for _, c in mismos[:3]]
 _, sin_valorar, fuera = ec._cruzar_con_inventario(comps, inv)
 assert sin_valorar == [] and fuera == [], (sin_valorar, fuera)
+# Con dos filas que casan, la fase es la de la más parecida, no la de la primera: el 20 nov «AWS Glue Data Quality»
+# (proyecto completo) salía desde el MVP, la fase de «AWS Glue»
+inv_glue = [{"servicio": "AWS Glue", "capa": "ingesta", "fase": "mvp", "alternativa": ""},
+            {"servicio": "AWS Glue Data Quality", "capa": "gobierno", "fase": "proyecto_completo", "alternativa": ""}]
+glue = [ComponenteCoste(componente=n, categoria="infraestructura", precio_unitario_eur=1, unidades=1, unidad="mes",
+                        periodicidad="mensual", referencia="x", fase="mvp")
+        for n in ("AWS Glue Data Quality - reglas", "AWS Glue", "AWS Glue (ETL nocturno)")]
+assert [c.fase for c in ec._cruzar_con_inventario(glue, inv_glue)[0]] == ["proyecto_completo", "mvp", "mvp"]
 print("OK 14: el cruce del inventario con los costes reconoce el mismo servicio y no junta servicios distintos")
 
 # 15) Fallo 83: la columna «Alternativa descartada» del inventario no cuenta para el aviso. El 20 nov la arquitectura
