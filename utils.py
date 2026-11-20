@@ -364,9 +364,13 @@ def texto_servicios_a_evitar(problem_case: dict | None, config: dict | None = No
 # Fallo 111: el 18 nov se marcaba una sección que decía «… en sustitución de Macie», como si propusiera Macie. Una mención
 # que solo descarta el servicio («en lugar de X», «X no está disponible», «se descarta X») no cuenta; si el texto lo
 # nombra también en otra frase sin descartarlo, sí.
+# El 20 nov se marcaba también «Al estar retirado X y no estar disponible Y…», «para suplir servicios discontinuados
+# (Y, X/Z)» y «(en reemplazo de X)»: entran esas frases y la lista entre paréntesis que va detrás de una de ellas.
+_FRASES_DESCARTE = (r"(?:en sustitucion de|en lugar de|en vez de|sustituye a|sustituir a|alternativa a|se descarta"
+                    r"|descartamos|al estar retirad[oa]s?|no estar disponibles?|para suplir|en reemplazo de"
+                    r"|reemplaza a|reemplazar a)")
 _DESCARTE_ANTES = re.compile(
-    r"(?:en sustitucion de|en lugar de|en vez de|sustituye a|sustituir a|alternativa a|se descarta|descartamos)"
-    r"\s+(?:[\w-]+\s+){0,3}$")
+    _FRASES_DESCARTE + r"\s+(?:[\w-]+\s+){0,3}(?:\([^()]*)?$")
 _DESCARTE_DESPUES = re.compile(
     r"^\W*(?:[\w-]+\s+){0,2}?(?:no (?:esta )?disponible|se descarta|queda descartad|descartad[oa]s?\b|retirad[oa]s?\b"
     r"|no se (?:usa|propone))")

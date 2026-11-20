@@ -358,4 +358,23 @@ sbc.propose_solution("ESTRUCTURA", EN_AWS, [])
 assert "**Amazon Lookout for Vision**" in inyectado["architecture"] and "**Amazon Macie**" in inyectado["architecture"]
 print("OK 15: la columna «Alternativa descartada» del inventario no dispara el aviso de servicios a evitar")
 
+# 16) Fallo 111: más frases de descarte. El 20 nov ML y MLOps se marcaba por «Al estar retirado Lookout for Vision y no
+#     estar disponible Rekognition Custom Labels…»; también «para suplir … (lista)», «en reemplazo de» y «reemplaza a»
+assert nombres("Al estar retirado Amazon Lookout for Vision y no estar disponible Rekognition Custom Labels en la "
+               "región, se opta por un modelo propio en SageMaker AI.", EN_AWS) == []
+assert nombres("Endpoint de SageMaker AI para suplir servicios discontinuados (Rekognition Custom Labels, Lookout for "
+               "Vision/Equipment).", EN_AWS) == []
+assert nombres("Predicciones con SageMaker Canvas (en reemplazo de Amazon Forecast).", EN_AWS) == []
+assert nombres("SageMaker Canvas reemplaza a Amazon Forecast en la previsión.", EN_AWS) == []
+assert nombres("Para suplir servicios retirados (Amazon Forecast o Amazon Lookout for Vision) va SageMaker.",
+               EN_AWS) == []
+# Se sigue marcando: el servicio es el que suple, o la frase de descarte es de otra cosa
+assert nombres("Se propone Amazon Lookout for Vision para suplir la inspección manual.", EN_AWS) == [
+    "Amazon Lookout for Vision"]
+assert nombres("Para suplir la falta de personal de datos, Amazon Forecast hace la previsión.", EN_AWS) == [
+    "Amazon Forecast"]
+assert nombres("Al estar retirado el ERP antiguo, la previsión va en Amazon Forecast.", EN_AWS) == ["Amazon Forecast"]
+print("OK 16: «al estar retirado», «no estar disponible», «para suplir (…)», «en reemplazo de» y «reemplaza a» "
+      "descartan; si el servicio es el que se propone, se sigue marcando")
+
 print("\nTodo bien: los fallos 44, 83, 88, 89, 90 y 111 están arreglados.")
