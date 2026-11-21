@@ -1,7 +1,8 @@
 .env
 .agents*
 .claude*
-skills*
+.planning*
+.skills*
 aidmenv*
 __pycache__/
 **/__pycache__/
