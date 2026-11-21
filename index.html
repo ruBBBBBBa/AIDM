@@ -215,6 +215,8 @@
   .intelligence-progress { height:7px; margin-top:22px; background:#293e60; overflow:hidden; border-radius:20px; }
   .intelligence-progress-fill { height:100%; width:0%; border-radius:20px; background:linear-gradient(90deg,#5685ff,#55dec0); transition:width .4s ease; }
   .intelligence-status { min-height:22px; margin-top:12px; font-size:.84rem; color:#c5d5ef; overflow-wrap:anywhere; }
+  .intelligence-timer { margin-top:15px; color:#d9e7ff; font-size:.88rem; font-variant-numeric:tabular-nums; }
+  .intelligence-timer strong { font-size:1.05rem; color:#fff; margin-left:7px; }
   .intelligence-footnote { margin-top:13px; font-size:.72rem; color:#93a9c9; }
   @media (max-width:600px) {
     .intelligence { padding:16px; }
@@ -222,6 +224,168 @@
     .intelligence-core strong { font-size:1.3rem; }
     .intelligence-step { padding:9px 11px; font-size:.81rem; }
   }
+
+
+
+
+/* ======================================
+
+   AIDM TECH NEWS
+
+   Noticias durante la generación
+
+   ====================================== */
+
+.tech-news {
+
+  margin-top: 22px;
+
+  padding: 17px;
+
+  border: 1px solid #385174;
+
+  border-radius: 13px;
+
+  background: rgba(255,255,255,.045);
+
+  text-align: left;
+
+}
+
+.tech-news-header {
+
+  display: flex;
+
+  align-items: center;
+
+  justify-content: space-between;
+
+  gap: 10px;
+
+  margin-bottom: 12px;
+
+}
+
+.tech-news-header h3 {
+
+  margin: 0;
+
+  font-size: 15px;
+
+  font-weight: 700;
+
+  color: #fff;
+
+}
+
+.tech-news-live {
+
+  display: inline-flex;
+
+  align-items: center;
+
+  gap: 6px;
+
+  font-size: 11px;
+
+  color: #8fe4c8;
+
+}
+
+.tech-news-live::before {
+
+  content: "";
+
+  width: 7px;
+
+  height: 7px;
+
+  border-radius: 50%;
+
+  background: #52d5a7;
+
+}
+
+.tech-news-list {
+
+  display: grid;
+
+  gap: 9px;
+
+}
+
+.tech-news-item {
+
+  display: block;
+
+  padding: 11px 12px;
+
+  border: 1px solid #364967;
+
+  border-radius: 9px;
+
+  background: rgba(255,255,255,.035);
+
+  text-decoration: none;
+
+  transition: background .2s ease;
+
+}
+
+.tech-news-item:hover {
+
+  background: rgba(255,255,255,.11);
+
+}
+
+.tech-news-title {
+
+  font-size: 13px;
+
+  line-height: 1.5;
+
+  font-weight: 600;
+
+  color: #edf3ff;
+
+}
+
+.tech-news-meta {
+
+  margin-top: 6px;
+
+  font-size: 11px;
+
+  color: #a4b8d5;
+
+}
+
+.tech-news-empty {
+
+  margin: 0;
+
+  font-size: 13px;
+
+  color: #b1c4e0;
+
+}
+
+@media (max-width: 600px) {
+
+  .tech-news {
+
+    padding: 12px;
+
+  }
+
+  .tech-news-item {
+
+    padding: 10px;
+
+  }
+
+}
+
 
 </style>
 </head>
@@ -256,7 +420,24 @@
             <div id="intelligenceFill" class="intelligence-progress-fill"></div>
           </div>
           <div id="intelligenceStatus" class="intelligence-status">Esperando datos de progreso…</div>
+          <div class="intelligence-timer">Tiempo de ejecución <strong id="intelligenceTimer">00:00</strong></div>
           <div class="intelligence-footnote">Las cuatro etapas representan visualmente el progreso global comunicado por el servidor.</div>
+            <!-- AIDM Tech News: noticias tecnológicas -->
+            <section class="tech-news" aria-label="Actualidad tecnológica">
+              <div class="tech-news-header">
+                <h3>AIDM Tech News</h3>
+                <span class="tech-news-live">Actualidad</span>
+              </div>
+
+              <div id="techNewsList" class="tech-news-list">
+                <p class="tech-news-empty">
+                   Consultando noticias tecnológicas...
+                </p>
+              </div>
+        </section>
+
+
+
         </div>
       </div>
 
@@ -300,6 +481,7 @@ const $ = (id) => document.getElementById(id);
 const TOTAL_PASOS = 13;
 let messages, busy = false, timer = null, prev = {}, report = { html:"", name:"informe_aidm.html" };
 let avisoVisto = 0, progTxt = "";
+let inicioEjecucion = null;
 
 const SUGGEST = [
   "Queremos predecir la demanda y optimizar las rutas de reparto de nuestra logística",
@@ -495,6 +677,22 @@ async function init() {
 }
 
 
+function textoProgresoSinDuplicar(texto, pasos) {
+  const detalle = String(texto || "").trim();
+  // El servidor puede incluir ya el contador en el texto del paso.
+  const contador = /(?:paso\s*)?\d+\s*de\s*\d+\s*pasos?/gi;
+  const limpio = detalle.replace(contador, "").replace(/^[\s·:–—-]+|[\s·:–—-]+$/g, "").trim();
+  return pasos + " de " + TOTAL_PASOS + " pasos" + (limpio ? " · " + limpio : "");
+}
+
+function actualizarReloj() {
+  if (inicioEjecucion === null) return;
+  const segundos = Math.floor((Date.now() - inicioEjecucion) / 1000);
+  const mm = String(Math.floor(segundos / 60)).padStart(2, "0");
+  const ss = String(segundos % 60).padStart(2, "0");
+  $("intelligenceTimer").textContent = mm + ":" + ss;
+}
+
 function actualizarIntelligence(fraccion, texto) {
   if (!busy) return;
   const f = Math.max(0, Math.min(1, Number(fraccion) || 0));
@@ -510,7 +708,7 @@ function actualizarIntelligence(fraccion, texto) {
     el.classList.toggle("current", i === etapa);
   });
   const pasos = Math.round(f * TOTAL_PASOS);
-  $("intelligenceStatus").textContent = pasos + " de " + TOTAL_PASOS + " pasos" + (texto ? " · " + texto : "");
+  $("intelligenceStatus").textContent = textoProgresoSinDuplicar(texto, pasos);
 }
 
 function cerrarIntelligence() {
@@ -518,27 +716,200 @@ function cerrarIntelligence() {
   $("intelligenceFill").style.width = "0%";
   $("intelligenceProgress").setAttribute("aria-valuenow", "0");
   $("intelligenceStatus").textContent = "Esperando datos de progreso…";
+  $("intelligenceTimer").textContent = "00:00";
   $("intelligence").querySelectorAll(".intelligence-step").forEach(el => {
     el.classList.remove("complete", "current");
   });
 }
 
+
+/* ==========================================
+
+   AIDM TECH NEWS - Noticias reales
+
+   ========================================== */
+
+let noticiasTimer = null;
+
+async function actualizarNoticias() {
+
+    const lista = document.getElementById("techNewsList");
+
+    if (!lista) return;
+
+    try {
+
+        const respuesta = await fetch("/api/noticias");
+
+        if (!respuesta.ok) {
+
+            throw new Error("No se pudieron obtener noticias");
+
+        }
+
+        const data = await respuesta.json();
+
+        const noticias = data.noticias || [];
+
+        if (!noticias.length) {
+
+            if (!lista.querySelector(".tech-news-item")) {
+
+                lista.replaceChildren();
+
+                const mensaje = document.createElement("p");
+
+                mensaje.className = "tech-news-empty";
+
+                mensaje.textContent =
+
+                    "No hay noticias recientes disponibles.";
+
+                lista.appendChild(mensaje);
+
+            }
+
+            return;
+
+        }
+
+        lista.replaceChildren();
+
+        noticias.slice(0, 4).forEach(noticia => {
+
+            const enlace = document.createElement("a");
+
+            enlace.className = "tech-news-item";
+
+            enlace.href = noticia.url;
+
+            enlace.target = "_blank";
+
+            enlace.rel = "noopener noreferrer";
+
+            const titulo = document.createElement("div");
+
+            titulo.className = "tech-news-title";
+
+            titulo.textContent = noticia.titulo;
+
+            const meta = document.createElement("div");
+
+            meta.className = "tech-news-meta";
+
+            let fecha = "";
+
+            if (noticia.fecha) {
+
+                const fechaObjeto = new Date(noticia.fecha);
+
+                if (!isNaN(fechaObjeto.getTime())) {
+
+                    fecha = fechaObjeto.toLocaleDateString(
+
+                        "es-ES",
+
+                        {
+
+                            day: "2-digit",
+
+                            month: "short",
+
+                            year: "numeric"
+
+                        }
+
+                    );
+
+                }
+
+            }
+
+            meta.textContent = [
+
+                noticia.fuente,
+
+                fecha,
+
+                noticia.categoria
+
+            ].filter(Boolean).join(" · ");
+
+            enlace.append(titulo, meta);
+
+            lista.appendChild(enlace);
+
+        });
+
+    } catch (error) {
+
+        if (lista.querySelector(".tech-news-item")) return;
+
+        lista.replaceChildren();
+
+        const mensaje = document.createElement("p");
+
+        mensaje.className = "tech-news-empty";
+
+        mensaje.textContent =
+
+            "Las noticias no están disponibles en este momento.";
+
+        lista.appendChild(mensaje);
+
+    }
+
+}
+
+function iniciarNoticias() {
+
+    detenerNoticias();
+
+    actualizarNoticias();
+
+    noticiasTimer = setInterval(() => {
+
+        if (busy) actualizarNoticias();
+
+    }, 60000);
+
+}
+
+function detenerNoticias() {
+
+    if (noticiasTimer !== null) {
+
+        clearInterval(noticiasTimer);
+
+        noticiasTimer = null;
+
+    }
+
+}
+
+
 function setBusy(on) {
   busy = on;
-  if (!on) cerrarIntelligence();
+  if (!on) { inicioEjecucion = null; cerrarIntelligence(); }
   $("send").disabled = on; $("input").disabled = on; $("reset").disabled = on;
   $("busy").classList.toggle("on", on); if (!on) $("busy").classList.remove("det"); progTxt = "";
   document.querySelector(".top .orb").classList.toggle("think", on);
   clearInterval(timer);
   if (on) {
+    iniciarNoticias();
     const t0 = Date.now();
+    inicioEjecucion = t0;
+    actualizarReloj();
     const tick = () => {
+      actualizarReloj();
       const s = Math.round((Date.now() - t0) / 1000);
       $("stat").textContent = (progTxt || (s < 15 ? "Analizando tu respuesta" : "Sigue trabajando. Preparar la propuesta completa puede llevar unos minutos")) + " (" + s + " s)";
       if (s > 0 && s % 3 === 0) { refreshCaso(); refreshEstado(); }   // la ficha se rellena mientras el agente trabaja
     };
     tick(); timer = setInterval(tick, 1000);
-  } else { $("stat").textContent = ""; }
+  } else { $("stat").textContent = "";
+      detenerNoticias();
+   }
 }
 
 async function send(text) {
