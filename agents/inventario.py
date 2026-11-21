@@ -156,12 +156,24 @@ def nota_sin_decidir(abiertas: list[str]) -> str:
             "cada par, la del inventario de servicios: la otra es la alternativa descartada.\n\n")
 
 
-def con_puerta_de_enlace(filas: list[dict], problem_case: dict | None) -> tuple[list[dict], str]:
+# Fallo 90 (parte 4): la puerta de enlace de datos de Power BI nombrada en un texto (no la de IoT ni API Gateway)
+_TEXTO_PUERTA = re.compile(r"\b(?:on-premises data gateway|data gateway|power bi gateway|gateway de (?:datos|power bi)"
+                           r"|puerta de enlace de (?:datos|power bi))\b")
+_MAQUINA = re.compile(r"\b(?:ec2|vm|maquina virtual|virtual machine|instancia)\b")
+
+
+def con_puerta_de_enlace(filas: list[dict], problem_case: dict | None,
+                         arquitectura: str = "") -> tuple[list[dict], str]:
     """Fallo 90: si hace falta la puerta de enlace de Power BI y el inventario no la trae, se añade (desde el MVP), y
-    la nota para la arquitectura lo dice. Así la valoran los costes."""
+    la nota para la arquitectura lo dice. Así la valoran los costes.
+    Fallo 90 (parte 4): una máquina (EC2, VM…) en la capa de visualización, o la arquitectura que describe la puerta de
+    enlace, cuentan como que ya está. El 21 nov se añadió con «Amazon EC2» en visualización."""
     if not filas or not necesita_puerta_de_enlace(problem_case):
         return filas, ""
     if any(re.search(r"gateway|puerta de enlace", _normalize_text(f["servicio"])) for f in filas):
+        return filas, ""
+    if any(_normalize_text(f["capa"]).startswith("visualiz") and _MAQUINA.search(_normalize_text(f["servicio"]))
+           for f in filas) or _TEXTO_PUERTA.search(_normalize_text(arquitectura or "")):
         return filas, ""
     logger.warning("[inventario] Power BI con los datos fuera de Azure y sin puerta de enlace en el inventario: se añade")
     fila = {"servicio": PUERTA_DE_ENLACE, "capa": "visualización", "fase": "mvp", "alternativa": ""}

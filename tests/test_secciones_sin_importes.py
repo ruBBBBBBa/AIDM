@@ -279,6 +279,15 @@ con_puerta = sin_puerta + [{"servicio": "On-premises data gateway", "capa": "vis
                             "alternativa": ""}]
 assert inventario.con_puerta_de_enlace(con_puerta, aws_pbi) == (con_puerta, "")  # ya la trae: no se duplica
 assert inventario.con_puerta_de_enlace(sin_puerta, azure_pbi) == (sin_puerta, "")
+# Fallo 90 (parte 4): una máquina en la capa de visualización, o la arquitectura que la describe, ya es la puerta
+con_ec2 = sin_puerta + [{"servicio": "Amazon EC2", "capa": "Visualización", "fase": "mvp", "alternativa": ""}]
+assert inventario.con_puerta_de_enlace(con_ec2, aws_pbi) == (con_ec2, "")
+texto_90 = "Power BI Service llega a Athena a través del on-premises data gateway, instalado en una máquina Windows."
+assert inventario.con_puerta_de_enlace(sin_puerta, aws_pbi, texto_90) == (sin_puerta, "")
+# Una máquina en otra capa, o el gateway de IoT, no cuentan
+ec2_ingesta = sin_puerta + [{"servicio": "Amazon EC2", "capa": "ingesta", "fase": "mvp", "alternativa": ""}]
+assert "Ojo: falta" in inventario.con_puerta_de_enlace(ec2_ingesta, aws_pbi)[1]
+assert "Ojo: falta" in inventario.con_puerta_de_enlace(sin_puerta, aws_pbi, "Un gateway de IoT envía los datos.")[1]
 bloque_90 = "Power BI lee de Athena.\n\nINVENTARIO DE SERVICIOS\n- Amazon Athena | analítica | MVP | —\n" \
             "- Power BI Pro | visualización | MVP | —"
 sbc.run_proposal_crew = lambda *a, **k: ProposalResult(architecture=bloque_90, governance="G.", data_ai_strategy="D.",

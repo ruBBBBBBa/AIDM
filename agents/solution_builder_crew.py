@@ -90,7 +90,7 @@ def propose_solution(
         # Fallo 88: el inventario de servicios del final de la arquitectura; en el informe va como tabla
         arquitectura, filas = inventario.leer(proposal.architecture)
         inventario.comprobar(filas, problem_case)
-        filas, nota_puerta = inventario.con_puerta_de_enlace(filas, problem_case)  # fallo 90
+        filas, nota_puerta = inventario.con_puerta_de_enlace(filas, problem_case, arquitectura)  # fallo 90
         filas, nota_runtime = inventario.con_integration_runtime(filas, problem_case)  # fallo 105
         if filas:
             nota = (inventario.nota_sin_decidir(inventario.sin_decidir(arquitectura, filas))  # fallo 89
