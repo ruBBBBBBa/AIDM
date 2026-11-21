@@ -1,3 +1,4 @@
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -14,6 +15,7 @@ from utils import INFORME_GENERADO, html_del_informe, md_to_html, nota_servicios
 load_dotenv(".env")
 
 SOLUTION_REPORT_PATH = INFORME_GENERADO  # fallo 116: el informe de la ejecución, no la plantilla
+logger = logging.getLogger("aidm")
 _SECTION_IDS = {
     "architecture":    "content-architecture",
     "governance":      "content-governance",
@@ -99,6 +101,8 @@ def propose_solution(
         estimation = run_estimation_crew(proposal.as_combined_context(), problem_case=problem_case,
                                          componentes=proposal.architecture, inventario=filas)
     except RuntimeError as e:
+        # Fallo 117: el informe se queda sin propuesta; que el log diga por qué
+        logger.error("[propuesta] La propuesta no se ha podido generar: %s", str(e) or type(e).__name__)
         return str(e)
 
     # Fallo 44: los importes salen solo en la sección de costes, donde se suman en Python

@@ -44,4 +44,31 @@ assert "Azure Data Lake Storage Gen2" in estructura and "Azure Databricks (Serve
 assert "600K€ primer año" in estructura, "el presupuesto del cliente se puede citar"
 print("OK 1: la estructura llega a la propuesta sin «~20K€/año» ni «~120K€/año», con sus componentes y el presupuesto del cliente")
 
+# 2) Fallo 117: si la propuesta falla, el log dice por qué, y el flujo sigue con el mensaje de error
+import logging
+
+
+class _Captura(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.lineas = []
+
+    def emit(self, record):
+        self.lineas.append(record.getMessage())
+
+
+captura = _Captura()
+logging.getLogger("aidm").addHandler(captura)
+
+
+def _propuesta_que_falla(*a, **k):
+    raise RuntimeError("Error: proposal crew produjo outputs vacíos.")
+
+
+sbc.run_proposal_crew = _propuesta_que_falla
+assert sbc.propose_solution(ESTRUCTURA, CASO, []) == "Error: proposal crew produjo outputs vacíos."
+assert "[propuesta] La propuesta no se ha podido generar: Error: proposal crew produjo outputs vacíos." in captura.lineas, \
+    captura.lineas
+print("OK 2: si la propuesta falla, el log lo dice con su motivo y propose_solution devuelve el mensaje")
+
 print("\nTodo bien: el refuerzo del fallo 44 está hecho.")
