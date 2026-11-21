@@ -197,6 +197,21 @@ class ComponenteCoste(BaseModel):
         return "USD" if ("$" in valor or "usd" in texto or "dolar" in texto) else "EUR" if (
             "€" in valor or "eur" in texto) else valor
 
+    @field_validator("acumulativo", mode="before")
+    @classmethod
+    def _acumulativo_de_texto(cls, valor: Any) -> Any:
+        """Fallo 119: «sí», «true (crece cada mes)», «no» → booleano. El 21 nov la tarea se repitió por esto."""
+        if valor is None:
+            return False
+        if not isinstance(valor, str):
+            return valor
+        texto = _normalize_text(valor)
+        if re.match(r"(?:true|si|yes|verdadero|1)\b", texto):
+            return True
+        if not texto or re.match(r"(?:false|no|falso|0)\b", texto):
+            return False
+        return valor
+
     @field_validator("fase", mode="before")
     @classmethod
     def _fase_sin_variantes(cls, valor: Any) -> Any:
@@ -943,6 +958,19 @@ def _sin_periodos_repetidos(c: ComponenteCoste) -> ComponenteCoste:
         "referencia": f"{c.referencia.rstrip('. ')}. Se cuenta 1 {c.unidad} por periodo: el modelo había puesto "
                       f"{_cifra(c.unidades)}, los del proyecto, que ya se multiplican aparte."})
 
+# Fallo 119: solo crece cada mes lo que se paga por volumen guardado (GB o TB al mes)
+_UNIDAD_DE_ALMACENAMIENTO = re.compile(r"\b(?:[kmgtp]i?b|gigabytes?|terabytes?)\b")
+
+
+def _solo_crece_el_almacenamiento(c: ComponenteCoste) -> ComponenteCoste:
+    """Fallo 119: lo que se paga por horas (instancias, endpoints, shards…) no se acumula. El 21 nov, Timestream for
+    InfluxDB, por horas, salió «crece cada mes» y el coste del último mes llegó a 6.199 €."""
+    if not c.acumulativo or _UNIDAD_DE_ALMACENAMIENTO.search(_normalize_text(c.unidad)):
+        return c
+    logger.warning("%s: se paga por «%s», no por volumen guardado; no crece cada mes", c.componente, c.unidad)
+    return c.model_copy(update={"acumulativo": False})
+
+
 # Fallo 45 (C6): un componente a 0 € solo cuadra si el cliente ya lo tiene; lo demás se avisa
 _YA_LO_TIENE = ("ya lo tiene", "ya la tiene", "ya los tiene", "ya las tiene", "ya adquirid", "ya dispone",
                 "ya cuenta con", "ya contratad", "ya pagad", "existente")
@@ -1090,6 +1118,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         componentes, sin_valorar, fuera_de_lista = _cruzar_con_inventario(componentes, inventario)
     # Fallo 58: una cuota mensual o anual con los meses del proyecto como unidades se cuenta una vez por periodo
     componentes = [_sin_periodos_repetidos(c) for c in componentes]
+    componentes = [_solo_crece_el_almacenamiento(c) for c in componentes]  # fallo 119
     # Fallo 54: lo que el cliente ya usa, para comprobar los «ya lo tiene»
     tecnologias = _tecnologias_cliente(problem_case)
     componentes = _sin_licencias_que_ya_tiene(componentes, tecnologias)  # fallo 101

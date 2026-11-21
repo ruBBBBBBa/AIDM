@@ -255,6 +255,22 @@ assert "12 €/mes el primer mes (crece cada mes con lo que entra)" in html and 
 assert f"{ec._cifra(0.44 / cambio['usd_por_eur'])} €/DPU-hora" in html
 print("OK 10: el lago de datos acumula lo que entra cada mes y los precios en dólares se pasan a euros")
 
+# 10b) Fallo 119: «acumulativo» como texto se lee como booleano, y lo que se paga por horas no crece cada mes
+def _comp(acum, unidad="GB"):
+    return ComponenteCoste(componente="Base de series", categoria="infraestructura", precio_unitario_eur=0.5,
+                           unidades=730, unidad=unidad, periodicidad="mensual", referencia="x", acumulativo=acum)
+
+
+assert [_comp(v).acumulativo for v in ("true", "Sí", "sí, crece cada mes", "False", "no", "", None)] == \
+    [True, True, True, False, False, False, False]
+por_horas = ComponenteCoste.model_validate({**_comp(True, "hora").model_dump(), "acumulativo": "true"})
+html = ec._format_cost_report(CostEstimationReport(componentes=[por_horas, _comp("sí", "GB al mes")], supuestos=[],
+                              resumen_ejecutivo=ResumenEjecutivo(meses_proyecto=10, presupuesto_cliente_max_eur=0,
+                                                                 justificacion="x")), "", None, caso)
+assert html.count("crece cada mes con lo que entra") == 1, html
+assert "En 10 meses: 3.650 €" in html and "En 10 meses: 20.075 €" in html, html  # 365 × 10; 365 × 55
+print("OK 10b: «acumulativo» como texto se lee como booleano; por horas no crece cada mes, el almacenamiento sí")
+
 # 11) Fallo 113: con MVP y resto del proyecto, cada fila del equipo en el desglose lleva dentro el desarrollo y la
 #     implantación, con las mismas cifras que «Estimación de coste del equipo». Desde el fallo 86 solo salía el total
 mvp_113 = EquipoEstimado(perfiles=[PerfilEquipo(perfil="Data Engineer", nivel="Senior", horas_mes=160,
