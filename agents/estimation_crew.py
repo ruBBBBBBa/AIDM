@@ -1157,6 +1157,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
             aj_falta_min = ajustado["falta_min"] + aj_resto.get("falta_min", 0)
             aj_falta_max = ajustado["falta_max"] + aj_resto.get("falta_max", 0)
             aj_nivel = _encaje_presupuesto(aj_min + aj_falta_min, aj_max + aj_falta_max, presupuesto)[0]
+            aj_nivel += " (provisional)" if no_sumados or fuera else ""  # 103 (parte 2): como el encaje principal
             ajuste_html = (
                 f"<strong>Equipo ajustado al presupuesto:</strong> si {_eur(presupuesto)} es un tope, las horas de "
                 f"cada perfil tienen que bajar al {int(100 * techo / base)} % de las propuestas (el detalle, en "

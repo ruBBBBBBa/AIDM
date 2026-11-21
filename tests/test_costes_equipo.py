@@ -332,4 +332,18 @@ assert "#### Resto del proyecto, después del MVP" in resultado.team_profiles
 assert "Ajusta el equipo al tamaño del cliente" in next(p for p in prompts[::-1] if "identifica los perfiles" in p)
 print(f"OK 12: si no cabe, el equipo ajustado al presupuesto ({int(100 * factor)} % de las horas) y cuánto soporte cabe")
 
+# 13) Fallo 103 (parte 2): con horas sin tarifa, el encaje del equipo ajustado es provisional, como el principal
+import re
+
+con_hueco = mvp.model_copy(update={"perfiles": mvp.perfiles + [PerfilEquipo(perfil="Experto en SAP", nivel="Senior",
+                                                                            horas_mes=40)]})
+calculado = _calcular_equipo(con_hueco, tarifas)
+calculado["resto"] = _calcular_equipo(resto, tarifas)
+html = ec._format_cost_report(corto, "", calculado, dos)
+assert "Equipo ajustado al presupuesto" in html and re.search(r"encaje: \w+ \(provisional\)\.", html), html
+calculado = _calcular_equipo(mvp, tarifas)  # sin horas sin tarifa, no
+calculado["resto"] = _calcular_equipo(resto, tarifas)
+assert "(provisional)" not in ec._format_cost_report(corto, "", calculado, dos)
+print("OK 13: con horas sin tarifa, el encaje del equipo ajustado también es provisional")
+
 print("\nTodo bien: el fallo 5 está arreglado.")
