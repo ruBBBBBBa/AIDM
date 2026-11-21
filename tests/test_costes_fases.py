@@ -92,14 +92,14 @@ print("OK 5: 5 meses de implantación en un plazo de 2–3 se quedan en 1, con 1
 # 6) Un perfil sin tarifa con horas en las dos fases: se avisa de ambas y cuenta en el mínimo del encaje
 sin_tarifa = EquipoEstimado(
     perfiles=[*CON_FASES.perfiles,
-              PerfilEquipo(perfil="Project Manager", nivel="Middle", horas_mes=40, horas_mes_implantacion=20)],
+              PerfilEquipo(perfil="Scrum Master", nivel="Middle", horas_mes=40, horas_mes_implantacion=20)],  # fallo 118
     meses_min=3, meses_max=4, meses_implantacion=1,
 )
 calculo = _calcular_equipo(sin_tarifa, tarifas)
-assert "Project Manager (Middle, 40 h/mes y 20 h/mes en implantación)" in calculo["no_sumados"]
-assert "| Project Manager | Middle | sin tarifa | 40 | 20 |" in calculo["texto"]
+assert "Scrum Master (Middle, 40 h/mes y 20 h/mes en implantación)" in calculo["no_sumados"]
+assert "| Scrum Master | Middle | sin tarifa | 40 | 20 |" in calculo["texto"]
 assert (calculo["falta_min"], calculo["falta_max"]) == (20 * (40 * 2 + 20 * 1), 20 * (40 * 3 + 20 * 1))
-print("OK 6: el Project Manager sin tarifa se avisa con sus horas de cada fase y suma 2.000–2.800 € de mínimo")
+print("OK 6: el Scrum Master sin tarifa se avisa con sus horas de cada fase y suma 2.000–2.800 € de mínimo")
 
 # 7) Los prompts piden las dos fases, y el informe completo las usa
 os.environ.pop("INFRACOST_API_KEY", None)

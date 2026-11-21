@@ -50,8 +50,8 @@ def informe_con(funciones) -> str:
 # 1) Las funciones sin tarifa llevan horas; un modelo que mande solo el nombre sigue valiendo
 esquema = EquipoEstimado.model_json_schema()["$defs"]["FuncionSinTarifa"]["properties"]
 assert set(esquema) == {"funcion", "horas_mes", "horas_mes_implantacion"}
-viejo = EquipoEstimado(perfiles=[], meses_min=4, meses_max=4, funciones_sin_tarifa=["Gestión del proyecto"])
-assert viejo.funciones_sin_tarifa[0].funcion == "Gestión del proyecto" and viejo.funciones_sin_tarifa[0].horas_mes == 0
+viejo = EquipoEstimado(perfiles=[], meses_min=4, meses_max=4, funciones_sin_tarifa=["Soporte funcional del ERP"])
+assert viejo.funciones_sin_tarifa[0].funcion == "Soporte funcional del ERP" and viejo.funciones_sin_tarifa[0].horas_mes == 0
 assert min(tarifas.values()) == 20, "la tarifa más baja de la tabla es la de Data Analyst/BI Junior"
 print("OK 1: cada función sin tarifa lleva sus horas al mes; una lista de nombres sigue aceptándose")
 
@@ -61,8 +61,9 @@ assert ">Medio<" in html and "provisional" not in html and "Contando al menos" n
 assert "Solo el escenario bajo (82.900 €) cabe en el presupuesto del cliente (90.000 €)" in html
 print("OK 2: sin funciones sin tarifa, encaje «Medio» como antes (82.900 € en 90.000 €)")
 
-# 3) Con la gestión del proyecto a 32 h/mes, el encaje cuenta un mínimo y se marca como provisional
-html = informe_con([{"funcion": "Gestión del proyecto", "horas_mes": 32}])
+# Fallo 118: la gestión del proyecto ya tiene perfil (Project Manager); aquí, otra función sin tarifa
+# 3) Con el soporte funcional del ERP a 32 h/mes, el encaje cuenta un mínimo y se marca como provisional
+html = informe_con([{"funcion": "Soporte funcional del ERP", "horas_mes": 32}])
 assert ">Medio (provisional)<" in html
 assert ("Contando al menos 2.560 € – 3.840 € por lo que no tiene tarifa (32 h/mes a 20 €/h, la tarifa más baja "
         "de la tabla), solo el escenario bajo (85.460 €) cabe") in html
@@ -70,23 +71,23 @@ assert ">82.900 € – 114.900 €</div>" in html, "el total que se muestra sig
 print("OK 3: con 32 h/mes de gestión, «Medio (provisional)» contando al menos 2.560 € (85.460 € en 90.000 €)")
 
 # 4) Si el mínimo de lo que falta ya no cabe en el margen, el encaje baja (C16)
-html = informe_con([{"funcion": "Gestión del proyecto", "horas_mes": 64},
+html = informe_con([{"funcion": "Soporte funcional del ERP", "horas_mes": 64},
                     {"funcion": "Soporte de primer nivel", "horas_mes": 40}])
 assert ">Bajo (provisional)<" in html, "82.900 € + 104 h × 20 €/h × 4 meses = 91.220 € no cabe en 90.000 €"
 assert "incluso el escenario bajo (91.220 €) supera el presupuesto del cliente (90.000 €)" in html
 print("OK 4: con 104 h/mes sin tarifa, el margen de 7.100 € no alcanza y el encaje pasa a «Bajo (provisional)»")
 
 # 5) Sin horas no hay mínimo que contar, pero el encaje sigue siendo provisional
-html = informe_con(["Gestión del proyecto"])
+html = informe_con(["Soporte funcional del ERP"])
 assert ">Medio (provisional)<" in html and "Contando al menos" not in html
 print("OK 5: una función sin horas no suma mínimo, pero el encaje queda como provisional")
 
 # 6) C17: el aviso habla de horas de personas, y la formación queda fuera de las funciones sin tarifa
-html = informe_con([{"funcion": "Gestión del proyecto", "horas_mes": 32}])
-assert "Ojo: el total no incluye las horas de Gestión del proyecto (32 h/mes)" in html
+html = informe_con([{"funcion": "Soporte funcional del ERP", "horas_mes": 32}])
+assert "Ojo: el total no incluye las horas de Soporte funcional del ERP (32 h/mes)" in html
 assert "así que el encaje es provisional" in html
 # Limpieza del 28 oct: el aviso del 37 («el total y el encaje no incluyen…») repetía este
-assert html.count("Gestión del proyecto (32 h/mes)") == 1 and "el total y el encaje no incluyen" not in html
+assert html.count("Soporte funcional del ERP (32 h/mes)") == 1 and "el total y el encaje no incluyen" not in html
 
 os.environ.pop("INFRACOST_API_KEY", None)
 ec._resolve_infracost_binary = lambda: None

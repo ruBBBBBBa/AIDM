@@ -20,7 +20,7 @@ import yaml  # fallo 85: el tipo de cambio de data_structures/costes.yaml
 import progreso
 from agents import inventario as inventario_mod  # fallo 88
 from crewai import Agent, Crew, Process, Task
-from pydantic import BaseModel, Field, PrivateAttr, field_validator, ValidationError
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator, ValidationError
 import gateway
 
 from utils import (_CANTIDAD_RE, _IMPORTE as _IMPORTE_CLIENTE, _make_agent, _normalize_text, _valor_cantidad, build_llm,
@@ -262,6 +262,28 @@ def _perfiles_con_tarifa() -> list[str]:
 PERFILES_CON_TARIFA = _perfiles_con_tarifa()  # lista cerrada de perfiles que puede usar el agente; si no hay CSV, queda vacía
 
 
+def _notas_de_tarifa() -> dict[str, str]:
+    """Fallo 118: la columna Nota de bd/costes_perfil.csv, {perfil en minúsculas: nota}; la llevan las tarifas que no
+    son de la tabla oficial de la empresa (la de Project Manager, orientativa)."""
+    if not CSV_TARIFAS.exists():
+        return {}
+    with open(CSV_TARIFAS, encoding="utf-8-sig", newline="") as f:
+        return {_clave_perfil(fila.get("Perfil") or ""): (fila.get("Nota") or "").strip()
+                for fila in csv.DictReader(f, skipinitialspace=True) if (fila.get("Nota") or "").strip()}
+
+
+# Fallo 118: la gestión del proyecto tiene perfil en la tabla. El 21 nov el equipo la llamó «Gestión del Proyecto y
+# Coordinación del Servicio (Project Management / Scrum Master)» y salió «sin tarifa». Solo se reconocen nombres que
+# dicen gestión, jefatura o dirección del proyecto; «Data Product Manager» es otro perfil
+PROJECT_MANAGER = next((p for p in PERFILES_CON_TARIFA if _clave_perfil(p) == "project manager"), "")
+_GESTION_DE_PROYECTO = re.compile(r"\bproject manag|\bgestion (?:del?|de los) proyectos?\b|"
+                                  r"\b(?:jefe|jefa|director|directora) (?:del?) proyectos?\b")
+
+
+def _es_gestion_de_proyecto(nombre: str) -> bool:
+    return bool(PROJECT_MANAGER) and bool(_GESTION_DE_PROYECTO.search(_normalize_text(nombre or "")))
+
+
 class PerfilEquipo(BaseModel):
     # El enum va solo en el esquema que ve el modelo. Python acepta cualquier nombre para no perder el
     # equipo entero por uno mal escrito: el que no tenga tarifa se marca y se avisa junto al total.
@@ -278,7 +300,7 @@ class PerfilEquipo(BaseModel):
 
 class FuncionSinTarifa(BaseModel):
     funcion: str = Field(description="Trabajo de una persona que no encaja en ningún perfil de la tabla de tarifas "
-                                     "(por ejemplo, la gestión del proyecto)")
+                                     "(por ejemplo, un experto en un programa concreto del cliente)")  # fallo 118
     horas_mes: int = Field(default=0, description="Horas al mes que necesita en el desarrollo")
     # Fallo 55: como los perfiles, con las horas de la implantación aparte; antes el modelo partía la función en dos
     horas_mes_implantacion: int = Field(default=0, description="Horas al mes en la implantación; 0 si no participa")
@@ -340,6 +362,22 @@ class _EquipoDeUnAlcance(BaseModel):
             union.horas_mes = max(union.horas_mes, horas_dev)
             union.horas_mes_implantacion = max(union.horas_mes_implantacion, horas_impl)
         return list(unidas.values())
+
+    @model_validator(mode="after")
+    def _gestion_con_tarifa(self):
+        """Fallo 118: la gestión del proyecto va con el perfil Project Manager de la tabla, aunque el modelo la nombre
+        de otra forma o la deje como función sin tarifa (con nivel Middle: su tarifa es la misma en los tres)."""
+        for p in self.perfiles:
+            if _clave_perfil(p.perfil) != _clave_perfil(PROJECT_MANAGER) and _es_gestion_de_proyecto(p.perfil):
+                logger.info("«%s» es la gestión del proyecto: va como %s", p.perfil, PROJECT_MANAGER)
+                p.perfil = PROJECT_MANAGER
+        gestion = [f for f in self.funciones_sin_tarifa if _es_gestion_de_proyecto(f.funcion)]
+        for f in gestion:
+            logger.info("La función «%s» es la gestión del proyecto: va como %s", f.funcion, PROJECT_MANAGER)
+            self.perfiles.append(PerfilEquipo(perfil=PROJECT_MANAGER, nivel="Middle", horas_mes=f.horas_mes,
+                                              horas_mes_implantacion=f.horas_mes_implantacion))
+        self.funciones_sin_tarifa = [f for f in self.funciones_sin_tarifa if f not in gestion]
+        return self
 
 
 # Fallo 86: el 14 nov, costes salió con «4–10 meses» y encaje «Medio» porque «cabía el escenario bajo», que era el
@@ -432,6 +470,7 @@ def _calcular_equipo(equipo: _EquipoDeUnAlcance, tarifas: dict[tuple[str, str], 
     dev_min, dev_max = meses_min - meses_impl, meses_max - meses_impl
 
     filas, no_sumados = [], []
+    notas, con_nota = _notas_de_tarifa(), []  # fallo 118
     mensual_dev = mensual_impl = 0.0
     falta_dev = falta_impl = 0  # horas al mes sin tarifa, por fase
     for p in equipo.perfiles:
@@ -449,8 +488,13 @@ def _calcular_equipo(equipo: _EquipoDeUnAlcance, tarifas: dict[tuple[str, str], 
             continue
         mensual_dev += p.horas_mes * tarifa
         mensual_impl += h_impl * tarifa
-        filas.append(f"| {nombre} | {p.nivel} | {_eur(tarifa)}/h | {p.horas_mes} | {h_impl} |" if con_fases
-                     else f"| {nombre} | {p.nivel} | {p.horas_mes} | {_eur(tarifa)}/h | {_eur(p.horas_mes * tarifa)} |")
+        # Fallo 118: una tarifa con nota en la tabla (la de Project Manager) no es la oficial: se dice al lado
+        orientativa = " (tarifa orientativa)" if _clave_perfil(p.perfil) in notas else ""
+        if orientativa and nombre not in con_nota:
+            con_nota.append(nombre)
+        filas.append(f"| {nombre} | {p.nivel} | {_eur(tarifa)}/h{orientativa} | {p.horas_mes} | {h_impl} |" if con_fases
+                     else f"| {nombre} | {p.nivel} | {p.horas_mes} | {_eur(tarifa)}/h{orientativa} | "
+                          f"{_eur(p.horas_mes * tarifa)} |")
 
     desarrollo_min, desarrollo_max = mensual_dev * dev_min, mensual_dev * dev_max
     implantacion = mensual_impl * meses_impl
@@ -478,6 +522,9 @@ def _calcular_equipo(equipo: _EquipoDeUnAlcance, tarifas: dict[tuple[str, str], 
             "",
             f"**Coste del equipo en {meses} meses: {_rango(total_min, total_max)}**",
         ]
+    if con_nota:  # fallo 118
+        lineas += ["", f"Tarifa orientativa: la de {_lista(con_nota)} no es de la tabla oficial de tarifas de la "
+                       "empresa."]
     if sin_meses: #Fallo 61: aviso de que se ha contado 1 mes de implantación aunque el equipo trajera 0 meses para ella
         lineas += ["", "Ojo: el equipo traía horas de implantación, pero ningún mes para ella. Se ha contado 1 mes, el "
                        "último del plazo; revisa cuántos hacen falta."]
@@ -1965,8 +2012,14 @@ def run_estimation_crew(
     catalogo_perfiles = (
         "Nombra cada perfil con uno de estos, tal cual, porque son los que tienen tarifa en la empresa: "
         f"{', '.join(PERFILES_CON_TARIFA)}. Es un catálogo para elegir, no una lista que haya que cubrir. "
-        "Si hace falta trabajo de una persona que no encaja en ninguno (por ejemplo, la gestión del proyecto), dilo "
-        "aparte como función sin perfil en la tabla de tarifas, con sus horas al mes; no inventes un perfil para ella. "
+        "Si hace falta trabajo de una persona que no encaja en ninguno (por ejemplo, un experto en un programa concreto "
+        "del cliente), dilo aparte como función sin perfil en la tabla de tarifas, con sus horas al mes; no inventes un "
+        "perfil para ella. "
+        # Fallo 118: la gestión del proyecto tiene perfil; sus horas las decide el agente, no Python
+        + (f"La gestión del proyecto va con el perfil {PROJECT_MANAGER}, con ese nombre. Su dedicación no es fija: "
+           "decídela según el tipo de proyecto y cada fase, y justifícala. Por ejemplo, en una transferencia de "
+           "conocimiento tiene pocas horas al principio y más después; un arranque con muchas integraciones necesita "
+           "más al inicio. " if PROJECT_MANAGER else "") +
         "La formación, las licencias y los servicios no son funciones del equipo: se valoran en los costes. "
     ) if PERFILES_CON_TARIFA else ""
 
@@ -2029,6 +2082,9 @@ def run_estimation_crew(
             "el nivel (Junior/Middle/Senior) y las horas al mes en el desarrollo (horas_mes) y en la implantación "
             "(horas_mes_implantacion), con 0 en la fase en la que no participe. 160 horas al mes es jornada completa: úsala solo para "
             "quien trabaje a tiempo completo en este alcance, y a los perfiles con dedicación parcial ponles las horas que les correspondan. "
+            # Fallo 118: la gestión del proyecto, con su perfil y las horas que justificó la tarea anterior
+            + (f"La gestión del proyecto va en perfiles como {PROJECT_MANAGER}, no en funciones_sin_tarifa, con las "
+               "horas de cada fase que justificó la tarea anterior. " if PROJECT_MANAGER else "") +
             # Fallo 49: los meses del piloto, y una implantación más corta que el plazo
             "Indica también cuántos meses trabajará el equipo en el alcance que se presupuesta (meses_min y meses_max): "
             "si el cliente pide un piloto, los meses del piloto, no los del despliegue completo. En meses_implantacion "

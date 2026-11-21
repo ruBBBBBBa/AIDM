@@ -45,12 +45,12 @@ def informe() -> CostEstimationReport:
 tarifas = _cargar_tarifas()
 
 # 1) La lista cerrada sale del CSV y va en el esquema que ve el modelo
-assert len(PERFILES_CON_TARIFA) == 13 and PERFILES_CON_TARIFA[1] == "Data Analyst/BI"
+assert len(PERFILES_CON_TARIFA) == 14 and PERFILES_CON_TARIFA[1] == "Data Analyst/BI"
 esquema = EquipoEstimado.model_json_schema()
 assert esquema["$defs"]["PerfilEquipo"]["properties"]["perfil"]["enum"] == PERFILES_CON_TARIFA
 assert "funciones_sin_tarifa" in esquema["properties"]
 assert "funciones_sin_tarifa" not in esquema.get("required", []), "debe poder quedar vacía"
-print("OK 1: el esquema del equipo solo ofrece los 13 perfiles de bd/costes_perfil.csv")
+print("OK 1: el esquema del equipo solo ofrece los 14 perfiles de bd/costes_perfil.csv")
 
 # 2) Un perfil de la tabla escrito de otra forma sí se suma
 variantes = EquipoEstimado(
@@ -70,7 +70,7 @@ equipo_llama = EquipoEstimado(
         PerfilEquipo(perfil="Data Engineer", nivel="Senior", horas_mes=160),                    # 7.200
         PerfilEquipo(perfil="Data Scientist", nivel="Senior", horas_mes=160),                   # 8.800
         PerfilEquipo(perfil="Business Intelligence Developer", nivel="Middle", horas_mes=80),
-        PerfilEquipo(perfil="Project Manager", nivel="Middle", horas_mes=40),
+        PerfilEquipo(perfil="Scrum Master", nivel="Middle", horas_mes=40),  # fallo 118: Project Manager ya tiene tarifa
         PerfilEquipo(perfil="IT Support Specialist", nivel="Junior", horas_mes=20),
     ],
     meses_min=4, meses_max=4,
@@ -79,7 +79,7 @@ calculo = _calcular_equipo(equipo_llama, tarifas)
 assert calculo["mensual"] == 16_000 and calculo["total_min"] == 64_000
 assert calculo["no_sumados"] == [
     "Business Intelligence Developer (Middle, 80 h/mes)",
-    "Project Manager (Middle, 40 h/mes)",
+    "Scrum Master (Middle, 40 h/mes)",
     "IT Support Specialist (Junior, 20 h/mes)",
 ]
 assert "Sin presupuestar, porque no tienen tarifa en la tabla: Business Intelligence Developer" in calculo["texto"]
@@ -88,7 +88,7 @@ print("OK 3: equipo del 19 oct = 16.000 €/mes y los 3 perfiles sin tarifa qued
 # 4) El aviso sale junto al total y al encaje, antes del motivo. Con 84.000 € y 90.000 € de presupuesto,
 #    el encaje habría sido «Alto» aunque falten tres perfiles; desde el fallo 42 cuenta un mínimo por ellos
 html = _format_cost_report(informe(), equipo=calculo)
-aviso = "Ojo: el total no incluye las horas de Business Intelligence Developer (Middle, 80 h/mes); Project Manager"
+aviso = "Ojo: el total no incluye las horas de Business Intelligence Developer (Middle, 80 h/mes); Scrum Master"
 assert aviso in html, "falta el aviso de los perfiles que no se suman"
 assert ">84.000 €</div>" in html and ">Bajo (provisional)<" in html
 assert html.index("Encaje con el presupuesto") < html.index(aviso) < html.index("Contando al menos")
@@ -99,11 +99,11 @@ print("OK 4: «Ojo: el total no incluye las horas de…» aparece debajo del enc
 con_funcion = EquipoEstimado(
     perfiles=[PerfilEquipo(perfil="Data Engineer", nivel="Middle", horas_mes=160)],
     meses_min=4, meses_max=4,
-    funciones_sin_tarifa=["Gestión del proyecto"],
+    funciones_sin_tarifa=["Soporte funcional del ERP"],
 )
 calculo = _calcular_equipo(con_funcion, tarifas)
-assert calculo["no_sumados"] == ["Gestión del proyecto"]
-assert "no incluye las horas de Gestión del proyecto" in _format_cost_report(informe(), equipo=calculo)
+assert calculo["no_sumados"] == ["Soporte funcional del ERP"]
+assert "no incluye las horas de Soporte funcional del ERP" in _format_cost_report(informe(), equipo=calculo)
 print("OK 5: las funciones sin perfil en la tabla también se avisan")
 
 # 6) Si todo tiene tarifa, no hay aviso

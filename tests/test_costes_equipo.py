@@ -28,8 +28,8 @@ from agents.estimation_crew import (
 tarifas = _cargar_tarifas()
 assert tarifas[("data engineer", "senior")] == 45
 assert tarifas[("data analyst/bi", "middle")] == 28
-assert len(tarifas) == 13 * 3, f"se esperaban 39 tarifas y hay {len(tarifas)}"
-print("OK 1: tarifas leídas de bd/costes_perfil.csv (13 perfiles × 3 niveles)")
+assert len(tarifas) == 14 * 3, f"se esperaban 42 tarifas y hay {len(tarifas)}"  # fallo 118: y Project Manager
+print("OK 1: tarifas leídas de bd/costes_perfil.csv (14 perfiles × 3 niveles)")
 
 # 2) El coste del equipo se calcula en Python: horas × tarifa × meses
 equipo = EquipoEstimado(
@@ -345,5 +345,35 @@ calculado = _calcular_equipo(mvp, tarifas)  # sin horas sin tarifa, no
 calculado["resto"] = _calcular_equipo(resto, tarifas)
 assert "(provisional)" not in ec._format_cost_report(corto, "", calculado, dos)
 print("OK 13: con horas sin tarifa, el encaje del equipo ajustado también es provisional")
+
+# 14) Fallo 118: la gestión del proyecto va como Project Manager, a 52 €/h (tarifa orientativa) en los tres niveles. El
+#     21 nov el equipo la dejó como función sin tarifa con otro nombre, y salía «sin tarifa» y el encaje provisional
+assert tarifas[("project manager", "junior")] == tarifas[("project manager", "middle")] == \
+       tarifas[("project manager", "senior")] == 52
+GESTION = "Gestión del Proyecto y Coordinación del Servicio (Project Management / Scrum Master)"
+con_pm = EquipoEstimado(perfiles=[PerfilEquipo(perfil="Data Engineer", nivel="Senior", horas_mes=160)],
+                        funciones_sin_tarifa=[{"funcion": GESTION, "horas_mes": 40}], meses_min=4, meses_max=4)
+assert [p.perfil for p in con_pm.perfiles] == ["Data Engineer", "Project Manager"] and not con_pm.funciones_sin_tarifa
+calculado = _calcular_equipo(con_pm, tarifas)
+assert calculado["total_max"] == (7_200 + 40 * 52) * 4 and not calculado["no_sumados"], calculado
+assert "| Project Manager | Middle | 40 | 52 €/h (tarifa orientativa) | 2.080 € |" in calculado["texto"], calculado["texto"]
+assert "Tarifa orientativa: la de Project Manager no es de la tabla oficial de tarifas de la empresa." in calculado["texto"]
+# Con otro nombre de perfil, también; «Data Product Manager» es otro perfil y no se toca
+otros = EquipoEstimado(perfiles=[PerfilEquipo(perfil="Jefe de proyecto", nivel="Senior", horas_mes=20),
+                                 PerfilEquipo(perfil="Data Product Manager", nivel="Senior", horas_mes=20)],
+                       meses_min=4, meses_max=4)
+assert [p.perfil for p in otros.perfiles] == ["Project Manager", "Data Product Manager"]
+# En el informe: sin aviso de «sin tarifa» ni encaje provisional, y el total y el equipo ajustado la incluyen
+calculado["resto"] = _calcular_equipo(resto, tarifas)
+html = ec._format_cost_report(corto, "", calculado, dos)
+assert "no tienen tarifa" not in html and "(provisional)" not in html, html
+assert "Equipo ajustado al presupuesto" in html
+assert "| Project Manager | Middle | " in calculado["ajustado"]["texto"] and "(tarifa orientativa)" in calculado["ajustado"]["texto"]
+# El prompt de perfiles nombra el perfil y deja que el agente decida y justifique su dedicación
+perfiles_prompt = next(p for p in prompts[::-1] if "identifica los perfiles" in p)
+assert "La gestión del proyecto va con el perfil Project Manager, con ese nombre." in perfiles_prompt
+assert "decídela según el tipo de proyecto y cada fase, y justifícala" in perfiles_prompt
+assert "por ejemplo, la gestión del proyecto" not in perfiles_prompt
+print("OK 14: la gestión del proyecto va como Project Manager a 52 €/h, con «tarifa orientativa» y sin aviso de «sin tarifa»")
 
 print("\nTodo bien: el fallo 5 está arreglado.")
