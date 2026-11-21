@@ -2,15 +2,14 @@ import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 from crewai import Agent, Crew, Process, Task
 from dotenv import load_dotenv
 import gateway
 import progreso
 from agents import inventario
-from utils import (PLATAFORMA_OBJETIVO, _make_agent, _normalize_text, con_nota_de_servicios, contexto_cliente, load_agents_config, load_problem_case,
-                   parse_html, md_to_html, sin_importes, sin_emojis)
+from utils import (INFORME_GENERADO, PLATAFORMA_OBJETIVO, _make_agent, _normalize_text, con_nota_de_servicios, contexto_cliente, html_del_informe,
+                   load_agents_config, load_problem_case, parse_html, md_to_html, sin_importes, sin_emojis)
 
 load_dotenv(".env")
 
@@ -31,7 +30,7 @@ _ROADMAP_IDS = [
     "roadmap-bi",
 ]
 
-REPORT_PATH = Path("data_structures/solution_builder_report.html")
+REPORT_PATH = INFORME_GENERADO  # fallo 116: el informe de la ejecución, no la plantilla
 
 # Las tareas del roadmap no dan por hecha ninguna nube ni herramienta: usan las del cliente o las de la propuesta.
 # Fallo 67: si el agente de plataforma ha elegido una nube (PLATAFORMA OBJETIVO en los datos del cliente), manda esa.
@@ -118,8 +117,8 @@ def etiquetas_del_flujo(filas: list[dict], problem_case: dict | None) -> dict[st
 
 def _poner_etiquetas(soup, etiquetas: dict[str, str]) -> None:
     """Fallo 102: cambia en el HTML la etiqueta del nodo del flujo, el chip de la tarjeta y, si nombra la herramienta
-    («Estrategia y pipelines con Azure Data Factory»), el subtítulo de la tarjeta. La plantilla se rellena en su sitio
-    y vale para la ejecución siguiente: un chip vacío se oculta (no se borra) y el subtítulo guarda su base."""
+    («Estrategia y pipelines con Azure Data Factory»), el subtítulo de la tarjeta. Un chip vacío se oculta.
+    Fallo 116: cada ejecución parte de la plantilla, así que el subtítulo trae siempre la herramienta de la plantilla."""
     for div_id, texto in etiquetas.items():
         nodo = soup.find("div", class_="rdm-pipe-node", onclick=re.compile(re.escape(f"'{div_id}'")))
         tech = nodo.find("span", class_="rdm-pipe-tech") if nodo else None
@@ -130,15 +129,9 @@ def _poner_etiquetas(soup, etiquetas: dict[str, str]) -> None:
             continue
         chip = tarjeta.find("span", class_="rdm-tech-chip")
         subtitulo = tarjeta.select_one(".section-header-text > span")
-        if subtitulo is not None:
-            if not subtitulo.has_attr("data-base"):
-                viejo = chip.get_text(strip=True) if chip is not None else ""
-                actual = subtitulo.get_text()
-                subtitulo["data-base"] = (actual.replace(f" con {viejo}", "") if viejo and f" con {viejo}" in actual
-                                          else actual)
-                subtitulo["data-con"] = "1" if viejo and f" con {viejo}" in actual else ""
-            base = subtitulo["data-base"]
-            subtitulo.string = f"{base} con {texto}" if subtitulo.get("data-con") and texto else base
+        viejo = chip.get_text(strip=True) if chip is not None else ""
+        if subtitulo is not None and viejo and f" con {viejo}" in subtitulo.get_text():
+            subtitulo.string = subtitulo.get_text().replace(f" con {viejo}", f" con {texto}" if texto else "")
         if chip is not None:
             chip.string = texto
             if texto:
@@ -159,14 +152,8 @@ def inject_roadmap_into_html(
 ) -> None:
     """Inyecta los 7 outputs individuales del roadmap en sus respectivos divs en el HTML.
     Fallo 102: y, con `etiquetas`, las del flujo y las de cada tarjeta (las de etiquetas_del_flujo)."""
-    if not REPORT_PATH.exists():
-        raise FileNotFoundError(
-            f"El archivo HTML no existe en {REPORT_PATH}. "
-            "Asegúrate de que solution_builder_report.html esté presente."
-        )
-
     phase_outputs = [data_sources_output, ingestion_output, storage_output, etl_output, modeling_output, ml_output, bi_output]
-    html = REPORT_PATH.read_text(encoding="utf-8")
+    html = html_del_informe(REPORT_PATH)  # fallo 116: el informe en curso; si aún no hay, la plantilla
     soup = parse_html(html)
 
     for div_id, raw_text in zip(_ROADMAP_IDS, phase_outputs):

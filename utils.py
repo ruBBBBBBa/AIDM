@@ -62,7 +62,16 @@ VALID_STATUSES = {"pending fields", "completed"}
 PLATAFORMA_OBJETIVO = "plataforma_objetivo"
 PROBLEM_CASE_PATH = Path("data_structures/problem_case.json")
 AGENTS_FILE = Path("data_structures/agents.yaml")
+# Fallo 116: la plantilla del informe no se toca. Cada ejecución empieza su informe desde ella (en la plataforma) y lo
+# escribe en su propio archivo, en el .gitignore, que es el que leen la web y Streamlit
+PLANTILLA_INFORME = Path("data_structures/solution_builder_report.html")
+INFORME_GENERADO = Path("data_structures/informe_generado.html")
 logger = logging.getLogger("aidm")
+
+
+def html_del_informe(ruta: Path) -> str:
+    """Fallo 116: el HTML del informe en curso; si todavía no hay, el de la plantilla."""
+    return (ruta if ruta.exists() else PLANTILLA_INFORME).read_text(encoding="utf-8")
 
 #Prueba para fallback por si uno de los modelos no llega a terminar, se puede usar otro modelo de reserva con mas tokens
 '''

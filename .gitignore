@@ -17,6 +17,9 @@ ejecucionesViejas/
 
 problem_case.json
 
+# Fallo 116: el informe de cada ejecución; la plantilla (solution_builder_report.html) no se toca
+data_structures/informe_generado.html
+
 # Gateway (2): prompts y respuestas grabados para comparar modelos; llevan datos del cliente
 pruebas_modelos/grabaciones/
 pruebas_modelos/resultados/

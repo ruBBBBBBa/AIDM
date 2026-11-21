@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -10,11 +9,11 @@ from agents.estimation_crew import run_estimation_crew
 from agents.proposal_crew import run_proposal_crew
 import re
 
-from utils import md_to_html, nota_servicios, parse_html, revisar_servicios, sin_importes
+from utils import INFORME_GENERADO, html_del_informe, md_to_html, nota_servicios, parse_html, revisar_servicios, sin_importes
 
 load_dotenv(".env")
 
-SOLUTION_REPORT_PATH = Path("data_structures/solution_builder_report.html")
+SOLUTION_REPORT_PATH = INFORME_GENERADO  # fallo 116: el informe de la ejecución, no la plantilla
 _SECTION_IDS = {
     "architecture":    "content-architecture",
     "governance":      "content-governance",
@@ -44,17 +43,10 @@ def _inject_into_html(
     team_profiles_output: str,
 ) -> None:
     """
-    Lee el HTML de plantilla existente y reemplaza el contenido de cada
+    Lee el informe en curso (fallo 116: si aún no hay, la plantilla) y reemplaza el contenido de cada
     <div id="..."> con el output renderizado del agente correspondiente.
-    El fichero debe existir previamente; esta función nunca lo crea desde cero.
     """
-    if not SOLUTION_REPORT_PATH.exists():
-        raise FileNotFoundError(
-            f"El archivo HTML de plantilla no existe en {SOLUTION_REPORT_PATH}. "
-            "Asegúrate de que solution_builder_report.html esté presente antes de ejecutar este módulo."
-        )
-
-    html = SOLUTION_REPORT_PATH.read_text(encoding="utf-8")
+    html = html_del_informe(SOLUTION_REPORT_PATH)
     soup = parse_html(html)
 
     replacements = {

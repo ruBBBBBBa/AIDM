@@ -102,6 +102,7 @@ assert etiquetas == {"roadmap-sources": "Sistemas del cliente",
                      "roadmap-ml": "SageMaker AI", "roadmap-bi": "Power BI"}, etiquetas
 sin_bi = [f for f in INVENTARIO_AWS if f["capa"] != "visualización"]
 assert rb.etiquetas_del_flujo(sin_bi, EN_AWS)["roadmap-bi"] == "Amazon Web Services (AWS)"
+shutil.copy("data_structures/solution_builder_report.html", copia)  # fallo 116: cada ejecución parte de la plantilla
 rb.inject_roadmap_into_html(*["Texto de la fase."] * 7, etiquetas=etiquetas)
 sopa = BeautifulSoup(copia.read_text(encoding="utf-8"), "html.parser")
 flujo = [s.get_text(strip=True) for s in sopa.select(".rdm-pipe-tech")]
@@ -110,9 +111,13 @@ assert flujo == list(etiquetas.values()) and chips == list(etiquetas.values()), 
 assert not any(a in " ".join(flujo + chips) for a in SOLO_AZURE)
 subtitulo = sopa.select_one("#card-roadmap-ingestion .section-header-text > span").get_text()
 assert subtitulo == "Estrategia y pipelines con Kinesis Data Streams · Database Migration Service", subtitulo
-# La plantilla se rellena en su sitio: la ejecución de arriba, sin inventario ni plataforma, dejó los chips ocultos y
-# no borrados, así que esta los ha vuelto a poner
 assert not sopa.select("#rdm-stages-container .rdm-tech-chip[hidden]")
+# Fallo 116: una fase sin etiqueta oculta su chip y deja el subtítulo sin herramienta
+shutil.copy("data_structures/solution_builder_report.html", copia)
+rb.inject_roadmap_into_html(*["Texto de la fase."] * 7, etiquetas={**etiquetas, "roadmap-ingestion": ""})
+sopa = BeautifulSoup(copia.read_text(encoding="utf-8"), "html.parser")
+assert sopa.select("#card-roadmap-ingestion .rdm-tech-chip[hidden]")
+assert sopa.select_one("#card-roadmap-ingestion .section-header-text > span").get_text() == "Estrategia y pipelines"
 print("OK 4: las etiquetas del flujo y los chips del roadmap salen del inventario, sin los de Azure de la plantilla")
 
 print("\nTodo bien: el fallo 6 está arreglado (en la parte que se puede comprobar sin el LLM real).")

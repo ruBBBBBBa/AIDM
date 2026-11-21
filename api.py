@@ -33,10 +33,10 @@ for _flujo in (sys.stdout, sys.stderr):
         _flujo.reconfigure(encoding="utf-8", errors="replace")
 
 from graph import run_graph  # los módulos pesados se cargan una sola vez, al arrancar el servidor
-from utils import fuentes_locales  # fallo 66: el informe sin enlaces a Google Fonts
+from utils import INFORME_GENERADO, fuentes_locales  # fallo 66: el informe sin enlaces a Google Fonts
 
 DATA = Path("data_structures")
-REPORT_PATH = DATA / "solution_builder_report.html"
+REPORT_PATH = INFORME_GENERADO  # fallo 116: el informe de la ejecución, no la plantilla
 
 app = FastAPI(title="AIDM Discovery Agent")
 lock = threading.Lock()  # problem_case.json es un único archivo: una ejecución a la vez

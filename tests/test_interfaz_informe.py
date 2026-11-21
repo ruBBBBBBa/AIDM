@@ -22,12 +22,19 @@ import webbrowser
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+import shutil
+import tempfile
+
+import utils
 from utils import fuentes_locales
 
 if not hasattr(st, "iframe"):
     sys.exit(f"Tu Streamlit es {st.__version__}; st.iframe necesita 1.56 o superior: pip install -U streamlit")
 
-INFORME = Path("data_structures/solution_builder_report.html")
+# Fallo 116: Streamlit lee el informe generado, no la plantilla; aquí, una copia de la plantilla en una carpeta temporal
+INFORME = Path(tempfile.mkdtemp()) / "informe_generado.html"
+shutil.copy(utils.PLANTILLA_INFORME, INFORME)
+utils.INFORME_GENERADO = INFORME
 
 # Grafo simulado: devuelve lo que devolvería run_graph() en cada caso
 grafo = types.ModuleType("graph")

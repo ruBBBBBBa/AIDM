@@ -22,7 +22,7 @@ import utils
 from utils import _normalize_text, contexto_cliente, es_valor_de_relleno, md_to_html, parse_html
 
 CONFIG = Path("data_structures/hiperescalares.yaml")
-REPORT_PATH = Path("data_structures/solution_builder_report.html")
+REPORT_PATH = utils.INFORME_GENERADO  # fallo 116: el informe de la ejecución, no la plantilla
 TARIFAS = Path("bd/costes_perfil.csv") #Fallo 71: La misma tabla de tarifas que usan los costes
 SECCION = "content-platform"
 logger = logging.getLogger("aidm")
@@ -489,11 +489,12 @@ def mensaje_chat(resultado: dict, config: dict, problem_case: dict) -> str:
 
 
 def _inyectar(markdown: str) -> None:
-    """Escribe la sección en el informe (div content-platform), como hacen las demás secciones."""
-    if not REPORT_PATH.exists():
-        print(f"[plataforma] WARN: no existe {REPORT_PATH}")
+    """Escribe la sección en el informe (div content-platform), como hacen las demás secciones.
+    Fallo 116: es la primera sección de cada ejecución, así que el informe empieza aquí, desde la plantilla."""
+    if not utils.PLANTILLA_INFORME.exists():
+        print(f"[plataforma] WARN: no existe {utils.PLANTILLA_INFORME}")
         return
-    soup = parse_html(REPORT_PATH.read_text(encoding="utf-8"))
+    soup = parse_html(utils.PLANTILLA_INFORME.read_text(encoding="utf-8"))
     destino = soup.find("div", id=SECCION)
     if destino is None:
         print(f"[plataforma] WARN: div id='{SECCION}' no encontrado en el HTML")

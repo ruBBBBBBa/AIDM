@@ -28,6 +28,15 @@ import streamlit as st
 from streamlit.runtime.scriptrunner_utils.exceptions import StopException
 from streamlit.testing.v1 import AppTest
 
+import shutil
+import tempfile
+
+import utils
+
+# Fallo 116: Streamlit lee el informe generado, no la plantilla; aquí, una copia de la plantilla en una carpeta temporal
+utils.INFORME_GENERADO = Path(tempfile.mkdtemp()) / "informe_generado.html"
+shutil.copy(utils.PLANTILLA_INFORME, utils.INFORME_GENERADO)
+
 # Grafo simulado: cuenta cuántas veces se genera el informe
 grafo = types.ModuleType("graph")
 grafo.llamadas = []

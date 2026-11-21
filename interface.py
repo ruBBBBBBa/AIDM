@@ -2,7 +2,6 @@ import base64
 import re
 import time
 from datetime import datetime
-from pathlib import Path
 
 import sys
 
@@ -10,12 +9,11 @@ import streamlit as st
 
 _inicio = time.perf_counter()
 from graph import run_graph
+import utils
 from utils import fuentes_locales
 _carga = time.perf_counter() - _inicio  # fallo 66: solo la primera vez; en cada rerun los módulos ya están cargados
 if _carga > 1:
     print(f"[aidm] Carga de los módulos (LiteLLM, CrewAI, agentes): {_carga:.1f} s")
-
-REPORT_PATH = Path("data_structures/solution_builder_report.html")
 
 # En Windows, si la salida va a un archivo, Python escribe en cp1252 y un print con "≥" o un emoji
 # lanza un error que tumba el turno. Con UTF-8 (y "replace" por si acaso) un print nunca rompe nada.
@@ -50,7 +48,8 @@ def guardar_informe(response: dict) -> None:
     # Se guarda una copia en la sesión para que siga visible aunque otra ejecución sobrescriba el archivo.
     cliente = response.get("problem_case", {}).get("nombre_del_cliente", {}).get("value", "")
     cliente = re.sub(r"[^\w-]+", "_", cliente).strip("_") or "cliente"
-    html = REPORT_PATH.read_text(encoding="utf-8") if REPORT_PATH.exists() else ""
+    informe = utils.INFORME_GENERADO  # fallo 116: el de la ejecución, no la plantilla
+    html = informe.read_text(encoding="utf-8") if informe.exists() else ""
     st.session_state.report_html = fuentes_locales(html)  # fallo 66: la fuente va dentro, sin Google Fonts
     st.session_state.report_filename = f"informe_aidm_{cliente}_{datetime.now():%Y%m%d_%H%M}.html"
     st.session_state.solution_completed = True
