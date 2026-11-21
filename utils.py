@@ -379,9 +379,11 @@ def texto_servicios_a_evitar(problem_case: dict | None, config: dict | None = No
 # (Y, X/Z)» y «(en reemplazo de X)»: entran esas frases y la lista entre paréntesis que va detrás de una de ellas.
 _FRASES_DESCARTE = (r"(?:en sustitucion de|en lugar de|en vez de|sustituye a|sustituir a|alternativa a|se descarta"
                     r"|descartamos|al estar retirad[oa]s?|no estar disponibles?|para suplir|en reemplazo de"
-                    r"|reemplaza a|reemplazar a)")
+                    r"|reemplaza a|reemplazar a|excluid[oa]s?|se excluyen?|excluimos)")
+# Fallo 111 (parte 3): el 21 nov, «Se han excluido servicios no disponibles en la región (como X, Y o Z)». Con una lista
+# entre paréntesis detrás, la frase puede llevar más palabras antes del paréntesis
 _DESCARTE_ANTES = re.compile(
-    _FRASES_DESCARTE + r"\s+(?:[\w-]+\s+){0,3}(?:\([^()]*)?$")
+    _FRASES_DESCARTE + r"\s+(?:(?:[\w-]+\s+){0,3}|(?:[\w-]+\s+){0,8}\([^()]*)$")
 _DESCARTE_DESPUES = re.compile(
     r"^\W*(?:[\w-]+\s+){0,2}?(?:no (?:esta )?disponible|se descarta|queda descartad|descartad[oa]s?\b|retirad[oa]s?\b"
     r"|no se (?:usa|propone))")
@@ -390,7 +392,7 @@ _FIN_DE_FRASE = re.compile(r"[.!?;|\n]")
 
 def _solo_para_descartarlo(normal: str, inicio: int, fin: int) -> bool:
     """Fallo 111: la mención entre inicio y fin está en una frase que descarta el servicio."""
-    antes = _FIN_DE_FRASE.split(normal[max(0, inicio - 80):inicio])[-1]
+    antes = _FIN_DE_FRASE.split(normal[max(0, inicio - 160):inicio])[-1]  # 111 (parte 3): listas largas
     despues = _FIN_DE_FRASE.split(normal[fin:fin + 60])[0]
     return bool(_DESCARTE_ANTES.search(antes) or _DESCARTE_DESPUES.search(despues))
 

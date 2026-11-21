@@ -385,6 +385,18 @@ assert nombres("Al estar retirado el ERP antiguo, la previsión va en Amazon For
 print("OK 16: «al estar retirado», «no estar disponible», «para suplir (…)», «en reemplazo de» y «reemplaza a» "
       "descartan; si el servicio es el que se propone, se sigue marcando")
 
+# 16b) Fallo 111 (parte 3): «excluido», «se excluyen», «excluimos», con la lista entre paréntesis detrás
+assert nombres("Se han excluido servicios no disponibles en la región de destino (como Amazon Macie, Amazon Lookout "
+               "for Vision o Amazon Forecast).", EN_AWS) == []
+assert nombres("Se excluyen los servicios retirados (Amazon Forecast, Amazon Lookout for Vision).", EN_AWS) == []
+assert nombres("Excluimos Amazon Macie: la PII va con reglas propias.", EN_AWS) == []
+# Se sigue marcando: lo excluido es otra cosa, o el servicio se propone fuera del paréntesis
+assert nombres("Quedan excluidos los datos personales; la previsión va en Amazon Forecast.", EN_AWS) == [
+    "Amazon Forecast"]
+assert nombres("Se han excluido los informes antiguos y Amazon Forecast hace la previsión.", EN_AWS) == [
+    "Amazon Forecast"]
+print("OK 16b: «se han excluido … (como X, Y o Z)», «se excluyen» y «excluimos» descartan; lo demás se sigue marcando")
+
 # 17) Fallo 105: con datos en los servidores del cliente, Data Factory necesita un self-hosted integration runtime; va en
 #     el prompt de arquitectura y costes y, si el inventario no lo trae, se añade (desde la fase de Data Factory)
 ERP_LOCAL = {"stack_tecnologico_actual": {"description": "", "value": "SAP Business One on-premises, Excel"}}
