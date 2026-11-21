@@ -94,6 +94,10 @@ def corresponde(servicio: str, componente: str) -> bool:
     Fallo 108: se comparan las bases y por palabras enteras, para que «Power BI (Microsoft 365)» y «Power BI Pro -
     licencias» sean el mismo, pero «Kinesis Data Streams» y «Kinesis Data Firehose» no. Antes, con la cadena entera,
     «Amazon S3» también casaba con «Glue Data Catalog sobre S3»."""
+    # Fallo 108 (parte 2): la puerta de enlace de Power BI con el nombre de su máquina. El 21 nov, «Amazon EC2 Windows
+    # t3.medium (Power BI gateway)» no casaba con la fila de la puerta de enlace: la base quita los paréntesis
+    if all(_TEXTO_PUERTA.search(_normalize_text(n or "")) for n in (servicio, componente)):
+        return True
     a, b = _base(servicio), _base(componente)
     if not a or not b:
         return False

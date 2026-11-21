@@ -332,7 +332,8 @@ mismos = [("AWS Database Migration Service (DMS)", "AWS Database Migration Servi
           ("On-premises Data Gateway (Power BI)", "On‑premises Data Gateway (Power BI) – VM Windows EC2 t3.medium"),
           ("Power BI (Microsoft 365)", "Power BI Pro - licencias para usuarios de negocio"),
           ("Amazon S3 (capas Bronze, Silver y Gold)", "Amazon S3 Standard"),
-          ("Amazon Athena", "Amazon Athena, consultas sobre el lago")]
+          ("Amazon Athena", "Amazon Athena, consultas sobre el lago"),
+          (utils.PUERTA_DE_ENLACE, "Amazon EC2 Windows t3.medium (Power BI gateway)")]  # fallo 108 (parte 2)
 distintos = [("Amazon Kinesis Data Streams", "Amazon Kinesis Data Firehose"),
              ("Amazon S3", "AWS Glue Data Catalog, tablas sobre S3"), ("Amazon Redshift", "Amazon RDS"),
              ("Power BI", "Power Automate"), ("Amazon API Gateway", "On-premises Data Gateway"),
