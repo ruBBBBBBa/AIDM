@@ -154,3 +154,22 @@ finally:
     dal.gateway.completar, dal.gateway.modelo = original_completar, original_modelo
 assert "no ha respondido a tu pregunta anterior, no la repitas igual" in enviados[0]
 print("OK 7: si el usuario no ha respondido, la pregunta no se repite con las mismas palabras")
+
+# 8) Fallo 120: las evidencias no llevan deducciones del modelo, y el prompt pide reescribir el campo que gana detalle.
+#    El 21 nov el stack se quedó en «ERP antiguo» con los programas del cliente solo en evidencias, y una evidencia
+#    decía «(implícito por objetivo de unificación)»
+con_deduccion = [{"field_key": "evidencias", "operation": "merge", "value": [
+    "Usan un ERP de hace 15 años y hojas de cálculo",
+    "Quieren una única fuente de datos (implícito por objetivo de unificación)",
+    "Se deduce que no tienen data warehouse",
+    "The client implied they have no budget"]},
+                 {"field_key": "sector", "value": "Distribución", "operation": "replace"}]
+assert dal._sin_deducciones(con_deduccion) == [{**con_deduccion[0], "value": [
+    "Usan un ERP de hace 15 años y hojas de cálculo"]}, con_deduccion[1]]
+assert dal._sin_deducciones([{"field_key": "evidencias", "value": ["Lo implícito se deduce"]}]) == []
+# Fuera de evidencias no se toca
+assert dal._sin_deducciones([{"field_key": "objetivo_del_proyecto", "value": "Unificar los datos implícitos"}]) == [
+    {"field_key": "objetivo_del_proyecto", "value": "Unificar los datos implícitos"}]
+assert "reescribe ese campo con operation 'replace' y un valor que junte lo que ya tenía y lo nuevo" in enviados[0]
+assert "nada de «implícito por…» ni «se deduce…»" in enviados[0]
+print("OK 8: las evidencias con deducciones del modelo no se guardan, y el campo que gana detalle se reescribe entero")

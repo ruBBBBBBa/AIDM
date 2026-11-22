@@ -286,6 +286,28 @@ def _sin_notas_de_ausencia(updates: list[dict[str, Any]]) -> list[dict[str, Any]
     return limpios
 
 
+# Fallo 120: una evidencia con una deducción del modelo («(implícito por objetivo de unificación)») no es una frase del
+# usuario: el 21 nov salió una
+_DEDUCCION = re.compile(r"\b(?:implicit[oa]s?|implicitamente|se (?:deduce|infiere|presupone|supone)|deducid[oa]s?|"
+                        r"inferid[oa]s?|por deduccion|presumiblemente|implied|inferred)\b")
+
+
+def _sin_deducciones(updates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fallo 120: quita de las evidencias las que llevan una deducción del modelo («implícito por…», «se deduce…»)."""
+    limpios: list[dict[str, Any]] = []
+    for upd in updates:
+        valor = upd.get("value")
+        if upd.get("field_key") != "evidencias" or not isinstance(valor, list):
+            limpios.append(upd)
+            continue
+        buenas = [v for v in valor if not (isinstance(v, str) and _DEDUCCION.search(utils._normalize_text(v)))]
+        if len(buenas) < len(valor):
+            logger.warning("Evidencias descartadas: %d llevan una deducción del modelo", len(valor) - len(buenas))
+        if buenas:
+            limpios.append({**upd, "value": buenas})
+    return limpios
+
+
 # Fallo 107 (b): si el usuario no ha respondido y el LLM repite la pregunta casi igual, se pasa a otro campo
 PARECIDO_MAXIMO = 0.8
 OTRA_PREGUNTA = {
@@ -553,10 +575,15 @@ def _propose_plan_with_agent(user_prompt: str, chat_history: list[dict[str, str]
         "No deduzcas, no estimes ni completes nada por tu cuenta: si un dato no se ha dicho, el campo se queda pendiente. "
         "Nunca escribas cifras (volúmenes, porcentajes, importes, plazos) que el usuario no haya dado.\n"
         "2. Si el usuario da varios datos a la vez, guárdalos todos en este turno, cada uno en su campo, "
-        "aunque no sea el campo por el que preguntaste.\n"
+        "aunque no sea el campo por el que preguntaste. "
+        # Fallo 120: el 21 nov el stack se quedó en «ERP antiguo» y los programas que nombró el cliente, en evidencias
+        "Si da más detalle de un campo que ya tiene valor (por ejemplo, nombra los programas de un stack que estaba "
+        "como «ERP antiguo»), reescribe ese campo con operation 'replace' y un valor que junte lo que ya tenía y lo "
+        "nuevo; no lo dejes solo en evidencias.\n"
         "3. Valores breves y literales: una frase como máximo, con las palabras y cifras del usuario. "
         "Sin markdown (ni ** ni listas) y sin análisis ni recomendaciones: la solución la diseñan otros agentes después.\n"
-        "4. En 'evidencias' (lista, operation 'merge') anota frases cortas de lo que ha dicho el usuario, nunca conclusiones tuyas, "
+        "4. En 'evidencias' (lista, operation 'merge') anota frases cortas de lo que ha dicho el usuario, nunca conclusiones tuyas "
+        "(nada de «implícito por…» ni «se deduce…»), "
         "y sin cambiarles el sentido. Anota también ahí los detalles que no encajan en ningún campo.\n"
         "5. Campos sin dato: no los incluyas en 'updates' (nada de 'no mencionado', 'desconocido', 'N/A' ni similares). "
         "Una respuesta negativa SÍ es un dato y se guarda tal cual: si dice «no tenemos equipo de datos», escribe "
@@ -630,6 +657,7 @@ def run_agent(user_prompt, chat_history: list[dict[str, str]] | None = None):
     ) + " " + str(user_prompt)
     plan["updates"] = _sin_cifras_inventadas(plan.get("updates", []), textos_usuario)
     plan["updates"] = _sin_notas_de_ausencia(plan["updates"])  # fallo 107 (a)
+    plan["updates"] = _sin_deducciones(plan["updates"])  # fallo 120
     plan["updates"], repreguntar = _con_respuesta_cerrada(plan["updates"], problem_case_before, user_prompt,
                                                           _resultado(futuro))
     if repreguntar:
