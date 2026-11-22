@@ -52,6 +52,28 @@ filas:
     por_cada: 100000
     cobro: 100.000 objetos al mes
     gratis_al_mes: 1000000
+  # Fallo 101 (parte 3): Data Quality y la detección de datos sensibles se cobran como DPU-hora de Glue, al precio de
+  # los trabajos ETL (el 21 nov salieron con el precio del modelo, 0,4 y 0,1 €/DPU-hora)
+  - id: aws-glue-data-quality
+    servicio: AWS Glue Data Quality
+    buscar: [glue data quality]
+    concepto: Reglas y recomendaciones de calidad de datos, por DPU-hora (al precio de los trabajos ETL de Glue)
+    oferta: AWSGlue
+    usagetype: EUS2-ETL-DPU-Hour
+    desde: 0
+    unidad: DPU-hora
+    por_cada: 1
+    cobro: DPU-hora
+  - id: aws-glue-datos-sensibles
+    servicio: AWS Glue Sensitive Data Detection
+    buscar: [sensitive data detection, deteccion de datos sensibles]
+    concepto: Detección de datos sensibles en un trabajo de Glue, por DPU-hora (al precio de los trabajos ETL de Glue)
+    oferta: AWSGlue
+    usagetype: EUS2-ETL-DPU-Hour
+    desde: 0
+    unidad: DPU-hora
+    por_cada: 1
+    cobro: DPU-hora
   - id: aws-athena
     servicio: Amazon Athena
     buscar: [athena]
@@ -232,8 +254,6 @@ filas:
 
 # Lo que AIDM propone en AWS y todavía no tiene fila, con el motivo. Sale en el informe de cobertura.
 sin_fila:
-  - servicio: AWS Glue Data Quality
-    motivo: se cobra como DPU-hora de Glue (la fila aws-glue-etl)
   - servicio: AWS Security Hub y AWS Config
     motivo: se cobran por comprobación y por elemento de configuración; sin elegir todavía la SKU
   - servicio: Amazon QuickSight

@@ -287,9 +287,10 @@ finally:
     ec.CSV_PRECIOS = ec_csv
 tipo = ec._cambio()["usd_por_eur"]
 assert abs(leidas["aws-iot"]["precio_eur"] - 1 / tipo) < 1e-9 and leidas["power-bi-pro"]["precio_eur"] == 12.10
-# Y en la tabla real del repo, las filas de AWS (19 desde el fallo 90, con la de EC2 Windows)
+# Y en la tabla real del repo, las filas de AWS (19 desde el fallo 90, con la de EC2 Windows; 21 desde el 101 (parte 3),
+# con Glue Data Quality y la detección de datos sensibles)
 filas_aws = [f for f in ec.PRECIOS_CLOUD.values() if f["proveedor"] == "AWS" and f["moneda"] == "USD"]
-assert len(filas_aws) == 19 and abs(ec.PRECIOS_CLOUD["aws-athena"]["precio_eur"] - 5.65 / tipo) < 1e-9
+assert len(filas_aws) == 21 and abs(ec.PRECIOS_CLOUD["aws-athena"]["precio_eur"] - 5.65 / tipo) < 1e-9
 assert "aws-athena" in ec._tabla_precios(caso(cloud_provider="AWS"), "Consultas con Amazon Athena sobre S3")
 print("OK 12: los precios de AWS salen de la Price List Bulk API, en dólares, y se pasan a euros al leerlos")
 
@@ -351,7 +352,7 @@ informe = ap.actualizar_aws([], {"region": "eu-south-2", "filas": [sin_filtro]},
 assert informe["sin_fila"][0].startswith("EC2 Windows: 4 precios para EUS2-BoxUsage:t3.medium"), informe
 # En la tabla real: la fila de EC2 Windows, de la API, y la puerta de enlace la encuentra con AWS
 ec2 = ec.PRECIOS_CLOUD["aws-ec2-windows-t3-medium"]
-assert ec2["precio_origen"] == "0.064" and "AmazonEC2" in ec2["fuente"] and ec2["fecha"] == "2026-11-20"
+assert ec2["precio_origen"] == "0.064" and "AmazonEC2" in ec2["fuente"] and ec2["fecha"] >= "2026-11-20"  # se actualiza
 assert "aws-ec2-windows-t3-medium" in ec._tabla_precios(caso(cloud_provider="AWS"),
                                                         "On-premises Data Gateway (Power BI) – VM Windows EC2 t3.medium")
 print("OK 13: la VM Windows de la puerta de enlace sale del CSV de EC2, con una sola fila tras los filtros")

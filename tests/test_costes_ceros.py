@@ -162,8 +162,20 @@ paginas = ec._con_precio_de_tabla(ComponenteCoste(**componente(
     tarifa="azure-document-intelligence-precompilado"))
 assert abs(paginas.importe_eur - 5 * 8.9771) < 1e-9  # 5.000 páginas son 5 paquetes de 1.000
 assert "1.460 CU-hora" in prompts[0] and "Eventhouse" in prompts[0]
-print("OK 7: Lake Formation sin coste propio, Fabric por CU-hora encendida todo el mes y Document Intelligence "
-      "por 1.000 páginas")
+# Fallo 101 (parte 3): IAM sin coste propio (el 21 nov salía «0 € (por revisar)»); Glue Data Quality y la detección de
+# datos sensibles, con el precio de la DPU-hora de los trabajos ETL de Glue (salían con el del modelo)
+IAM = componente("AWS IAM - roles y políticas de acceso", 0, 0, "N/A", "mensual", "Sin coste")
+html = _format_cost_report(informe(SYNAPSE, IAM), problem_case=en_aws)
+assert "0 € (sin coste propio)" in html and "(por revisar)" not in html and "Ojo: AWS IAM" not in html, html
+assert "iam/faqs" in precios["aws-iam"]["fuente"] and precios["aws-iam"]["precio_eur"] == 0
+dpu = precios["aws-glue-etl"]["precio_eur"]
+for fila in ("aws-glue-data-quality", "aws-glue-datos-sensibles"):
+    assert precios[fila]["precio_eur"] == dpu and precios[fila]["unidad"] == "DPU-hora", precios[fila]
+    glue_dq = ec._con_precio_de_tabla(ComponenteCoste(**componente(
+        "AWS Glue Data Quality", 0.4, 20, "DPU-hora", "mensual", "Reglas nocturnas"), tarifa=fila))
+    assert abs(glue_dq.importe_eur - 20 * dpu) < 1e-9 and glue_dq.precio_unitario_eur == dpu
+print("OK 7: Lake Formation e IAM sin coste propio, Fabric por CU-hora encendida todo el mes, Document Intelligence "
+      "por 1.000 páginas y las DPU de Glue Data Quality y de datos sensibles al precio de Glue")
 
 # 8) Fallo 90 (cont.): con Power BI y los datos en AWS, el programa de la puerta de enlace va «sin coste propio» (no «va
 #    a 0 €») y la VM Windows donde se instala lleva la fila de EC2 Windows aunque la arquitectura no diga «VM Windows».
