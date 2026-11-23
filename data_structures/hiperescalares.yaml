@@ -173,6 +173,13 @@ servicios_a_evitar:
         alternativa: AWS IoT Core con Amazon Timestream for InfluxDB para las series temporales (están en eu-south-2)
         fuente: https://docs.aws.amazon.com/general/latest/gr/iot-sitewise.html
         fecha: 2026-11-16
+      # Fallo 121: la Price List de SageMaker para eu-south-2 no trae ningún precio de Canvas (eu-west-1 sí,
+      # EU-Canvas:Session-Hrs); sí trae entrenamiento, Processing y endpoints
+      - servicio: Amazon SageMaker Canvas
+        buscar: [sagemaker canvas]
+        alternativa: un modelo entrenado en Amazon SageMaker AI con sus algoritmos integrados (DeepAR para series temporales), con endpoint en tiempo real o Batch Transform (están en eu-south-2)
+        fuente: https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonSageMaker/current/region_index.json
+        fecha: 2026-11-23
     retirados:
       - servicio: Amazon Lookout for Vision
         buscar: [lookout for vision]
@@ -195,7 +202,7 @@ servicios_a_evitar:
       - servicio: Amazon Forecast
         buscar: [amazon forecast]
         estado: cerrado a clientes nuevos desde el 29 jul 2024
-        sustituto: la previsión de series temporales de Amazon SageMaker Canvas (o la API de AutoML de SageMaker)
+        sustituto: un modelo de previsión entrenado en Amazon SageMaker AI con el algoritmo integrado DeepAR (en eu-south-2 no está SageMaker Canvas, el que propone AWS)
         fuente: https://aws.amazon.com/blogs/machine-learning/transition-your-amazon-forecast-usage-to-amazon-sagemaker-canvas/
         fecha: 2026-11-16
       - servicio: AWS IoT Analytics

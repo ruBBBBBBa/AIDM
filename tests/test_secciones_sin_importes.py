@@ -382,8 +382,11 @@ assert nombres("Al estar retirado Amazon Lookout for Vision y no estar disponibl
                "región, se opta por un modelo propio en SageMaker AI.", EN_AWS) == []
 assert nombres("Endpoint de SageMaker AI para suplir servicios discontinuados (Rekognition Custom Labels, Lookout for "
                "Vision/Equipment).", EN_AWS) == []
-assert nombres("Predicciones con SageMaker Canvas (en reemplazo de Amazon Forecast).", EN_AWS) == []
-assert nombres("SageMaker Canvas reemplaza a Amazon Forecast en la previsión.", EN_AWS) == []
+assert nombres("Predicciones con DeepAR en SageMaker AI (en reemplazo de Amazon Forecast).", EN_AWS) == []
+assert nombres("DeepAR en SageMaker AI reemplaza a Amazon Forecast en la previsión.", EN_AWS) == []
+# Fallo 121: Canvas no está en eu-south-2
+assert nombres("Predicciones con SageMaker Canvas (en reemplazo de Amazon Forecast).", EN_AWS) == [
+    "Amazon SageMaker Canvas"]
 assert nombres("Para suplir servicios retirados (Amazon Forecast o Amazon Lookout for Vision) va SageMaker.",
                EN_AWS) == []
 # Se sigue marcando: el servicio es el que suple, o la frase de descarte es de otra cosa

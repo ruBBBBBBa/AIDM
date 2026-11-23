@@ -258,7 +258,7 @@ sin_fila:
     motivo: se cobran por comprobación y por elemento de configuración; sin elegir todavía la SKU
   - servicio: Amazon QuickSight
     motivo: se cobra por usuario y no va en el archivo de la región; sin elegir todavía
-  - servicio: Amazon SageMaker AI (entrenamiento, Canvas y otras instancias)
+  - servicio: Amazon SageMaker AI (entrenamiento y otras instancias)
     motivo: solo hay fila para el endpoint ml.m5.large; las demás, con el precio del modelo
 
 # Licencias y herramientas que no tienen API de precios: van como filas manuales en bd/precios_cloud.csv, con su fuente
