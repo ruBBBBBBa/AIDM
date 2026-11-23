@@ -197,7 +197,7 @@ SECTOR_TOPICS = {  # van detrás del sector: «vitivinícola inteligencia artifi
 
     "IA y automatización": "inteligencia artificial",
 
-    "Datos y analítica": "datos",
+    "Datos y analítica": "análisis de datos",  # con «datos» solo salían noticias del sector sin datos
 
     "Digitalización": "digitalización"
 
@@ -260,6 +260,10 @@ def _leer_rss(tema, busqueda, del_sector=False):
         fecha = item.findtext("pubDate", "").strip()
 
         fuente = item.findtext("source", "").strip()
+
+        if fuente and titulo.endswith(" - " + fuente):  # Google News repite la fuente al final del título
+
+            titulo = titulo[:-len(fuente) - 3].rstrip()
 
         if not titulo or not enlace.startswith("https://"):
 

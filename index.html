@@ -291,6 +291,7 @@
   border: 1px solid #364967;
   border-radius: 11px;
   background: rgba(255,255,255,.035);
+  min-height: 106px;  /* la de un título de tres líneas: los puntos y las flechas no saltan */
   text-decoration: none;
   transition: background .2s ease;
   animation: techNewsEntra .45s ease;
@@ -432,10 +433,15 @@
     padding: 12px;
   }
   .tech-news-card {
-    grid-template-columns: 1fr;
+    grid-template-columns: 72px 1fr;
+    gap: 10px;
   }
   .tech-news-media {
-    min-height: 110px;
+    min-height: 72px;
+  }
+  .tech-news-media svg {
+    width: 28px;
+    height: 28px;
   }
 }
 

@@ -97,7 +97,7 @@ import urllib.parse
 import api
 
 RSS = """<rss xmlns:media="http://search.yahoo.com/mrss/"><channel>
-<item><title>{t} 1</title><link>https://ejemplo.com/{t}/1</link><pubDate>Mon, 23 Nov 2026 08:00:00 GMT</pubDate>
+<item><title>{t} 1 - Fuente A</title><link>https://ejemplo.com/{t}/1</link><pubDate>Mon, 23 Nov 2026 08:00:00 GMT</pubDate>
 <source>Fuente A</source><enclosure url="https://ejemplo.com/{t}.jpg" type="image/jpeg"/></item>
 <item><title>{t} 2</title><link>https://ejemplo.com/{t}/2</link><pubDate>Sun, 22 Nov 2026 08:00:00 GMT</pubDate>
 <source>Fuente B</source></item>
@@ -133,9 +133,10 @@ api.DATA = Path(tempfile.mkdtemp())  # el caso de la prueba; el problem_case.jso
 noticias = api.obtener_noticias()["noticias"]
 assert pedidas and all("Ebrosol" not in urllib.parse.unquote_plus(u) for u in pedidas), pedidas
 consultas = [urllib.parse.parse_qs(urllib.parse.urlparse(u).query)["q"][0] for u in pedidas]
-assert "vitivinícola inteligencia artificial when:7d" in consultas and "vitivinícola datos when:7d" in consultas
+assert "vitivinícola inteligencia artificial when:7d" in consultas and "vitivinícola análisis de datos when:7d" in consultas
 assert len(noticias) == 10 and all(n["del_sector"] for n in noticias[:6]) and not noticias[-1]["del_sector"]
 assert all(n["imagen"].endswith(".jpg") if n["titulo"].endswith(" 1") else n["imagen"] is None for n in noticias)
+assert not any(n["titulo"].endswith(" - Fuente A") for n in noticias)  # la fuente ya va aparte
 assert {n["tema"] for n in noticias} <= {"ia", "datos", "cloud", "digital"}
 # Con el caso en caché no vuelve a buscar
 pedidas.clear()
