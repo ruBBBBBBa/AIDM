@@ -15,6 +15,7 @@ import socket
 import sys
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 import urllib.parse
@@ -229,7 +230,13 @@ def _noticia(tema, del_sector, titulo, enlace, fecha, fuente, url_medio):
     titulo, fuente = (titulo or "").strip(), (fuente or "").strip()
     if fuente and titulo.endswith(" - " + fuente):  # Google News repite la fuente al final del título
         titulo = titulo[:-len(fuente) - 3].rstrip()
+    titulo = _limpiar(titulo)
     if not titulo or not (enlace or "").startswith("https://"):
+        return None
+    # Parte 4: un título genérico («Suscríbete a nuestro Boletín») no se enseña; si se puede leer la página, se
+    # cambia por el suyo y, si no, la noticia se descarta
+    generico = _es_generico(titulo)
+    if generico and not url_medio:
         return None
     try:
         fecha_iso = parsedate_to_datetime(fecha).astimezone(timezone.utc).isoformat()
@@ -237,7 +244,7 @@ def _noticia(tema, del_sector, titulo, enlace, fecha, fuente, url_medio):
         fecha_iso = None
     return {"titulo": titulo, "url": enlace, "fuente": fuente or "Google News", "fecha": fecha_iso,
             "categoria": tema, "tema": _TEMAS.get(tema, "datos"), "del_sector": del_sector, "frase": None,
-            "url_medio": url_medio}
+            "url_medio": url_medio, "titulo_pendiente": generico}
 
 
 def _leer_bing(tema, busqueda, del_sector):
@@ -324,33 +331,93 @@ _META = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
 _ATRIBUTO = re.compile(r"""([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
 
 
-def _frase(html, titulo=""):
-    """og:description o, si no, meta description, en una frase de unos FRASE_MAX caracteres; None si no hay. Solo se
-    miran las etiquetas <meta> de la cabecera: nunca el texto del cuerpo."""
+def _limpiar(texto):
+    """Parte 4: texto plano. Algunos medios escapan el HTML dos veces («&lt;p&gt;Llegamos una vez m&amp;aacute;s»):
+    se desescapa hasta que no cambie (3 veces como mucho), se quitan las etiquetas y se normalizan los espacios."""
+    texto = texto or ""
+    for _ in range(3):
+        nuevo = html_lib.unescape(texto)
+        if nuevo == texto:
+            break
+        texto = nuevo
+    return " ".join(re.sub(r"<[^>]*>", " ", texto).split())
+
+
+def _cabecera(html):
+    """Las etiquetas <meta> (og:description, description, og:title) y el <title> de la cabecera; nunca el cuerpo."""
     cabecera = re.split(r"</head\s*>|<body\b", html or "", maxsplit=1, flags=re.IGNORECASE)[0]
-    metas = {}
+    datos = {}
     for etiqueta in _META.findall(cabecera):
         attrs = {k.lower(): (a if a is not None else b) for k, a, b in _ATRIBUTO.findall(etiqueta)}
         clave = (attrs.get("property") or attrs.get("name") or "").lower()
-        if clave in ("og:description", "description") and attrs.get("content", "").strip():
-            metas.setdefault(clave, attrs["content"])
+        if clave in ("og:description", "description", "og:title") and _limpiar(attrs.get("content")):
+            datos.setdefault(clave, _limpiar(attrs["content"]))
+    titulo = re.search(r"<title[^>]*>(.*?)</title>", cabecera, re.IGNORECASE | re.DOTALL)
+    if titulo and _limpiar(titulo.group(1)):
+        datos["title"] = _limpiar(titulo.group(1))
+    return datos
+
+
+def _sin_medio_final(texto):
+    """« | Cadena SER» o « - El Medio» al final: el nombre del medio, que ya va aparte."""
+    return re.sub(r"\s+[|\-–—]\s+[^|\-–—]{1,40}$", "", texto) if len(texto) > 25 else texto
+
+
+def _frase(html, titulo=""):
+    """og:description o, si no, meta description, en una frase de unos FRASE_MAX caracteres; None si no hay. Solo se
+    miran las etiquetas <meta> de la cabecera: nunca el texto del cuerpo."""
+    metas = _cabecera(html)
     texto = metas.get("og:description") or metas.get("description")
     if not texto:
         return None
-    texto = " ".join(html_lib.unescape(texto).split())
     texto = re.sub(r"\s+\|\s+[^|]{1,40}$", "", texto)  # « | Cadena SER»: el nombre del medio, que ya va aparte
-    primera =re.match(r"(.{60,}?[.!?])(?=\s|$)", texto)  # una frase, si la primera tiene sustancia
+    primera = re.match(r"(.{60,}?[.!?])(?=\s|$)", texto)  # una frase, si la primera tiene sustancia
     texto = primera.group(1) if primera else texto
     if len(texto) > FRASE_MAX:
         texto = texto[:FRASE_MAX].rsplit(" ", 1)[0].rstrip(" ,;:-") + "…"
     return None if texto.lower().rstrip(".…") == (titulo or "").lower().rstrip(".…") else texto
 
 
+# Parte 4: títulos que no son de la noticia (Bing toma a veces el de un bloque de la página)
+_GENERICO = re.compile(r"\b(?:suscr[ií]b[ea]te|suscripci[oó]n|bolet[ií]n|newsletter|cookies?|inicia(?:r)? sesi[oó]n|"
+                       r"log ?in|reg[ií]strate|aviso legal|pol[ií]tica de privacidad|p[aá]gina no encontrada|"
+                       r"error 404|acceso denegado)\b", re.IGNORECASE)
+
+
+def _es_generico(titulo):
+    return not titulo or bool(_GENERICO.search(titulo))
+
+
+def _palabras(texto):
+    sin_tildes = "".join(c for c in unicodedata.normalize("NFKD", texto.lower()) if not unicodedata.combining(c))
+    return {p for p in re.findall(r"\w+", sin_tildes) if len(p) > 3}
+
+
+def _se_parecen(a, b):
+    """Comparten al menos la mitad de las palabras con sustancia del más corto."""
+    pa, pb = _palabras(a), _palabras(b)
+    return bool(pa and pb) and len(pa & pb) >= 0.5 * min(len(pa), len(pb))
+
+
+def _titulo_fiable(titulo_rss, html):
+    """El título que se enseña: el del RSS si vale, el de la página (og:title o <title>, sin el medio final) si el del
+    RSS es genérico o se le parece poco, o None si no hay ninguno fiable (la noticia se descarta)."""
+    cabecera = _cabecera(html)
+    de_la_pagina = _sin_medio_final(cabecera.get("og:title") or cabecera.get("title") or "")
+    if len(_palabras(de_la_pagina)) >= 3 and not _es_generico(de_la_pagina) and (  # solo el nombre del sitio no vale
+            _es_generico(titulo_rss) or not _se_parecen(titulo_rss, de_la_pagina)):
+        return de_la_pagina
+    return None if _es_generico(titulo_rss) else titulo_rss
+
+
 def _frase_de(noticia):
+    """(frase, título fiable) de la noticia, leyendo su página una sola vez."""
     try:
-        return _frase(_leer_pagina(noticia["url_medio"]), noticia["titulo"])
+        html = _leer_pagina(noticia["url_medio"])
     except Exception:
-        return None
+        html = ""
+    titulo = _titulo_fiable(noticia["titulo"], html)
+    return _frase(html, titulo or ""), titulo
 
 
 def _completar_frases(sector):
@@ -372,7 +439,12 @@ def _completar_frases(sector):
             pool.shutdown(wait=False, cancel_futures=True)
     with _noticias_lock:
         if entrada is not None:
-            entrada["items"] = [{**n, "frase": frases.get(n["url"]) or n.get("frase")} for n in entrada["items"]]
+            items = []
+            for n in entrada["items"]:
+                frase, titulo = frases.get(n["url"], (n.get("frase"), None if n.get("titulo_pendiente") else n["titulo"]))
+                if titulo:  # sin título fiable, la noticia se descarta
+                    items.append({**n, "titulo": titulo, "frase": frase or n.get("frase"), "titulo_pendiente": False})
+            entrada["items"] = items
             entrada["frases"] = "hechas"
 
 
@@ -429,7 +501,9 @@ def _buscar(sector):
 
 
 def _para_la_web(noticias):
-    return [{k: v for k, v in n.items() if k != "url_medio"} for n in noticias]
+    """Sin la URL interna ni las noticias cuyo título aún se está comprobando (parte 4)."""
+    return [{k: v for k, v in n.items() if k not in ("url_medio", "titulo_pendiente")}
+            for n in noticias if not n.get("titulo_pendiente")]
 
 
 @app.get("/api/noticias")

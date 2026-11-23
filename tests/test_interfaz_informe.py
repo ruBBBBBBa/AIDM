@@ -188,6 +188,35 @@ assert api._frase('<head><meta name="description" content="Un foro del sector | 
     "Un foro del sector"  # el nombre del medio tras « | » ya va aparte
 assert api._frase("") is None and api._frase('<head><meta name="description" content=""></head>') is None
 assert api._frase('<head><meta name="description" content="Título &amp; más"></head>', "Título & más") is None
+# Parte 4: el HTML escapado dos veces y las etiquetas no llegan a la frase
+assert api._frase('<head><meta name="description" content="&lt;p&gt;Llegamos una vez m&amp;aacute;s a la feria '
+                  'del vino&lt;/p&gt;"></head>') == "Llegamos una vez más a la feria del vino"
+assert api._frase('<head><meta name="description" content="Texto con &lt;strong&gt;negrita&lt;/strong&gt; '
+                  'dentro"></head>') == "Texto con negrita dentro"
+assert api._limpiar("&amp;amp;amp;lt;b&amp;amp;amp;gt;Hola") == "&lt;b&gt;Hola"  # como mucho 3 veces
+# Parte 4: el título genérico de Bing se cambia por el de la página; sin título fiable, la noticia se descarta
+PAGINA_OG = '<head><meta property="og:title" content="VitiGPT llega a las bodegas"><title>X | Tecnovino</title></head>'
+assert api._titulo_fiable("Suscríbete a nuestro Boletín", PAGINA_OG) == "VitiGPT llega a las bodegas"
+assert api._titulo_fiable("Suscríbete al boletín", "<head><title>VitiGPT llega a las bodegas | Tecnovino</title>"
+                          "</head>") == "VitiGPT llega a las bodegas"
+assert api._titulo_fiable("VitiGPT llega a las bodegas catalanas", PAGINA_OG) == "VitiGPT llega a las bodegas catalanas"
+assert api._titulo_fiable("Resultados del tercer trimestre", PAGINA_OG) == "VitiGPT llega a las bodegas"
+assert api._titulo_fiable("Suscríbete a nuestro Boletín", "") is None
+assert api._titulo_fiable("Política de cookies", "<head><title>Aviso legal</title></head>") is None
+assert api._titulo_fiable("VitiGPT llega a las bodegas", "<head><title>Tecnovino</title></head>") == \
+    "VitiGPT llega a las bodegas"  # el nombre del sitio solo no es un título
+paginas_titulo = {"https://medio.example/generico/1": PAGINA_OG, "https://medio.example/generico/2": ""}
+api._leer_pagina = lambda url: paginas_titulo.get(url, "")
+generica = lambda n: api._noticia("IA y automatización", True, "Suscríbete a nuestro Boletín",
+                                  f"https://medio.example/generico/{n}", "Mon, 23 Nov 2026 08:00:00 GMT", "Tecnovino",
+                                  f"https://medio.example/generico/{n}")
+assert api._noticia("Cloud", False, "Suscríbete al boletín", "https://news.google.com/x", "", "G", None) is None
+api._noticias_cache["prueba"] = {"timestamp": 0, "items": [generica(1), generica(2)], "frases": "pendientes"}
+assert api._para_la_web(api._noticias_cache["prueba"]["items"]) == [], "el título genérico no se enseña"
+api._completar_frases("prueba")
+assert [n["titulo"] for n in api._para_la_web(api._noticias_cache["prueba"]["items"])] == [
+    "VitiGPT llega a las bodegas"], api._noticias_cache["prueba"]["items"]
+api._leer_pagina = pagina_simulada
 # Solo https y servidores públicos, como mucho 3 redirecciones
 api.socket.getaddrinfo = lambda host, *a: [(0, 0, 0, "", ({"medio.example": "93.184.216.34",
                                                              "interno.example": "10.0.0.7"}.get(host, "127.0.0.1"), 443))]
@@ -225,6 +254,7 @@ fallan.clear()
 pedidas.clear()
 assert not any(n["del_sector"] for n in api.obtener_noticias()["noticias"]) and len(pedidas) == 3
 print("OK 4: las noticias buscan solo con el sector en Bing (Google de reserva), sin el nombre del cliente; la frase "
-      "es la descripción del medio, recortada, y si fallan salen las generales")
+      "es la descripción del medio, limpia y recortada; un título genérico se cambia por el de la página o se descarta; "
+      "si fallan, las generales")
 
 print("\nTodo bien: los fallos 3 y 127 están arreglados.")

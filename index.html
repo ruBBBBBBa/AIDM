@@ -849,10 +849,30 @@ function mostrarNoticia(indice) {
     const total = noticiasActuales.length;
     noticiaActual = ((indice % total) + total) % total;
     lista.replaceChildren(tarjetaNoticia(noticiasActuales[noticiaActual]));
+    marcarPunto();
+}
+
+function marcarPunto() {
     document.querySelectorAll("#techNewsDots .tech-news-dot").forEach((punto, n) => {
         punto.classList.toggle("on", n === noticiaActual);
         punto.setAttribute("aria-current", n === noticiaActual ? "true" : "false");
     });
+}
+
+// Parte 4: cuando llegan las frases (o un título corregido), la tarjeta que se ve se completa en su sitio, sin volver
+// a pintarla: la animación de entrada queda solo para el cambio de noticia
+function completarTarjeta(noticia) {
+    const tarjeta = document.querySelector("#techNewsList .tech-news-card");
+    if (!tarjeta || tarjeta.getAttribute("href") !== noticia.url) return false;
+    tarjeta.querySelector(".tech-news-title").textContent = noticia.titulo;
+    let frase = tarjeta.querySelector(".tech-news-frase");
+    if (noticia.frase && !frase) {
+        frase = document.createElement("div");
+        frase.className = "tech-news-frase";
+        tarjeta.insertBefore(frase, tarjeta.querySelector(".tech-news-meta"));
+    }
+    if (frase) frase.textContent = noticia.frase || "";
+    return true;
 }
 
 function pintarPuntos() {
@@ -910,10 +930,17 @@ async function actualizarNoticias() {
             return;
         }
         const actual = noticiasActuales[noticiaActual];
+        const mismas = noticias.length === noticiasActuales.length &&
+            noticias.every((n, i) => n.url === noticiasActuales[i].url);
         noticiasActuales = noticias;
-        pintarPuntos();
+        if (!mismas) pintarPuntos();
         const sigue = actual ? noticias.findIndex(n => n.url === actual.url) : -1;
-        mostrarNoticia(sigue >= 0 ? sigue : 0);
+        if (sigue >= 0 && completarTarjeta(noticias[sigue])) {
+            noticiaActual = sigue;
+            marcarPunto();
+        } else {
+            mostrarNoticia(sigue >= 0 ? sigue : 0);
+        }
         clearTimeout(frasesTimer);
         if (data.frases_pendientes && busy) frasesTimer = setTimeout(actualizarNoticias, 4000);
     } catch (error) {
