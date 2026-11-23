@@ -1980,7 +1980,12 @@ def run_estimation_crew(
             "(horas, GB, ejecuciones) va como mensual, con las unidades de un mes. "
             # Fallo 58: los meses del proyecto los pone el programa
             "Una cuota que se paga cada mes (soporte, una suscripción) va como mensual con las unidades que se pagan "
-            "en un mes, no con los meses del proyecto: el programa ya multiplica por los meses. Si un componente tiene partes con "
+            "en un mes, no con los meses del proyecto: el programa ya multiplica por los meses. "
+            # Fallo 123 (parte 1): el 21 nov el soporte ocupaba todo el límite mensual y la infraestructura iba aparte
+            + (f"El límite mensual del cliente ({_rango(*limite_mes)}) cubre el soporte y el consumo cloud juntos: el "
+               "soporte no puede ocupar todo el límite, tiene que dejar sitio a la infraestructura y las licencias de "
+               "cada mes. " if (limite_mes := _limite_mensual(problem_case)) else "") +
+            "Si un componente tiene partes con "
             "precios distintos, pon un elemento por parte. Si no tienes el precio exacto, da tu mejor estimación y di "
             "en referencia de dónde sale. "
             # Fallo 54: el 0 € por «ya lo tiene» se comprueba con sus datos; lo gratuito lo descuenta la tabla

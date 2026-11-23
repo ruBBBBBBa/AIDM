@@ -406,3 +406,13 @@ assert "solo el equipo ya cuesta" not in ec._format_cost_report(informe, "", cal
 print(f"OK 15: el equipo solo ({ec._eur(equipo_bajo)}) pasa del presupuesto y se avisa ({veces} veces)")
 
 print("\nTodo bien: el fallo 5 está arreglado.")
+# 16) Fallo 123 (parte 1): con límite mensual, el prompt de costes dice que cubre el soporte y el consumo cloud juntos
+prompts.clear()
+ec.run_estimation_crew("PROPUESTA SIMULADA", "groq/openai/gpt-oss-20b", problem_case=limite)
+prompt_costes = next(p for p in prompts if "valora el coste de cada componente" in p)
+assert "El límite mensual del cliente (2.000 €) cubre el soporte y el consumo cloud juntos" in prompt_costes, prompt_costes
+assert "el soporte no puede ocupar todo el límite" in prompt_costes
+prompts.clear()
+ec.run_estimation_crew("PROPUESTA SIMULADA", "groq/openai/gpt-oss-20b", problem_case=caso)  # sin límite, no
+assert "cubre el soporte y el consumo cloud" not in next(p for p in prompts if "valora el coste de cada componente" in p)
+print("OK 16: con límite mensual, el prompt de costes dice que el soporte no puede ocupar todo el límite")
