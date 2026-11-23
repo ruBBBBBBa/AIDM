@@ -5,13 +5,17 @@ Arranque, desde la carpeta AIDM (donde están graph.py e interface.py):
     python api.py
 Con log:  python api.py > ejecucion_grabada_2026-11-12.log 2>&1
 """
+import html as html_lib
 import inspect
+import ipaddress
 import json
 import re
 import shutil
+import socket
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -170,18 +174,25 @@ def get_informe():
 
 # AIDM TECH NEWS - Noticias tecnológicas
 
-# Fallo 127: primero las del sector del caso y, si no llegan, las generales de datos e IA. A Google News solo va el
+# Fallo 127: primero las del sector del caso y, si no llegan, las generales de datos e IA. Al buscador solo va el
 # sector, nunca el nombre del cliente ni otro dato del caso. Si algo falla, las generales: nunca rompe el informe.
+# Parte 3: Bing News RSS (trae la URL real del artículo) con Google News de reserva, y una frase de cada noticia: la
+# descripción que publica el propio medio (og:description o meta description), nunca texto del cuerpo. El RSS de Bing
+# no está documentado: revisarlo antes de producción.
 
 # ==========================================
 
 _noticias_lock = threading.Lock()
 
-_noticias_cache = {}  # sector ("" = sin sector) → {"timestamp": …, "items": […]}
+_noticias_cache = {}  # sector ("" = sin sector) → {"timestamp": …, "items": […], "frases": "pendientes" | "hechas"}
 
 NOTICIAS_MAX = 10
 NOTICIAS_CACHE_S = 15 * 60
 NOTICIAS_TIEMPO_S = 5
+FRASE_TIEMPO_S = 3
+FRASE_MAX = 200
+PAGINA_MAX_BYTES = 200_000
+USER_AGENT_NOTICIAS = "AIDM-Tech-News/1.0 (noticias del sector para AIDM)"
 
 NEWS_TOPICS = {  # las generales, como hasta ahora
 
@@ -203,105 +214,170 @@ SECTOR_TOPICS = {  # van detrás del sector: «vitivinícola inteligencia artifi
 
 }
 
-# El tema de cada categoría, para el color y el icono de la tarjeta
+# El tema de cada categoría, para la etiqueta y el color de la tarjeta
 _TEMAS = {"IA y automatización": "ia", "Cloud": "cloud", "Datos y analítica": "datos", "Digitalización": "digital"}
 
-_MEDIA = "{http://search.yahoo.com/mrss/}"
+
+def _rss(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 AIDM-Tech-News"})
+    with urllib.request.urlopen(req, timeout=4) as respuesta:
+        return ET.fromstring(respuesta.read(1_000_000))
 
 
-def _imagen(item):
-    """La imagen de la noticia si el RSS la trae (enclosure o media), o None."""
-    for nodo in [*item.findall("enclosure"), *item.findall(_MEDIA + "content"), *item.findall(_MEDIA + "thumbnail")]:
-        url = (nodo.get("url") or "").strip()
-        tipo = nodo.get("type") or nodo.get("medium") or "image"
-        if url.startswith("https://") and tipo.startswith("image"):
-            return url
-    return None
+def _noticia(tema, del_sector, titulo, enlace, fecha, fuente, url_medio):
+    """Una noticia del RSS, o None si no vale. url_medio: la del artículo, si se conoce, para buscar su frase."""
+    titulo, fuente = (titulo or "").strip(), (fuente or "").strip()
+    if fuente and titulo.endswith(" - " + fuente):  # Google News repite la fuente al final del título
+        titulo = titulo[:-len(fuente) - 3].rstrip()
+    if not titulo or not (enlace or "").startswith("https://"):
+        return None
+    try:
+        fecha_iso = parsedate_to_datetime(fecha).astimezone(timezone.utc).isoformat()
+    except (TypeError, ValueError, IndexError):
+        fecha_iso = None
+    return {"titulo": titulo, "url": enlace, "fuente": fuente or "Google News", "fecha": fecha_iso,
+            "categoria": tema, "tema": _TEMAS.get(tema, "datos"), "del_sector": del_sector, "frase": None,
+            "url_medio": url_medio}
+
+
+def _leer_bing(tema, busqueda, del_sector):
+    """Bing News RSS: su enlace lleva la URL real del artículo en el parámetro «url»."""
+    query = urllib.parse.urlencode({"q": busqueda, "format": "rss", "cc": "es", "setlang": "es"})
+    noticias = []
+    for item in _rss("https://www.bing.com/news/search?" + query).findall("./channel/item"):
+        enlace = item.findtext("link", "").strip()
+        real = urllib.parse.parse_qs(urllib.parse.urlparse(enlace).query).get("url", [""])[0]
+        fuente = next((n.text for n in item if n.tag.endswith("}Source") and n.text), "")
+        noticia = _noticia(tema, del_sector, item.findtext("title", ""), real, item.findtext("pubDate", ""), fuente,
+                           real)
+        if noticia:
+            noticias.append(noticia)
+        if len(noticias) == 5:
+            break
+    return noticias
+
+
+def _leer_google(tema, busqueda, del_sector):
+    """Google News RSS, la reserva: sus enlaces solo redirigen con JavaScript, así que van sin frase."""
+    query = urllib.parse.urlencode({"q": busqueda + " when:7d", "hl": "es", "gl": "ES", "ceid": "ES:es"})
+    noticias = []
+    for item in _rss("https://news.google.com/rss/search?" + query).findall("./channel/item")[:5]:
+        noticia = _noticia(tema, del_sector, item.findtext("title", ""), item.findtext("link", "").strip(),
+                           item.findtext("pubDate", ""), item.findtext("source", ""), None)
+        if noticia:
+            noticias.append(noticia)
+    return noticias
 
 
 def _leer_rss(tema, busqueda, del_sector=False):
+    """Bing primero; si falla o no devuelve nada, Google News."""
+    try:
+        noticias = _leer_bing(tema, busqueda, del_sector)
+    except Exception:
+        noticias = []
+    return noticias or _leer_google(tema, busqueda, del_sector)
 
-    query = urllib.parse.urlencode({
 
-        "q": busqueda + " when:7d",
+# ---- La frase de cada noticia: solo la descripción que publica el medio ----
 
-        "hl": "es",
+def _url_permitida(url):
+    """Solo https y a un servidor público: nada de localhost ni IPs privadas, reservadas o de enlace local."""
+    partes = urllib.parse.urlparse(url or "")
+    if partes.scheme != "https" or not partes.hostname or partes.hostname.lower() == "localhost":
+        return False
+    try:
+        direcciones = {d[4][0] for d in socket.getaddrinfo(partes.hostname, partes.port or 443)}
+    except (OSError, UnicodeError):
+        return False
+    for direccion in direcciones:
+        ip = ipaddress.ip_address(direccion.split("%")[0])
+        if not ip.is_global or ip.is_multicast:
+            return False
+    return bool(direcciones)
 
-        "gl": "ES",
 
-        "ceid": "ES:es"
+class _Redirecciones(urllib.request.HTTPRedirectHandler):
+    """Como mucho 3 redirecciones, y cada una a una URL permitida."""
+    max_redirections = 3
 
-    })
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _url_permitida(newurl):
+            raise urllib.error.HTTPError(newurl, code, "redirección no permitida", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
-    url = "https://news.google.com/rss/search?" + query
 
-    req = urllib.request.Request(
+_abridor = urllib.request.build_opener(_Redirecciones)
 
-        url,
 
-        headers={"User-Agent": "Mozilla/5.0 AIDM-Tech-News"}
+def _leer_pagina(url):
+    """Las primeras 200 KB de la página del medio, o "" si no se puede o no se debe leer."""
+    if not _url_permitida(url):
+        return ""
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT_NOTICIAS, "Accept": "text/html"})
+    with _abridor.open(req, timeout=FRASE_TIEMPO_S) as respuesta:
+        if "html" not in (respuesta.headers.get("Content-Type") or "html"):
+            return ""
+        return respuesta.read(PAGINA_MAX_BYTES).decode(respuesta.headers.get_content_charset() or "utf-8", "replace")
 
-    )
 
-    with urllib.request.urlopen(req, timeout=4) as respuesta:
+_META = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
+_ATRIBUTO = re.compile(r"""([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
 
-        contenido = respuesta.read(1_000_000)
 
-    root = ET.fromstring(contenido)
+def _frase(html, titulo=""):
+    """og:description o, si no, meta description, en una frase de unos FRASE_MAX caracteres; None si no hay. Solo se
+    miran las etiquetas <meta> de la cabecera: nunca el texto del cuerpo."""
+    cabecera = re.split(r"</head\s*>|<body\b", html or "", maxsplit=1, flags=re.IGNORECASE)[0]
+    metas = {}
+    for etiqueta in _META.findall(cabecera):
+        attrs = {k.lower(): (a if a is not None else b) for k, a, b in _ATRIBUTO.findall(etiqueta)}
+        clave = (attrs.get("property") or attrs.get("name") or "").lower()
+        if clave in ("og:description", "description") and attrs.get("content", "").strip():
+            metas.setdefault(clave, attrs["content"])
+    texto = metas.get("og:description") or metas.get("description")
+    if not texto:
+        return None
+    texto = " ".join(html_lib.unescape(texto).split())
+    texto = re.sub(r"\s+\|\s+[^|]{1,40}$", "", texto)  # « | Cadena SER»: el nombre del medio, que ya va aparte
+    primera =re.match(r"(.{60,}?[.!?])(?=\s|$)", texto)  # una frase, si la primera tiene sustancia
+    texto = primera.group(1) if primera else texto
+    if len(texto) > FRASE_MAX:
+        texto = texto[:FRASE_MAX].rsplit(" ", 1)[0].rstrip(" ,;:-") + "…"
+    return None if texto.lower().rstrip(".…") == (titulo or "").lower().rstrip(".…") else texto
 
-    noticias = []
 
-    for item in root.findall("./channel/item")[:5]:
+def _frase_de(noticia):
+    try:
+        return _frase(_leer_pagina(noticia["url_medio"]), noticia["titulo"])
+    except Exception:
+        return None
 
-        titulo = item.findtext("title", "").strip()
 
-        enlace = item.findtext("link", "").strip()
-
-        fecha = item.findtext("pubDate", "").strip()
-
-        fuente = item.findtext("source", "").strip()
-
-        if fuente and titulo.endswith(" - " + fuente):  # Google News repite la fuente al final del título
-
-            titulo = titulo[:-len(fuente) - 3].rstrip()
-
-        if not titulo or not enlace.startswith("https://"):
-
-            continue
-
+def _completar_frases(sector):
+    """Busca en paralelo la frase de cada noticia (FRASE_TIEMPO_S como mucho cada una) y la guarda en la caché."""
+    with _noticias_lock:
+        entrada = _noticias_cache.get(sector)
+        pendientes = [n for n in (entrada or {}).get("items", []) if n.get("url_medio") and not n.get("frase")]
+    frases = {}
+    if pendientes:
+        pool = ThreadPoolExecutor(max_workers=min(5, len(pendientes)))
         try:
+            futuros = {n["url"]: pool.submit(_frase_de, n) for n in pendientes}
+            for url, futuro in futuros.items():
+                try:
+                    frases[url] = futuro.result(timeout=FRASE_TIEMPO_S + 1)
+                except Exception:
+                    continue
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+    with _noticias_lock:
+        if entrada is not None:
+            entrada["items"] = [{**n, "frase": frases.get(n["url"]) or n.get("frase")} for n in entrada["items"]]
+            entrada["frases"] = "hechas"
 
-            fecha_iso = parsedate_to_datetime(
 
-                fecha
-
-            ).astimezone(timezone.utc).isoformat()
-
-        except (TypeError, ValueError, IndexError):
-
-            fecha_iso = None
-
-        noticias.append({
-
-            "titulo": titulo,
-
-            "url": enlace,
-
-            "fuente": fuente or "Google News",
-
-            "fecha": fecha_iso,
-
-            "categoria": tema,
-
-            "tema": _TEMAS.get(tema, "datos"),
-
-            "del_sector": del_sector,
-
-            "imagen": _imagen(item)
-
-        })
-
-    return noticias
+def _lanzar_frases(sector):
+    threading.Thread(target=_completar_frases, args=(sector,), daemon=True).start()
 
 
 def _sector_del_caso():
@@ -352,6 +428,10 @@ def _buscar(sector):
     return _sin_repetir(por_fecha(resultados[True]) + por_fecha(resultados[False]))[:NOTICIAS_MAX]
 
 
+def _para_la_web(noticias):
+    return [{k: v for k, v in n.items() if k != "url_medio"} for n in noticias]
+
+
 @app.get("/api/noticias")
 
 def obtener_noticias():
@@ -364,21 +444,19 @@ def obtener_noticias():
 
         cache = _noticias_cache.get(sector)
 
-    if cache and ahora - cache["timestamp"] < NOTICIAS_CACHE_S:
+        if cache and ahora - cache["timestamp"] < NOTICIAS_CACHE_S:
 
-        return {
+            return {
 
-            "noticias": cache["items"],
+                "noticias": _para_la_web(cache["items"]),
 
-            "actualizado": datetime.now(
+                "frases_pendientes": cache.get("frases") == "pendientes",
 
-                timezone.utc
+                "actualizado": datetime.now(timezone.utc).isoformat(),
 
-            ).isoformat(),
+                "cache": True
 
-            "cache": True
-
-        }
+            }
 
     try:
 
@@ -388,25 +466,32 @@ def obtener_noticias():
 
         noticias = []
 
+    pendientes = False
+
     with _noticias_lock:
 
         if noticias:
 
-            _noticias_cache[sector] = {"timestamp": ahora, "items": noticias}
+            pendientes = any(n["url_medio"] for n in noticias)
+
+            _noticias_cache[sector] = {"timestamp": ahora, "items": noticias,
+                                       "frases": "pendientes" if pendientes else "hechas"}
 
         else:  # sin red: las últimas que hubo, del sector o las generales
 
             noticias = (_noticias_cache.get(sector) or _noticias_cache.get("") or {}).get("items", [])
 
+    if pendientes:
+
+        _lanzar_frases(sector)  # primero se pintan las tarjetas; la frase llega en la siguiente petición
+
     return {
 
-        "noticias": list(noticias),
+        "noticias": _para_la_web(noticias),
 
-        "actualizado": datetime.now(
+        "frases_pendientes": pendientes,
 
-            timezone.utc
-
-        ).isoformat(),
+        "actualizado": datetime.now(timezone.utc).isoformat(),
 
         "cache": False
 

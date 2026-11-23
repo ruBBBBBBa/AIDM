@@ -280,18 +280,18 @@
   min-height: 92px;
 }
 
-/* Una tarjeta grande cada vez: imagen (o fondo del tema con su icono) y el texto */
+/* Una tarjeta grande cada vez: el tema en una etiqueta y una línea de su color a la izquierda (fallo 127, parte 3) */
 .tech-news-card {
   --tema: #3b82f6;
-  display: grid;
-  grid-template-columns: 112px 1fr;
-  gap: 13px;
-  align-items: stretch;
-  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 150px;  /* etiquetas, título de tres líneas y frase de dos: los puntos y las flechas no saltan */
+  padding: 11px 14px;
   border: 1px solid #364967;
+  border-left: 3px solid var(--tema);
   border-radius: 11px;
   background: rgba(255,255,255,.035);
-  min-height: 106px;  /* la de un título de tres líneas: los puntos y las flechas no saltan */
   text-decoration: none;
   transition: background .2s ease;
   animation: techNewsEntra .45s ease;
@@ -306,46 +306,29 @@
 .tech-news-card[data-tema="cloud"] { --tema: #3b82f6; }
 .tech-news-card[data-tema="digital"] { --tema: #f59e0b; }
 
-.tech-news-media {
+.tech-news-tags {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 84px;
-  border-radius: 8px;
-  overflow: hidden;
-  background: linear-gradient(135deg, var(--tema), rgba(12,22,40,.9));
-}
-
-.tech-news-media img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
-.tech-news-media svg {
-  width: 34px;
-  height: 34px;
-  color: #fff;
-  opacity: .92;
-}
-
-.tech-news-body {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
 }
 
 .tech-news-tag {
-  align-self: flex-start;
-  margin-bottom: 6px;
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 10.5px;
   font-weight: 700;
   color: #0d1b2e;
   background: #8fe4c8;
+}
+
+.tech-news-tema {
+  padding: 1px 7px;
+  border: 1px solid var(--tema);
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #e6edf8;
 }
 
 .tech-news-title {
@@ -355,6 +338,17 @@
   color: #edf3ff;
   display: -webkit-box;
   -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.tech-news-frase {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #b9c8de;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -433,15 +427,7 @@
     padding: 12px;
   }
   .tech-news-card {
-    grid-template-columns: 72px 1fr;
-    gap: 10px;
-  }
-  .tech-news-media {
-    min-height: 72px;
-  }
-  .tech-news-media svg {
-    width: 28px;
-    height: 28px;
+    min-height: 168px;
   }
 }
 
@@ -792,7 +778,9 @@ function cerrarIntelligence() {
 
    AIDM TECH NEWS - Noticias reales
 
-   Fallo 127: carrusel de una tarjeta, pasa solo cada 7 s y se para con el ratón encima
+   Fallo 127: carrusel de una tarjeta, pasa solo cada 7 s y se para con el ratón encima; la frase de
+
+   cada noticia llega en una segunda petición, a los 4 s (parte 3)
 
    ========================================== */
 
@@ -803,26 +791,10 @@ let carruselListo = false;
 let noticiasActuales = [];
 let noticiaActual = 0;
 
-// Icono de cada tema, para las tarjetas sin imagen
-const ICONOS_NOTICIAS = {
-    ia: '<path d="M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2"/><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/>',
-    datos: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
-    cloud: '<path d="M7 18h10a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.1 9.1 4.5 4.5 0 0 0 7 18z"/>',
-    digital: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'
-};
+let frasesTimer = null;
 
-function iconoNoticia(tema) {
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("fill", "none");
-    svg.setAttribute("stroke", "currentColor");
-    svg.setAttribute("stroke-width", "1.7");
-    svg.setAttribute("stroke-linecap", "round");
-    svg.setAttribute("stroke-linejoin", "round");
-    svg.setAttribute("aria-hidden", "true");
-    svg.innerHTML = ICONOS_NOTICIAS[tema] || ICONOS_NOTICIAS.datos;
-    return svg;
-}
+// El tema de cada noticia, en la etiqueta de la tarjeta (el color lo pone el CSS)
+const TEMAS_NOTICIAS = { ia: "IA", datos: "Datos", cloud: "Cloud", digital: "Digitalización" };
 
 function fechaNoticia(valor) {
     if (!valor) return "";
@@ -834,42 +806,40 @@ function fechaNoticia(valor) {
 function tarjetaNoticia(noticia) {
     const enlace = document.createElement("a");
     enlace.className = "tech-news-card";
-    enlace.dataset.tema = ICONOS_NOTICIAS[noticia.tema] ? noticia.tema : "datos";
+    enlace.dataset.tema = TEMAS_NOTICIAS[noticia.tema] ? noticia.tema : "datos";
     enlace.href = noticia.url;
     enlace.target = "_blank";
     enlace.rel = "noopener noreferrer";
 
-    const media = document.createElement("div");
-    media.className = "tech-news-media";
-    if (noticia.imagen && noticia.imagen.startsWith("https://")) {
-        const img = document.createElement("img");
-        img.src = noticia.imagen;
-        img.alt = "";
-        img.loading = "lazy";
-        img.referrerPolicy = "no-referrer";
-        img.onerror = () => media.replaceChildren(iconoNoticia(enlace.dataset.tema));
-        media.appendChild(img);
-    } else {
-        media.appendChild(iconoNoticia(enlace.dataset.tema));
-    }
-
-    const cuerpo = document.createElement("div");
-    cuerpo.className = "tech-news-body";
+    const etiquetas = document.createElement("div");
+    etiquetas.className = "tech-news-tags";
     if (noticia.del_sector) {
-        const etiqueta = document.createElement("span");
-        etiqueta.className = "tech-news-tag";
-        etiqueta.textContent = "Tu sector";
-        cuerpo.appendChild(etiqueta);
+        const sector = document.createElement("span");
+        sector.className = "tech-news-tag";
+        sector.textContent = "Tu sector";
+        etiquetas.appendChild(sector);
     }
+    const tema = document.createElement("span");
+    tema.className = "tech-news-tema";
+    tema.textContent = TEMAS_NOTICIAS[enlace.dataset.tema];
+    etiquetas.appendChild(tema);
+
     const titulo = document.createElement("div");
     titulo.className = "tech-news-title";
     titulo.textContent = noticia.titulo;
+    enlace.append(etiquetas, titulo);
+
+    if (noticia.frase) {  // la descripción que publica el medio, si la hay
+        const frase = document.createElement("div");
+        frase.className = "tech-news-frase";
+        frase.textContent = noticia.frase;
+        enlace.appendChild(frase);
+    }
+
     const meta = document.createElement("div");
     meta.className = "tech-news-meta";
     meta.textContent = [noticia.fuente, fechaNoticia(noticia.fecha)].filter(Boolean).join(" · ");
-    cuerpo.append(titulo, meta);
-
-    enlace.append(media, cuerpo);
+    enlace.appendChild(meta);
     return enlace;
 }
 
@@ -944,6 +914,8 @@ async function actualizarNoticias() {
         pintarPuntos();
         const sigue = actual ? noticias.findIndex(n => n.url === actual.url) : -1;
         mostrarNoticia(sigue >= 0 ? sigue : 0);
+        clearTimeout(frasesTimer);
+        if (data.frases_pendientes && busy) frasesTimer = setTimeout(actualizarNoticias, 4000);
     } catch (error) {
         if (noticiasActuales.length) return;
         mensajeNoticias("Las noticias no están disponibles en este momento.");
@@ -971,6 +943,7 @@ function detenerNoticias() {
         clearInterval(carruselTimer);
         carruselTimer = null;
     }
+    clearTimeout(frasesTimer);
 }
 
 
