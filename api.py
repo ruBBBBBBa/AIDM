@@ -39,6 +39,8 @@ DATA = Path("data_structures")
 REPORT_PATH = INFORME_GENERADO  # fallo 116: el informe de la ejecución, no la plantilla
 
 app = FastAPI(title="AIDM Discovery Agent")
+from fastapi.staticfiles import StaticFiles
+app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 lock = threading.Lock()  # problem_case.json es un único archivo: una ejecución a la vez
 
 # ---- Estado compartido con el frontend (GET /api/estado) ----
