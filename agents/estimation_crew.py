@@ -1264,6 +1264,14 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         avisos.append(f"Ojo: el total no incluye las horas de {escape('; '.join(no_sumados))}, porque no tienen "
                       f"tarifa en la tabla de la empresa. El coste real será mayor, así que el encaje es provisional.")
 
+    # Fallo 122: el 21 nov el equipo solo multiplicaba por más de dos el presupuesto del cliente y no se avisaba
+    equipo_bajo = equipo_min + falta_min
+    if presupuesto > 0 and equipo_bajo > presupuesto:
+        veces = f"{equipo_bajo / presupuesto:.1f}".replace(".", ",")
+        avisos.append(f"Ojo: solo el equipo ya cuesta al menos {_eur(equipo_bajo)}, {veces} veces el presupuesto del "
+                      f"cliente ({_eur(presupuesto)}). Revisa cuántos perfiles hacen falta y sus horas antes de "
+                      "presentarlo.")
+
     # Fallo 79: el total cubre los meses que se valoran del equipo (el piloto o MVP), no un plazo más largo
     if plazo_max > meses_max:
         avisos.append(f"Ojo: el total cubre {meses_txt}, los que se han valorado del equipo. El cliente habla de un "

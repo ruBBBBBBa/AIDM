@@ -392,4 +392,17 @@ assert "decídela según el tipo de proyecto y cada fase, y justifícala" in per
 assert "por ejemplo, la gestión del proyecto" not in perfiles_prompt
 print("OK 14: la gestión del proyecto va como Project Manager a 52 €/h, con «tarifa orientativa» y sin aviso de «sin tarifa»")
 
+# 15) Fallo 122: si solo el equipo (escenario bajo) ya pasa del presupuesto, se avisa junto al total
+calculado = _calcular_equipo(mvp, tarifas)
+calculado["resto"] = _calcular_equipo(resto, tarifas)
+equipo_bajo = calculado["total_min"] + calculado["resto"]["total_min"]
+html = ec._format_cost_report(sin_sitio, "", calculado, dos)
+veces = f"{equipo_bajo / 10_000:.1f}".replace(".", ",")
+assert f"Ojo: solo el equipo ya cuesta al menos {ec._eur(equipo_bajo)}, {veces} veces el presupuesto del cliente " \
+       f"(10.000 €)." in html, html
+calculado = _calcular_equipo(mvp, tarifas)  # si el equipo cabe, no
+calculado["resto"] = _calcular_equipo(resto, tarifas)
+assert "solo el equipo ya cuesta" not in ec._format_cost_report(informe, "", calculado, dos)
+print(f"OK 15: el equipo solo ({ec._eur(equipo_bajo)}) pasa del presupuesto y se avisa ({veces} veces)")
+
 print("\nTodo bien: el fallo 5 está arreglado.")
