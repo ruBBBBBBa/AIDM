@@ -89,4 +89,71 @@ at.run()
 assert len(at.get("iframe")) == 1 and len(at.get("download_button")) == 1
 print("OK 3: el informe sigue visible al recargar la página")
 
-print("\nTodo bien: el fallo 3 está arreglado.")
+# 4) Fallo 127: las noticias de la web buscan con el sector del caso (solo el sector), primero las del sector, y si la
+#    búsqueda falla salen las generales. Sin red: la búsqueda se simula
+import json
+import urllib.parse
+
+import api
+
+RSS = """<rss xmlns:media="http://search.yahoo.com/mrss/"><channel>
+<item><title>{t} 1</title><link>https://ejemplo.com/{t}/1</link><pubDate>Mon, 23 Nov 2026 08:00:00 GMT</pubDate>
+<source>Fuente A</source><enclosure url="https://ejemplo.com/{t}.jpg" type="image/jpeg"/></item>
+<item><title>{t} 2</title><link>https://ejemplo.com/{t}/2</link><pubDate>Sun, 22 Nov 2026 08:00:00 GMT</pubDate>
+<source>Fuente B</source></item>
+</channel></rss>"""
+pedidas, fallan = [], set()
+
+
+class _Respuesta:
+    def __init__(self, cuerpo):
+        self.cuerpo = cuerpo
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+    def read(self, *a):
+        return self.cuerpo
+
+
+def urlopen_simulado(req, timeout=None):
+    url = req.full_url
+    pedidas.append(url)
+    q = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["q"][0]
+    if any(f in q for f in fallan):
+        raise OSError("sin red")
+    return _Respuesta(RSS.format(t=q.replace(" when:7d", "")).encode())
+
+
+api.urllib.request.urlopen = urlopen_simulado
+api.DATA = Path(tempfile.mkdtemp())  # el caso de la prueba; el problem_case.json real no se toca
+(api.DATA / "problem_case.json").write_text(json.dumps({
+    "nombre_del_cliente": {"value": "Bodegas Ebrosol, S.L."},
+    "sector": {"value": "Vitivinícola (Bodegas Ebrosol), agroalimentario"}}), encoding="utf-8")
+noticias = api.obtener_noticias()["noticias"]
+assert pedidas and all("Ebrosol" not in urllib.parse.unquote_plus(u) for u in pedidas), pedidas
+consultas = [urllib.parse.parse_qs(urllib.parse.urlparse(u).query)["q"][0] for u in pedidas]
+assert "vitivinícola inteligencia artificial when:7d" in consultas and "vitivinícola datos when:7d" in consultas
+assert len(noticias) == 10 and all(n["del_sector"] for n in noticias[:6]) and not noticias[-1]["del_sector"]
+assert all(n["imagen"].endswith(".jpg") if n["titulo"].endswith(" 1") else n["imagen"] is None for n in noticias)
+assert {n["tema"] for n in noticias} <= {"ia", "datos", "cloud", "digital"}
+# Con el caso en caché no vuelve a buscar
+pedidas.clear()
+assert api.obtener_noticias()["cache"] is True and not pedidas
+# Si la búsqueda del sector falla, las generales
+api._noticias_cache.clear()
+fallan.add("vitivinícola")
+noticias = api.obtener_noticias()["noticias"]
+assert noticias and not any(n["del_sector"] for n in noticias), noticias
+# Sin red del todo, las últimas que hubo; y sin sector, solo las generales
+fallan.add("empresas")
+assert api.obtener_noticias()["cache"] is True  # siguen en caché
+api._noticias_cache["vitivinícola"]["timestamp"] = 0
+assert api.obtener_noticias()["noticias"] == noticias
+fallan.clear()
+(api.DATA / "problem_case.json").write_text(json.dumps({"sector": {"value": ""}}), encoding="utf-8")
+pedidas.clear()
+assert not any(n["del_sector"] for n in api.obtener_noticias()["noticias"]) and len(pedidas) == 3
+print("OK 4: las noticias buscan solo con el sector, sin el nombre del cliente, y si fallan salen las generales")
+
+print("\nTodo bien: los fallos 3 y 127 están arreglados.")

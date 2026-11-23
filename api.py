@@ -170,19 +170,20 @@ def get_informe():
 
 # AIDM TECH NEWS - Noticias tecnológicas
 
+# Fallo 127: primero las del sector del caso y, si no llegan, las generales de datos e IA. A Google News solo va el
+# sector, nunca el nombre del cliente ni otro dato del caso. Si algo falla, las generales: nunca rompe el informe.
+
 # ==========================================
 
 _noticias_lock = threading.Lock()
 
-_noticias_cache = {
+_noticias_cache = {}  # sector ("" = sin sector) → {"timestamp": …, "items": […]}
 
-    "timestamp": 0,
+NOTICIAS_MAX = 10
+NOTICIAS_CACHE_S = 15 * 60
+NOTICIAS_TIEMPO_S = 5
 
-    "items": []
-
-}
-
-NEWS_TOPICS = {
+NEWS_TOPICS = {  # las generales, como hasta ahora
 
     "IA y automatización": "inteligencia artificial empresas",
 
@@ -192,7 +193,33 @@ NEWS_TOPICS = {
 
 }
 
-def _leer_rss(tema, busqueda):
+SECTOR_TOPICS = {  # van detrás del sector: «vitivinícola inteligencia artificial»
+
+    "IA y automatización": "inteligencia artificial",
+
+    "Datos y analítica": "datos",
+
+    "Digitalización": "digitalización"
+
+}
+
+# El tema de cada categoría, para el color y el icono de la tarjeta
+_TEMAS = {"IA y automatización": "ia", "Cloud": "cloud", "Datos y analítica": "datos", "Digitalización": "digital"}
+
+_MEDIA = "{http://search.yahoo.com/mrss/}"
+
+
+def _imagen(item):
+    """La imagen de la noticia si el RSS la trae (enclosure o media), o None."""
+    for nodo in [*item.findall("enclosure"), *item.findall(_MEDIA + "content"), *item.findall(_MEDIA + "thumbnail")]:
+        url = (nodo.get("url") or "").strip()
+        tipo = nodo.get("type") or nodo.get("medium") or "image"
+        if url.startswith("https://") and tipo.startswith("image"):
+            return url
+    return None
+
+
+def _leer_rss(tema, busqueda, del_sector=False):
 
     query = urllib.parse.urlencode({
 
@@ -260,11 +287,66 @@ def _leer_rss(tema, busqueda):
 
             "fecha": fecha_iso,
 
-            "categoria": tema
+            "categoria": tema,
+
+            "tema": _TEMAS.get(tema, "datos"),
+
+            "del_sector": del_sector,
+
+            "imagen": _imagen(item)
 
         })
 
     return noticias
+
+
+def _sector_del_caso():
+    """El sector del caso, para buscar, o "" si aún no lo hay. Solo el sector: sin paréntesis, hasta la primera coma
+    y sin ninguna palabra del nombre del cliente, por si el sector lo repite."""
+    try:
+        caso = json.loads((DATA / "problem_case.json").read_text(encoding="utf-8"))
+        sector = str((caso.get("sector") or {}).get("value") or "")
+        cliente = str((caso.get("nombre_del_cliente") or {}).get("value") or "")
+    except Exception:  # se lee mientras la ejecución lo escribe: a medias, sin sector
+        return ""
+    if sector.startswith("Confirmado por el usuario"):  # «no lo sabe» o «no aplica»
+        return ""
+    sector = re.split(r"[,;:./\n]", re.sub(r"\([^)]*\)?", " ", sector))[0]
+    del_cliente = {p.lower() for p in re.findall(r"\w+", cliente) if len(p) > 2}
+    palabras = [p for p in re.findall(r"[\w-]+", sector) if p.lower() not in del_cliente]
+    return " ".join(palabras[:5]).lower()
+
+
+def _sin_repetir(noticias):
+    vistos, unicas = set(), []
+    for noticia in noticias:
+        clave = noticia["titulo"].lower()
+        if clave not in vistos:
+            vistos.add(clave)
+            unicas.append(noticia)
+    return unicas
+
+
+def _buscar(sector):
+    """Las del sector primero (por fecha) y, detrás, las generales hasta NOTICIAS_MAX. Como mucho NOTICIAS_TIEMPO_S."""
+    busquedas = [(tema, f"{sector} {busqueda}", True) for tema, busqueda in SECTOR_TOPICS.items()] if sector else []
+    busquedas += [(tema, busqueda, False) for tema, busqueda in NEWS_TOPICS.items()]
+    resultados = {True: [], False: []}
+    limite = time.time() + NOTICIAS_TIEMPO_S
+    pool = ThreadPoolExecutor(max_workers=len(busquedas))
+    try:
+        futuros = [(del_sector, pool.submit(_leer_rss, tema, busqueda, del_sector))
+                   for tema, busqueda, del_sector in busquedas]
+        for del_sector, futuro in futuros:
+            try:
+                resultados[del_sector].extend(futuro.result(timeout=max(0.1, limite - time.time())))
+            except Exception:
+                continue
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)  # no espera a una búsqueda lenta
+    por_fecha = lambda grupo: sorted(grupo, key=lambda noticia: noticia["fecha"] or "", reverse=True)
+    return _sin_repetir(por_fecha(resultados[True]) + por_fecha(resultados[False]))[:NOTICIAS_MAX]
+
 
 @app.get("/api/noticias")
 
@@ -272,11 +354,13 @@ def obtener_noticias():
 
     ahora = time.time()
 
+    sector = _sector_del_caso()
+
     with _noticias_lock:
 
-        cache = dict(_noticias_cache)
+        cache = _noticias_cache.get(sector)
 
-    if ahora - cache["timestamp"] < 180:
+    if cache and ahora - cache["timestamp"] < NOTICIAS_CACHE_S:
 
         return {
 
@@ -292,65 +376,27 @@ def obtener_noticias():
 
         }
 
-    resultados = []
+    try:
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+        noticias = _buscar(sector)
 
-        futuros = [
+    except Exception:
 
-            pool.submit(_leer_rss, tema, busqueda)
-
-            for tema, busqueda in NEWS_TOPICS.items()
-
-        ]
-
-        for futuro in futuros:
-
-            try:
-
-                resultados.extend(futuro.result(timeout=5))
-
-            except Exception:
-
-                continue
-
-    vistos = set()
-
-    unicas = []
-
-    for noticia in resultados:
-
-        clave = noticia["titulo"].lower()
-
-        if clave not in vistos:
-
-            vistos.add(clave)
-
-            unicas.append(noticia)
-
-    unicas.sort(
-
-        key=lambda noticia: noticia["fecha"] or "",
-
-        reverse=True
-
-    )
-
-    if unicas:
-
-        with _noticias_lock:
-
-            _noticias_cache["items"] = unicas[:9]
-
-            _noticias_cache["timestamp"] = ahora
+        noticias = []
 
     with _noticias_lock:
 
-        disponibles = list(_noticias_cache["items"])
+        if noticias:
+
+            _noticias_cache[sector] = {"timestamp": ahora, "items": noticias}
+
+        else:  # sin red: las últimas que hubo, del sector o las generales
+
+            noticias = (_noticias_cache.get(sector) or _noticias_cache.get("") or {}).get("items", [])
 
     return {
 
-        "noticias": disponibles,
+        "noticias": list(noticias),
 
         "actualizado": datetime.now(
 
