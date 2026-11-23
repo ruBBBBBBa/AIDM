@@ -202,6 +202,43 @@ def con_integration_runtime(filas: list[dict], problem_case: dict | None) -> tup
                             "Windows con acceso a su red: se ha añadido al inventario y a los costes.\n\n")
 
 
+# Fallo 125: el 21 nov las secciones daban a varios servicios otra fase que el inventario: Step Functions, del MVP, iba
+# «post-MVP» en la estrategia, y servicios del proyecto completo salían en el MVP de la estrategia y la gobernanza
+REGLA_FASES = (
+    f"La fase de cada servicio es la del {TITULO} con que termina la arquitectura: un servicio que allí entra solo "
+    "después del MVP no va en el MVP ni en su plan, y uno del MVP no se deja para después. Si crees que otra fase "
+    "sería mejor, dilo como recomendación, sin cambiar la del inventario."
+)
+_DESPUES = re.compile(r"\b(?:post-?mvp|(?:despues del|tras el|fuera del) (?:mvp|piloto)|proyecto completo|fase [2-9]"
+                      r"|after the mvp)\b")
+_ANTES = re.compile(r"\b(?:mvp|piloto|fase 1)\b")
+
+
+def fases_que_no_cuadran(texto: str, filas: list[dict], seccion: str) -> list[str]:
+    """Fallo 125: los servicios del inventario que una frase de la sección pone en otra fase (en el MVP uno del proyecto
+    completo, o después del MVP uno del MVP). Solo lo dice el log ([fases]); el informe no lleva nota."""
+    frases = [_normalize_text(f) for f in re.split(r"(?<=[.;!?])\s+|\n+", texto or "") if f.strip()]
+    distintas = []
+    for fila in filas:
+        nombre = _base(fila["servicio"])
+        if len(nombre) < 3:
+            continue
+        patron = re.compile(rf"(?<![\w-]){re.escape(nombre)}(?![\w-])")
+        for frase in frases:
+            if not patron.search(frase):
+                continue
+            despues = bool(_DESPUES.search(frase))
+            antes = bool(_ANTES.search(_DESPUES.sub(" ", frase)))
+            if despues == antes or antes == (fila["fase"] == "mvp"):
+                continue  # la frase no dice la fase, dice las dos o dice la del inventario
+            logger.warning("[fases] %s pone %s %s; el inventario, %s", seccion, fila["servicio"],
+                           "después del MVP" if despues else "en el MVP",
+                           "desde el MVP" if fila["fase"] == "mvp" else "solo después del MVP")
+            distintas.append(fila["servicio"])
+            break
+    return distintas
+
+
 def comprobar(filas: list[dict], problem_case: dict | None) -> list[dict]:
     """Los servicios del inventario que no se pueden usar en la nube elegida (fallo 83). Lo dice el log."""
     if not filas:

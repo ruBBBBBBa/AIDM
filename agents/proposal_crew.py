@@ -80,6 +80,7 @@ def run_proposal_crew(
             f"- Propuesta de solución:\n{structure_proposal}\n"
             f"{contexto}"
             f"- Historial reciente:\n{transcript}\n"
+            f"{inventario.REGLA_FASES}\n"  # fallo 125
         ),
         expected_output="Texto estructurado que describa la propuesta de gobernanza del dato y AI para el proyecto, incluyendo secciones claras, explicaciones comprensibles y justificación de las decisiones tomadas. Sin dibujar ninguna tabla ni gráfico, solo texto.",
         agent=data_governance,
@@ -98,7 +99,8 @@ def run_proposal_crew(
             "3. Roadmap técnico: por cada funcionalidad, qué fuentes de datos usará, qué tipo de análisis se aplicará "
             "y cómo se integrará en el trabajo diario del cliente. "
             "4. Valor de negocio: cómo contribuye cada funcionalidad a los KPIs del cliente (kpis_de_exito). "
-            "Si un KPI no se puede medir dentro del plazo pedido, dilo."
+            "Si un KPI no se puede medir dentro del plazo pedido, dilo. "
+            f"{inventario.REGLA_FASES}"  # fallo 125
         ),
         expected_output="Texto estructurado que describa la propuesta de estrategia de datos e AI para el proyecto, incluyendo secciones claras, explicaciones comprensibles y justificación de las decisiones tomadas. Sin dibujar ninguna tabla ni gráfico, solo texto.",
         agent=data_ai_strategist,
@@ -116,7 +118,8 @@ def run_proposal_crew(
             "márcalo como «Se asume». "
             "4. Herramienta: si el cliente ya tiene o prefiere una (herramienta_de_visualizacion), úsala y diseña con las "
             "licencias que tiene. Si alguna función necesita licencias que no tiene, dilo como coste por confirmar. "
-            "Si no tiene ninguna, recomienda una y explica por qué."
+            "Si no tiene ninguna, recomienda una y explica por qué. "
+            f"{inventario.REGLA_FASES}"  # fallo 125
         ),
         expected_output="Texto estructurado que describa la propuesta de estrategia de visualización de datos para el proyecto, incluyendo secciones claras, explicaciones comprensibles y justificación de las decisiones tomadas. Sin dibujar ninguna tabla ni gráfico, solo texto.",
         agent=bi_visualization_specialist,

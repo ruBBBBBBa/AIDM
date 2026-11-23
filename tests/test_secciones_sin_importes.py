@@ -446,4 +446,25 @@ assert "INTEGRATION RUNTIME DE DATA FACTORY" in vistos_90[0]
 print("OK 17: con datos en sus servidores y Data Factory, el integration runtime entra en el prompt, el inventario y "
       "los costes")
 
-print("\nTodo bien: los fallos 44, 83, 88, 89, 90 y 111 están arreglados.")
+# 18) Fallo 125: una sección que pone un servicio en otra fase que el inventario lo dice el log ([fases]), sin nota
+fases_inv = [{"servicio": "AWS Step Functions", "capa": "orquestación", "fase": "mvp", "alternativa": ""},
+             {"servicio": "AWS IoT Core", "capa": "ingesta", "fase": "proyecto_completo", "alternativa": ""},
+             {"servicio": "Amazon S3", "capa": "almacenamiento", "fase": "mvp", "alternativa": ""}]
+assert inventario.fases_que_no_cuadran("La orquestación con Step Functions entra post-MVP.\nEn el MVP, los sensores "
+                                       "llegan por AWS IoT Core.", fases_inv, "x") == ["AWS Step Functions",
+                                                                                        "AWS IoT Core"]
+# La fase del inventario, las dos fases o ninguna en la misma frase: no se avisa
+assert inventario.fases_que_no_cuadran("Desde el MVP, Step Functions orquesta. IoT Core entra después del MVP. S3 "
+                                       "guarda los datos. S3 crece del MVP al proyecto completo.", fases_inv, "x") == []
+avisos.clear()
+sbc.run_proposal_crew = lambda *a, **k: ProposalResult(
+    architecture="Lago en S3.\n\nINVENTARIO DE SERVICIOS\n- AWS Step Functions | orquestación | MVP | —\n"
+                 "- AWS IoT Core | ingesta | completo | —",
+    governance="En la fase 1 se gobiernan los datos de AWS IoT Core.", data_ai_strategy="D.", bi_visualization="B.")
+sbc.propose_solution("ESTRUCTURA", EN_AWS, [])
+mensajes = [r.getMessage() for r in avisos]
+assert "[fases] governance pone AWS IoT Core en el MVP; el inventario, solo después del MVP" in mensajes, mensajes
+assert inyectado["governance"] == "En la fase 1 se gobiernan los datos de AWS IoT Core."
+print("OK 18: la sección que pone un servicio en otra fase que el inventario sale en el log, sin nota en el informe")
+
+print("\nTodo bien: los fallos 44, 83, 88, 89, 90, 111 y 125 están arreglados.")

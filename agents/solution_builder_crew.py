@@ -110,6 +110,8 @@ def propose_solution(
         campo: sin_importes(getattr(proposal, campo), problem_case, campo)
         for campo in ("architecture", "governance", "data_ai_strategy", "bi_visualization")
     })
+    for campo in ("governance", "data_ai_strategy", "bi_visualization"):  # fallo 125: solo en el log
+        inventario.fases_que_no_cuadran(getattr(proposal, campo), filas, campo)
     # Fallo 83: si una sección nombra un servicio que no está en la región o está retirado, lo dice el log y la sección
     # lleva una nota visible al principio. La columna «Alternativa descartada» del inventario no cuenta: nombra justo lo
     # que no se usa (el 20 nov marcaba seis servicios que el texto no proponía)
