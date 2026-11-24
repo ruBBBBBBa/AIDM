@@ -3,17 +3,17 @@
     "description": "Nombre del cliente o empresa",
     "value": ""
   },
-  "tamaño_empresa": {
-    "description": "Tamaño de la empresa (startup, pyme, enterprise) o número aproximado de empleados",
-    "value": ""
+   "tamaño_empresa": {
+  "description": "Tamaño de la empresa (startup, pyme, enterprise) o número aproximado de empleados",
+  "value": ""
   },
   "sector": {
-    "description": "Sector de actividad de la empresa (retail, pharma, logística, finanzas...)",
-    "value": ""
+  "description": "Sector de actividad de la empresa (retail, pharma, logística, finanzas...)",
+  "value": ""
   },
   "tiene_equipo_datos": {
-    "description": "Si la empresa tiene equipo de datos propio (cuántas personas y qué saben hacer) o no lo tiene, y si trabaja con proveedores externos. Un «no tenemos» también es una respuesta",
-    "value": ""
+  "description": "Si la empresa tiene equipo de datos propio (cuántas personas y qué saben hacer) o no lo tiene, y si trabaja con proveedores externos. Un «no tenemos» también es una respuesta",
+  "value": ""
   },
   "tipo_de_servicio": {
     "description": "Qué servicio pide el cliente a Inetum: implementación completa, consultoría o diseño, formación, soporte o mantenimiento, o una combinación (por ejemplo, «que lo implementéis y luego forméis a nuestro equipo»)",
@@ -21,11 +21,11 @@
   },
   "objetivo_del_proyecto": {
     "description": "Objetivos principales del proyecto o caso de uso identificado",
-    "value": "Unificar datos dispersos en varios sistemas"
+    "value": ""
   },
   "modelo_de_despliegue": {
     "description": "Modelo de despliegue preferido por el cliente (donde vivira la solución) (on-premises, cloud, híbrido...)",
-    "value": "Nube"
+    "value": ""
   },
   "cloud_provider": {
     "description": "Proveedor de nube detectado preferido por el cliente (Azure, AWS, GCP...)",
@@ -81,11 +81,7 @@
   },
   "evidencias": {
     "description": "Evidencias detectadas durante la conversación que respaldan la información extraída y el análisis realizado, incluyendo información adicional útil",
-    "value": [
-      "Datos dispersos en varios sistemas",
-      "Objetivo claro de migración a la nube"
-    ]
+    "value": []
   },
-  "status": "pending fields",
-  "campo_preguntado": "nombre_del_cliente"
+  "status": "pending_fields"
 }
