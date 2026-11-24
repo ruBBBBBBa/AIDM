@@ -102,7 +102,7 @@ def falla():
     raise urllib.error.URLError("sin red")
 
 
-comparar.PROVEEDORES = {"groq": lambda: {"openai/gpt-oss-20b"}, "mistral": lambda: None,
+comparar.PROVEEDORES = {"groq": lambda: {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}, "mistral": lambda: None,
                         "gemini": falla, "sambanova": lambda: {"gpt-oss-120b", "gemma-4-31B-it"},
                         "cloudflare": lambda: {"@cf/openai/gpt-oss-120b"}, "nvidia_nim": lambda: set()}
 log = io.StringIO()
