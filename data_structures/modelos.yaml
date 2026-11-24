@@ -29,13 +29,16 @@ perfiles:
     - gemini/gemini-3.6-flash
     - gemini/gemini-3.5-flash-lite         # fallo 98
     - cloudflare/@cf/openai/gpt-oss-120b   # en lugar de sambanova/DeepSeek-V3.1, retirado
+    - groq/openai/gpt-oss-120b
   tecnico:          # texto técnico largo, con mucha salida (las 7 fases del roadmap)
     - gemini/gemini-3.6-flash              # 3 nov: Gemini 3.8 Flash no respondió en ninguna fase (503 y 429)
     - gemini/gemini-3.5-flash-lite         # fallo 98
     - cloudflare/@cf/openai/gpt-oss-120b
+    - groq/openai/gpt-oss-120b
   contexto_largo:   # leer mucho y resumirlo (el resumen de la propuesta)
     - gemini/gemini-3.5-flash-lite
     - cloudflare/@cf/openai/gpt-oss-120b   # fallo 98: en lugar de mistral-small-latest (429); ventana de 128K
+    - groq/openai/gpt-oss-120b
   codigo:           # Terraform (solo con Infracost)
     - mistral/codestral-latest
     - cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct
