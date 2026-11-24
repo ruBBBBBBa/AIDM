@@ -4,6 +4,7 @@ import os
 from crewai import Agent, Crew, Process, Task
 from dotenv import load_dotenv
 import gateway
+from agents.roadmap_builder import FASES_TITULO, INSTRUCCION_FASES
 
 from utils import load_agents_config, _recent_chat_transcript, build_llm, contexto_cliente
 
@@ -39,9 +40,11 @@ def build_structure_proposal(problem_case, chat_history: list[dict[str, str]] | 
             f"{contexto_cliente(problem_case)}\n"
             f"Historial reciente:\n{transcript}\n"
             "La respuesta tiene que ser una estructura fija como 1- Texto con introducción inicial a la propuesta \n 2- Propuesta de Servicios y paltaformas \n 3- Propuesta de arquitectura\n"
-            "Procura redactar la respuesta de una forma legible y bien redactada, sin dibujar ningún diagrama, usando tabulados y de mas cuando sea propio para dar una respuesta facil de leer."
+            "Procura redactar la respuesta de una forma legible y bien redactada, sin dibujar ningún diagrama, usando tabulados y de mas cuando sea propio para dar una respuesta facil de leer.\n"
+            f"{INSTRUCCION_FASES}"  # fallo 131: qué fases del roadmap pide el objetivo
         ),
-        expected_output="Una propuesta de estructura de solución clara y justificada, proporcionada al tamaño del cliente, siguiendo el formato indicado.",
+        expected_output="Una propuesta de estructura de solución clara y justificada, proporcionada al tamaño del cliente, siguiendo el formato indicado, "
+                        f"y al final el bloque {FASES_TITULO}.",
         agent=structure_proposal_agent
     )
 

@@ -79,7 +79,7 @@ graph.elegir_plataforma = lambda c: orden.append("plataforma") or {
     **c, utils.PLATAFORMA_OBJETIVO: {"value": "Microsoft Azure", "mensaje": "Antes de preparar el informe…"}}
 graph.build_structure_proposal = lambda *a: orden.append("estructura") or "estructura"
 graph.propose_solution = lambda *a: orden.append("propuesta") or "propuesta"
-graph.roadmap_builder = lambda *a: orden.append("roadmap") or "roadmap"
+graph.roadmap_builder = lambda *a, **k: orden.append("roadmap") or "roadmap"
 graph.gateway.resumen_consumo = lambda *a, **k: None
 with contextlib.redirect_stdout(io.StringIO()):
     graph.run_graph("Ya está todo", [], avisar=lambda t: orden.append(f"chat: {t}"))

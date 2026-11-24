@@ -114,4 +114,8 @@ for n, prompt in enumerate(prompts, start=1):
     assert "'description'" not in prompt and "Descripción larga" not in prompt, f"el prompt {n} lleva el JSON en bruto"
 print("OK 4: estructura, propuesta (4), costes (3) y roadmap (7) reciben el mismo bloque, sin el JSON en bruto")
 
+# 5) Fallo 131: la estructura termina con el bloque FASES DEL ROADMAP (las 7 fases, sí/no y por qué)
+assert rb.INSTRUCCION_FASES in prompts[0] and "- fase | sí / no / ya lo tiene | una frase" in prompts[0]
+print("OK 5: la estructura pide el bloque FASES DEL ROADMAP")
+
 print("\nTodo bien: el fallo 25 está arreglado (en la parte que se puede comprobar sin el LLM real).")

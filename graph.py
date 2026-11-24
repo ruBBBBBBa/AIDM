@@ -5,7 +5,7 @@ from agents.discovery_agent_logic import run_agent
 from agents.plataforma import elegir_plataforma
 from agents.structure_proposal_agent_logic import build_structure_proposal
 from agents.solution_builder_crew import propose_solution
-from agents.roadmap_builder import roadmap_builder
+from agents.roadmap_builder import leer_fases, roadmap_builder
 
 from utils import PLATAFORMA_OBJETIVO, load_problem_case
 
@@ -24,6 +24,7 @@ class AgentState(TypedDict):
     completion_reached: bool
     problem_solution: dict[str, Any]
     roadmap:str
+    fases_roadmap: dict[str, Any] | None  # fallo 131: las del bloque FASES DEL ROADMAP de la estructura
 
 
 def discovery_node(state: AgentState) -> AgentState:
@@ -72,10 +73,14 @@ def structure_proposal_node(state: AgentState) -> AgentState:
     structure_proposal = build_structure_proposal(problem_case, chat_history)
     print("STRUCTURE PROPOSAL COMPLETADO\n\n\n")
     progreso.avanzar("Estructura de la solución")  # fallo 94
-    
+    # Fallo 131: el bloque FASES DEL ROADMAP va al roadmap; la propuesta recibe la estructura sin él y, si el cliente
+    # ya tiene alguna fase, la línea «Ya implantado en el cliente…» (el stack del caso valida cada «ya lo tiene»)
+    structure_proposal, fases = leer_fases(structure_proposal, problem_case)
+
     return {
         **state,
         "assistant_response": structure_proposal,
+        "fases_roadmap": fases,
     }
 
 def solution_building_node(state: AgentState) -> AgentState:
@@ -95,7 +100,8 @@ def solution_building_node(state: AgentState) -> AgentState:
 def roadmap_node(state: AgentState) -> AgentState:
     problem_solution = state.get("problem_solution")
 
-    roadmap_response = roadmap_builder(problem_solution, state.get("problem_case"))
+    roadmap_response = roadmap_builder(problem_solution, state.get("problem_case"),
+                                       fases=state.get("fases_roadmap"))  # fallo 131
     print("ROADMAP COMPLETADO\n\n\n")
 
     return {

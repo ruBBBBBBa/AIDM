@@ -90,10 +90,13 @@ print("OK 3: las 7 fases son independientes y siguen la misma arquitectura")
 
 # 4) graph.py le pasa el caso al roadmap
 recibido = {}
-graph.roadmap_builder = lambda propuesta, problem_case=None: recibido.update(caso=problem_case) or ""
-graph.roadmap_node({"problem_solution": "x", "problem_case": caso})
+graph.roadmap_builder = lambda propuesta, problem_case=None, fases=None: recibido.update(caso=problem_case,
+                                                                                         fases=fases) or ""
+FASES_VISTAS = {"roadmap-ml": (False, "sin modelos")}
+graph.roadmap_node({"problem_solution": "x", "problem_case": caso, "fases_roadmap": FASES_VISTAS})
 assert recibido["caso"] is caso, "roadmap_node no pasa el problem_case"
-print("OK 4: graph.py pasa el caso del estado al roadmap")
+assert recibido["fases"] is FASES_VISTAS, "roadmap_node no pasa las fases del roadmap (fallo 131)"
+print("OK 4: graph.py pasa el caso y las fases del estado al roadmap")
 
 # 5) Fallo 94: la barra de progreso avanza con el resumen y con cada fase al terminar. Las fases van en hilos y solo
 #    anotan su avance: la barra la pinta siempre el hilo que la empezó (el de la sesión de Streamlit)
@@ -153,5 +156,113 @@ assert "modelo dimensional" in modelado and "análisis que pide el cliente" in m
 assert "monitorización y alertas" in ml and "Si no incluye modelos, no los inventes" in ml and "MLOps" in ml
 print("OK 6: con el inventario no se llama al resumen; cada fase recibe el inventario y su sección de la propuesta")
 
+# 7) Fallo 131: la estructura termina con el bloque FASES DEL ROADMAP (fase | sí / no / ya lo tiene | frase); ninguna
+#    fase es fija. Sin Modelado / Análisis ni Ops: 5 fases, 5 llamadas, la barra llega al final, el informe dice qué
+#    no aplica y los pasos van del 01 al 05. Solo cuadros de mando con el DWH y el ETL en el stack: 1 fase y 4 «Ya
+#    implantado» en el flujo, y la propuesta recibe la línea de lo que se reutiliza. «ya lo tiene» sin nada en el stack:
+#    la fase se genera y lo dice el log. Todas «no» o «ya lo tiene», o sin bloque: las 7.
+import logging
+
+from bs4 import BeautifulSoup
+
+avisos: list[str] = []
+recoger = logging.Handler()
+recoger.emit = lambda registro: avisos.append(registro.getMessage())
+logging.getLogger("aidm").addHandler(recoger)
+
+
+def bloque(*estados: str) -> str:
+    """La estructura simulada con el bloque, una línea por fase: «estado | frase»."""
+    return ("1- Introducción\n2- Servicios\n3- Arquitectura\n\n**FASES DEL ROADMAP**\n"
+            + "\n".join(f"- {nombre} | {e}" for nombre, e in zip(rb.NOMBRES_FASES, estados)))
+
+
+def generar(caso_, fases_) -> BeautifulSoup:
+    shutil.copy(INFORME, copia)
+    prompts.clear()
+    pintadas.clear()
+    progreso.empezar(lambda fraccion, texto: pintadas.append((threading.get_ident(), fraccion, texto)), total=8)
+    try:
+        rb.roadmap_builder(propuesta, problem_case=caso_, fases=fases_)
+    finally:
+        progreso.terminar()
+    assert pintadas[-1][1] == 1.0, pintadas  # la barra llega al final aunque haya fases sin generar
+    return BeautifulSoup(copia.read_text(encoding="utf-8"), "html.parser")
+
+
+def textos(sopa_, selector: str) -> list[str]:
+    return [s.get_text(strip=True) for s in sopa_.select(selector)]
+
+
+# a) Sin Modelado / Análisis ni Ops: 5 fases
+graph.build_structure_proposal = lambda caso_, historial: bloque(
+    "sí | El ERP y el CRM", "sí | Carga nocturna", "sí | Un lago", "sí | Limpieza de ventas",
+    "no | El cliente solo quiere ver sus ventas tal cual", "no | Sin modelos ni operación propia",
+    "sí | Cuadros de ventas")
+estado = graph.structure_proposal_node({"problem_case": caso, "chat_history": []})
+assert estado["assistant_response"] == "1- Introducción\n2- Servicios\n3- Arquitectura", estado["assistant_response"]
+fases = estado["fases_roadmap"]
+assert [d for d, (e, _) in fases.items() if e == rb.NO] == ["roadmap-modeling", "roadmap-ml"], fases
+sopa = generar(caso, fases)
+assert len(prompts) == 5, f"solo las 5 fases que aplican: {len(prompts)} llamadas"
+assert all("las 5 fases del roadmap se escriben a la vez" in p for p in prompts)
+assert any("Ops (no aplica)" in texto for _, _, texto in pintadas), pintadas
+assert textos(sopa, ".rdm-pipe-name") == ["Fuentes", "Ingesta", "Almacenamiento", "ETL", "Visualización"]
+assert len(sopa.select(".rdm-pipe-arrow")) == 4
+assert textos(sopa, "#rdm-stages-container .rdm-step") == ["01", "02", "03", "04", "05"]
+assert textos(sopa, ".rdm-no-aplica") == ["No aplica a este proyecto: Modelado / Análisis (El cliente solo quiere ver "
+                                          "sus ventas tal cual); Ops (Sin modelos ni operación propia)"]
+assert "roadmap-" not in sopa.select_one("#tab-roadmap").get_text(), "un id interno se ve en el informe"
+
+# b) Solo cuadros de mando, con el DWH, el ETL y las fuentes en el stack: Visualización y 4 «ya lo tiene»
+CON_STACK = {**caso, "stack_tecnologico_actual": {"description": "Stack", "value": [
+    "SAP Business One como ERP", "almacén de datos en SQL Server 2019", "paquetes de SSIS que cargan cada noche"]}}
+graph.build_structure_proposal = lambda caso_, historial: bloque(
+    "ya lo tiene | Su ERP SAP Business One", "ya lo tiene | Los paquetes de SSIS que cargan cada noche",
+    "ya lo tiene | Su almacén de datos en SQL Server", "ya lo tiene | Las transformaciones en SSIS",
+    "no | Los cuadros muestran los datos tal cual", "no | Sin modelos que operar", "sí | Los cuadros de mando de ventas")
+estado = graph.structure_proposal_node({"problem_case": CON_STACK, "chat_history": []})
+fases = estado["fases_roadmap"]
+assert [d for d, (e, _) in fases.items() if e == rb.YA] == rb._ROADMAP_IDS[:4], fases
+assert estado["assistant_response"].endswith(
+    "Ya implantado en el cliente (se reutiliza y se integra; no se presupuesta como nuevo): Fuentes (Su ERP SAP "
+    "Business One); Ingesta (Los paquetes de SSIS que cargan cada noche); Almacenamiento (Su almacén de datos en SQL "
+    "Server); ETL (Las transformaciones en SSIS)."), estado["assistant_response"]
+assert "FASES DEL ROADMAP" not in estado["assistant_response"]
+sopa = generar(CON_STACK, fases)
+assert len(prompts) == 1, f"solo Visualización: {len(prompts)} llamadas"
+assert textos(sopa, ".rdm-pipe-name") == ["Fuentes", "Ingesta", "Almacenamiento", "ETL", "Visualización"]
+assert textos(sopa, ".rdm-pipe-implantado .rdm-pipe-tech") == ["Ya implantado"] * 4
+assert len(sopa.select(".rdm-pipe-arrow")) == 4
+assert [c["id"] for c in sopa.select("#rdm-stages-container > .section-card")] == ["card-roadmap-bi"]
+assert textos(sopa, "#rdm-stages-container .rdm-step") == ["01"]
+assert textos(sopa, ".rdm-ya-implantado") == [
+    "Se reutiliza: Fuentes (Su ERP SAP Business One); Ingesta (Los paquetes de SSIS que cargan cada noche); "
+    "Almacenamiento (Su almacén de datos en SQL Server); ETL (Las transformaciones en SSIS)"]
+assert "roadmap-" not in sopa.select_one("#tab-roadmap").get_text(), "un id interno se ve en el informe"
+
+# c) «ya lo tiene» sin nada en el stack que lo cubra: la fase se genera y lo dice el log
+avisos.clear()
+_, fases = rb.leer_fases(bloque("ya lo tiene | Su almacén en Snowflake", "sí | a", "sí | b", "sí | c", "no | d",
+                                "no | e", "sí | f"), CON_STACK)
+assert fases["roadmap-sources"][0] == rb.SI, fases
+assert any(a.startswith("[fases] Fuentes") and "se genera" in a for a in avisos), avisos
+_, fases = rb.leer_fases(bloque("ya lo tiene | Su ERP SAP Business One", *["sí | x"] * 6), caso)  # caso sin stack
+assert fases["roadmap-sources"][0] == rb.SI, fases
+
+# d) Todas «no» o «ya lo tiene», y sin bloque: las 7, con su línea en el log
+avisos.clear()
+_, fases = rb.leer_fases(bloque("ya lo tiene | Su ERP SAP Business One", *["no | x"] * 6), CON_STACK)
+assert fases is None and any(a.startswith("[fases]") and "van las 7" in a for a in avisos), avisos
+avisos.clear()
+texto, sin_fases = rb.leer_fases("1- Introducción\n2- Servicios", caso)
+assert sin_fases is None and texto == "1- Introducción\n2- Servicios"
+assert any(a.startswith("[fases]") and "van las 7" in a for a in avisos), avisos
+prompts.clear()
+rb.roadmap_builder(propuesta, problem_case=caso, fases=sin_fases)
+assert len(prompts) == 7
+logging.getLogger("aidm").removeHandler(recoger)
+print("OK 7: solo las fases «sí» (5 del 01 al 05; o 1 con 4 «Ya implantado» validadas por el stack); sin stack, se genera; todas «no»/«ya» o sin bloque, las 7")
+
 assert hashlib.md5(INFORME.read_bytes()).hexdigest() == huella_antes, "el informe real no debía cambiar"
-print("\nTodo bien: los fallos 4, 73, 88 y 94 están arreglados.")
+print("\nTodo bien: los fallos 4, 73, 88, 94 y 131 están arreglados.")

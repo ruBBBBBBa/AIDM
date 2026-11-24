@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import time
@@ -8,10 +9,11 @@ from dotenv import load_dotenv
 import gateway
 import progreso
 from agents import inventario
-from utils import (INFORME_GENERADO, PLATAFORMA_OBJETIVO, _make_agent, _normalize_text, con_nota_de_servicios, contexto_cliente, html_del_informe,
+from utils import (INFORME_GENERADO, PLATAFORMA_OBJETIVO, _make_agent, _normalize_text, con_nota_de_servicios, contexto_cliente, es_valor_de_relleno, html_del_informe,
                    load_agents_config, load_problem_case, parse_html, md_to_html, sin_importes, sin_emojis)
 
 load_dotenv(".env")
+logger = logging.getLogger("aidm")
 
 '''
 MODEL_NAME = os.getenv("BIG_MODEL", "").strip()
@@ -49,6 +51,120 @@ HILOS = 7  # fases a la vez; con 1 van en orden, una detrás de otra (los tests 
 # Fallo 130: «Modelado y serving» pasa a «Modelado / Análisis» y «ML y MLOps» a «Ops», con un contenido más general
 TITULOS = ["Fuentes de datos", "Ingesta", "Almacenamiento", "Procesamiento y ETL", "Modelado / Análisis",
            "Ops", "Visualización"]
+
+# Fallo 131: solo las fases que pide el objetivo. La estructura de la solución termina con el bloque «FASES DEL ROADMAP»
+# (una línea por fase: fase | sí / no / ya lo tiene | frase); Python lo lee como el inventario. Ninguna fase es fija: un
+# cliente que ya tiene fuentes, ingesta, almacenamiento y ETL y solo pide cuadros de mando necesita solo Visualización.
+# «no»: no se genera ni sale en el informe. «ya lo tiene»: no se genera y sale en el flujo como «Ya implantado», pero
+# solo si stack_tecnologico_actual o madurez_analitica_actual nombran lo que dice la frase. Sin bloque, si no se lee o
+# si no queda ninguna fase que generar, van las 7.
+FASES_TITULO = "FASES DEL ROADMAP"
+NOMBRES_FASES = ["Fuentes", "Ingesta", "Almacenamiento", "ETL", "Modelado / Análisis", "Ops", "Visualización"]
+SI, NO, YA = "si", "no", "ya_lo_tiene"
+INSTRUCCION_FASES = (
+    f"Termina la respuesta con un bloque que empiece por la línea «{FASES_TITULO}» y siga con una línea por cada una "
+    f"de estas 7 fases del roadmap, en este orden: {', '.join(NOMBRES_FASES)}. Formato de cada línea:\n"
+    "- fase | sí / no / ya lo tiene | una frase\n"
+    "«sí»: el objetivo la necesita y hay que construirla; la frase dice por qué. «no»: el objetivo no la necesita; la "
+    "frase dice por qué. «ya lo tiene»: el cliente ya la tiene implantada y se reutiliza; la frase dice qué tiene, "
+    "con sus palabras y el nombre de su herramienta (por ejemplo, «su almacén de datos en SQL Server»). Ninguna fase "
+    "va siempre: un cliente que ya tiene sus fuentes, su ingesta, su almacén y su ETL y solo pide cuadros de mando "
+    "necesita solo Visualización (y quizá Modelado / Análisis). Lo que el cliente ya tiene se reutiliza: la "
+    "arquitectura lo integra y los costes no lo presupuestan como nuevo. Ningún otro texto después del bloque."
+)
+_CLAVES_FASE = [("fuentes", "fuente"), ("ingesta",), ("almacenamiento",), ("etl", "procesamiento"),
+                ("modelado", "analisis"), ("ops", "operacion"), ("visualizacion", "bi")]
+_CAMPOS_STACK = ("stack_tecnologico_actual", "madurez_analitica_actual")
+# Siglas y palabras que nombran un tipo de pieza, no una herramienta del cliente: no bastan para dar por buena la fase
+_GENERICAS = {"su", "sus", "el", "la", "los", "las", "un", "una", "etl", "elt", "dwh", "bi", "erp", "crm", "api",
+              "apis", "sql", "kpi", "kpis", "ia", "ai", "ml", "cloud", "data", "lake", "excel"}
+_NOMBRE_PROPIO = re.compile(r"(?:\b(?:[A-Z][\w.+-]*|\w*\d\w*)\b[ \t]*)+")
+
+
+def _texto_stack(problem_case: dict | None) -> str:
+    """stack_tecnologico_actual y madurez_analitica_actual con dato real, juntos y normalizados."""
+    partes = []
+    for campo in _CAMPOS_STACK:
+        valor = (problem_case or {}).get(campo)
+        valor = valor.get("value") if isinstance(valor, dict) else valor
+        partes += [str(v) for v in (valor if isinstance(valor, list) else [valor])
+                   if isinstance(v, str) and not es_valor_de_relleno(v)]
+    return _normalize_text(" | ".join(partes))
+
+
+def _herramienta_en_stack(frase: str, stack: str) -> str | None:
+    """Fallo 131: el nombre propio de la frase («SQL Server» en «su DWH en SQL Server») que el stack del cliente también
+    nombra, comparado como inventario._clave() (sin paréntesis ni el nombre de la nube). None si no hay ninguno."""
+    for candidato in _NOMBRE_PROPIO.findall(re.sub(r"\([^)]*\)", " ", frase or "")):
+        palabras = inventario._clave(candidato).split()
+        while palabras and palabras[0] in _GENERICAS:  # «Su ERP SAP Business One» → «sap business one»
+            palabras.pop(0)
+        while palabras and palabras[-1] in _GENERICAS:
+            palabras.pop()
+        clave = " ".join(palabras)
+        if (clave and not clave.isdigit()
+                and re.search(rf"(?<![a-z0-9]){re.escape(clave)}(?![a-z0-9])", stack)):
+            return clave
+    return None
+
+
+def leer_fases(texto: str, problem_case: dict | None = None) -> tuple[str, dict[str, tuple[str, str]] | None]:
+    """Fallo 131: el texto de la estructura sin el bloque «FASES DEL ROADMAP» y, por fase ({div_id: (estado, frase)},
+    estado SI, NO o YA), lo que dice el bloque. «ya lo tiene» solo vale si el stack del cliente nombra lo que dice la
+    frase; si no, la fase se genera. Una fase que el bloque no trae, también. Sin bloque, sin ninguna línea legible o
+    sin ninguna fase que generar, None: van las 7. Si hay fases «ya lo tiene», el texto termina con la línea que
+    lee la propuesta, para que la arquitectura las integre y los costes no las presupuesten como nuevas."""
+    lineas = (texto or "").splitlines()
+    inicio = next((n for n in range(len(lineas) - 1, -1, -1)
+                   if FASES_TITULO.lower() in _normalize_text(lineas[n]).replace("*", "").replace("#", "")), None)
+    leidas: dict[int, tuple[str, str]] = {}
+    if inicio is not None:
+        for linea in lineas[inicio + 1:]:
+            celdas = [c.strip(" *`") for c in linea.strip().strip("-*• ").strip("|").split("|")]
+            if len(celdas) < 2:
+                if leidas and linea.strip():
+                    break
+                continue
+            palabras = set(re.findall(r"[a-z]+", _normalize_text(celdas[0])))
+            fase = next((n for n, claves in enumerate(_CLAVES_FASE) if palabras & set(claves)), None)
+            respuesta = re.sub(r"\s+", " ", _normalize_text(celdas[1])).strip(" .")
+            estado = (SI if respuesta in ("si", "yes") else NO if respuesta == "no"
+                      else YA if respuesta in ("ya lo tiene", "ya la tiene", "ya lo tienen", "ya la tienen") else None)
+            if fase is not None and estado is not None and fase not in leidas:
+                leidas[fase] = (estado, celdas[2] if len(celdas) > 2 else "")
+    sin_bloque = "\n".join(lineas[:inicio]).rstrip() if inicio is not None else texto
+    if not leidas:
+        logger.warning("[fases] La estructura no trae el bloque %s o no se lee: van las 7 fases", FASES_TITULO)
+        return sin_bloque, None
+    stack = _texto_stack(problem_case)
+    fases = {}
+    for n, div_id in enumerate(_ROADMAP_IDS):
+        estado, frase = leidas.get(n, (SI, ""))
+        if n not in leidas:
+            logger.warning("[fases] El bloque %s no dice nada de %s: se genera", FASES_TITULO, NOMBRES_FASES[n])
+        elif estado == YA and not _herramienta_en_stack(frase, stack):
+            logger.warning("[fases] %s: «ya lo tiene» («%s»), pero ni stack_tecnologico_actual ni "
+                           "madurez_analitica_actual lo nombran: se genera", NOMBRES_FASES[n], frase)
+            estado = SI
+        fases[div_id] = (estado, frase)
+    if all(estado != SI for estado, _ in fases.values()):
+        logger.warning("[fases] El bloque %s no deja ninguna fase que generar: van las 7 fases", FASES_TITULO)
+        return sin_bloque, None
+    de = lambda estado: [f"{NOMBRES_FASES[n]} ({fases[d][1] or 'sin motivo'})" for n, d in enumerate(_ROADMAP_IDS)
+                         if fases[d][0] == estado]
+    print(f"[fases] Roadmap con {len(de(SI))} de 7 fases" + (f"; no aplican: {'; '.join(de(NO))}" if de(NO) else "")
+          + (f"; ya implantadas: {'; '.join(de(YA))}" if de(YA) else ""))
+    if de(YA):
+        sin_bloque += ("\n\nYa implantado en el cliente (se reutiliza y se integra; no se presupuesta como nuevo): "
+                       + "; ".join(de(YA)) + ".")
+    return sin_bloque, fases
+
+
+def _referencia(fases: int) -> str:
+    """CÓMO ENCAJA TU FASE, con el número de fases que se escriben (fallo 131: pueden ser menos de 7)."""
+    return REFERENCIA.replace("las 7 fases", f"las {fases} fases")
+
+
 REFERENCIA = (
     "CÓMO ENCAJA TU FASE: las 7 fases del roadmap se escriben a la vez y cada una desarrolla su parte de la misma "
     "propuesta de arquitectura. Usa sus servicios, sus capas, su región y sus decisiones tal cual: no propongas "
@@ -143,6 +259,41 @@ def _poner_etiquetas(soup, etiquetas: dict[str, str]) -> None:
                 chip["hidden"] = ""
 
 
+def _quitar_fases(soup, no_aplican: dict[str, str], ya_implantadas: dict[str, str]) -> None:
+    """Fallo 131: quita del flujo el nodo de cada fase que no aplica (con su flecha); el de cada fase que el cliente
+    ya tiene se queda atenuado, con «Ya implantado». Las tarjetas de las dos se quitan y los pasos que quedan se
+    renumeran (01, 02…). Bajo el flujo, «No aplica a este proyecto: Ops (motivo)» y «Se reutiliza: ETL (lo que tiene
+    el cliente)». Solo nombres, sin ids."""
+    for div_id in list(no_aplican) + list(ya_implantadas):
+        nodo = soup.find("div", class_="rdm-pipe-node", onclick=re.compile(re.escape(f"'{div_id}'")))
+        if nodo is not None and div_id in ya_implantadas:
+            nodo["class"] = nodo.get("class", []) + ["rdm-pipe-implantado"]
+            del nodo["onclick"]  # sin tarjeta a la que ir
+            tech = nodo.find("span", class_="rdm-pipe-tech")
+            if tech is not None:
+                tech.string = "Ya implantado"
+        elif nodo is not None:
+            flecha = nodo.find_previous_sibling() or nodo.find_next_sibling()
+            if flecha is not None and "rdm-pipe-arrow" in (flecha.get("class") or []):
+                flecha.decompose()
+            nodo.decompose()
+        tarjeta = soup.find("div", id=f"card-{div_id}")
+        if tarjeta is not None:
+            tarjeta.decompose()
+    for n, paso in enumerate(soup.select("#rdm-stages-container .rdm-step"), start=1):
+        paso.string = f"{n:02d}"
+    flujo = soup.find("div", class_="rdm-nav-card")
+    for clase, inicio, fases in (("rdm-ya-implantado", "Se reutiliza", ya_implantadas),
+                                 ("rdm-no-aplica", "No aplica a este proyecto", no_aplican)):
+        if not fases or flujo is None:
+            continue
+        lista = "; ".join(f"{NOMBRES_FASES[_ROADMAP_IDS.index(d)]} ({m})" if m else NOMBRES_FASES[_ROADMAP_IDS.index(d)]
+                          for d, m in fases.items())
+        linea = soup.new_tag("p", attrs={"class": f"rdm-linea-fases {clase}"})
+        linea.string = f"{inicio}: {lista}"
+        flujo.insert_after(linea)
+
+
 def inject_roadmap_into_html(
     data_sources_output: str,
     ingestion_output: str,
@@ -152,14 +303,21 @@ def inject_roadmap_into_html(
     ml_output: str,
     bi_output: str,
     etiquetas: dict[str, str] | None = None,
+    no_aplican: dict[str, str] | None = None,
+    ya_implantadas: dict[str, str] | None = None,
 ) -> None:
     """Inyecta los 7 outputs individuales del roadmap en sus respectivos divs en el HTML.
-    Fallo 102: y, con `etiquetas`, las del flujo y las de cada tarjeta (las de etiquetas_del_flujo)."""
+    Fallo 102: y, con `etiquetas`, las del flujo y las de cada tarjeta (las de etiquetas_del_flujo).
+    Fallo 131: las fases de `no_aplican` ({div_id: motivo}) no salen; las de `ya_implantadas` ({div_id: lo que tiene
+    el cliente}) salen en el flujo atenuadas, como «Ya implantado», y sin tarjeta."""
     phase_outputs = [data_sources_output, ingestion_output, storage_output, etl_output, modeling_output, ml_output, bi_output]
     html = html_del_informe(REPORT_PATH)  # fallo 116: el informe en curso; si aún no hay, la plantilla
     soup = parse_html(html)
+    no_aplican, ya_implantadas = no_aplican or {}, ya_implantadas or {}
 
     for div_id, raw_text in zip(_ROADMAP_IDS, phase_outputs):
+        if div_id in no_aplican or div_id in ya_implantadas:
+            continue
         target = soup.find("div", id=div_id)
         if target is None:
             print(f"[roadmap_builder] WARN: div id='{div_id}' no encontrado en el HTML")
@@ -171,6 +329,8 @@ def inject_roadmap_into_html(
             target.append(child.__copy__())
     if etiquetas:
         _poner_etiquetas(soup, etiquetas)
+    if no_aplican or ya_implantadas:
+        _quitar_fases(soup, no_aplican, ya_implantadas)
 
     REPORT_PATH.write_text(str(soup), encoding="utf-8")
     print(f"[roadmap_builder] Roadmap inyectado en {REPORT_PATH}")
@@ -204,8 +364,14 @@ def resumir_solucion(propuesta_solucion: str, agents_config: dict) -> str:
 
 
 
-def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -> dict:
+def roadmap_builder(combined_response: dict, problem_case: dict | None = None,
+                    fases: dict[str, tuple[str, str]] | None = None) -> dict:
+    """fases (fallo 131): las de leer_fases(); solo se generan las «sí». None: las 7."""
     agents_config = load_agents_config()
+    estados = {div_id: (fases or {}).get(div_id, (SI, "")) for div_id in _ROADMAP_IDS}
+    aplican = [n for n, div_id in enumerate(_ROADMAP_IDS) if estados[div_id][0] == SI]
+    no_aplican = {d: frase for d, (estado, frase) in estados.items() if estado == NO}
+    ya_implantadas = {d: frase for d, (estado, frase) in estados.items() if estado == YA}
     # Gateway de modelos: cada fase pide el suyo (data_structures/modelos.yaml)
     fuentes_de_datos = _make_agent("data_sources_agent", agents_config, gateway.modelo("roadmap_fuentes"))
     ingesta_de_datos = _make_agent("ingestion_agent", agents_config, gateway.modelo("roadmap_ingesta"))
@@ -234,9 +400,9 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
     arquitectura = propuesta.get("architecture", "")
     contexto = ((f"{resumen}\n\n" if resumen else "")
                 + (f"{inventario.para_agentes(filas)}\n{SOLO_INVENTARIO}\n\n" if filas else "")
-                + (f"PROPUESTA DE ARQUITECTURA (la referencia común de las 7 fases):\n{sin_emojis(arquitectura)}\n\n"
-                   if arquitectura else "")
-                + f"{contexto_cliente(problem_case)}\n{PLATAFORMA}{REFERENCIA}")
+                + (f"PROPUESTA DE ARQUITECTURA (la referencia común de las {len(aplican)} fases):\n"
+                   f"{sin_emojis(arquitectura)}\n\n" if arquitectura else "")
+                + f"{contexto_cliente(problem_case)}\n{PLATAFORMA}{_referencia(len(aplican))}")  # fallo 131
     # Fallo 88: lo que cada fase leía del resumen, ahora de su sección de la propuesta
     extra = {n: f"\n{titulo} (la sección de la propuesta que desarrolla tu fase):\n{sin_emojis(propuesta[campo])}\n\n"
              for n, (campo, titulo) in SECCION_DE_CADA_FASE.items() if filas and propuesta.get(campo)}
@@ -457,14 +623,21 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
         print(f"[roadmap_builder] {TITULOS[n]}: {len(salidas[n])} caracteres · {time.monotonic() - inicio:.0f} s")
         progreso.avanzar(f"Roadmap: {TITULOS[n]}")  # fallo 94: desde el hilo solo se anota; lo pinta la sesión
 
-    print(f"\n\n[roadmap_builder] Ejecutando las {len(tareas)} fases del roadmap"
+    # Fallo 131: las fases que no aplican o que el cliente ya tiene no se generan; la barra avanza igual por ellas
+    for n in range(len(tareas)):
+        if n not in aplican:
+            estado, frase = estados[_ROADMAP_IDS[n]]
+            cual = "no aplica a este proyecto" if estado == NO else "ya implantada, se reutiliza"
+            print(f"[roadmap_builder] {TITULOS[n]}: {cual} ({frase or 'sin motivo'})")
+            progreso.avanzar(f"Roadmap: {TITULOS[n]} ({'no aplica' if estado == NO else 'ya implantado'})")
+    print(f"\n\n[roadmap_builder] Ejecutando las {len(aplican)} fases del roadmap"
           + (" a la vez" if HILOS > 1 else " en orden") + "...\n")
     inicio = time.monotonic()
     with ThreadPoolExecutor(max_workers=max(1, HILOS), thread_name_prefix="roadmap") as hilos:
         # Fallo 94: el hilo de la sesión espera a las fases pintando la barra cada vez que acaba una
-        progreso.esperar([hilos.submit(ejecutar, n, tarea) for n, tarea in enumerate(tareas)])
-    vacias = [TITULOS[n] for n, texto in enumerate(salidas) if not texto.strip()]
-    print(f"\n[roadmap_builder] Roadmap: {len(tareas) - len(vacias)} de {len(tareas)} fases en "
+        progreso.esperar([hilos.submit(ejecutar, n, tareas[n]) for n in aplican])
+    vacias = [TITULOS[n] for n in aplican if not salidas[n].strip()]
+    print(f"\n[roadmap_builder] Roadmap: {len(aplican) - len(vacias)} de {len(aplican)} fases en "
           f"{time.monotonic() - inicio:.0f} s" + (f"; sin texto: {', '.join(vacias)}" if vacias else "") + "\n")
     captured_outputs = salidas
 
@@ -475,7 +648,8 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
                            for n, texto in enumerate(captured_outputs)]
 
     if len(captured_outputs) == 7:
-        inject_roadmap_into_html(*captured_outputs, etiquetas=etiquetas_del_flujo(filas, problem_case))  # fallo 102
+        inject_roadmap_into_html(*captured_outputs, etiquetas=etiquetas_del_flujo(filas, problem_case),  # fallo 102
+                                 no_aplican=no_aplican, ya_implantadas=ya_implantadas)  # fallo 131
         print("[roadmap_builder] Roadmap inyectado en HTML exitosamente.\n")
     else:
         print(f"[roadmap_builder] WARN: Se esperaban 7 outputs pero se capturaron {len(captured_outputs)}. No se inyecta HTML.\n")
