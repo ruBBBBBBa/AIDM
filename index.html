@@ -1052,7 +1052,7 @@ function setBusy(on) {
   if (!on) { inicioEjecucion = null; cerrarIntelligence(); }
   $("send").disabled = on; $("input").disabled = on; $("reset").disabled = on;
   $("busy").classList.toggle("on", on); if (!on) $("busy").classList.remove("det"); progTxt = "";
-  document.querySelector(".top .orb").classList.toggle("think", on);
+  document.querySelector(".top .brand-logo")?.classList.toggle("think", on);
   clearInterval(timer);
   if (on) {
     iniciarNoticias();
