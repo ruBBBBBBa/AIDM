@@ -120,4 +120,16 @@ assert sopa.select("#card-roadmap-ingestion .rdm-tech-chip[hidden]")
 assert sopa.select_one("#card-roadmap-ingestion .section-header-text > span").get_text() == "Estrategia y pipelines"
 print("OK 4: las etiquetas del flujo y los chips del roadmap salen del inventario, sin los de Azure de la plantilla")
 
+# 5) Fallo 130: «Modelado» pasa a «Modelado / Análisis» y «ML & MLOps» a «Ops» en el flujo, las tarjetas y los logs;
+#    el chip de Ops recoge también la monitorización, y sus prompts son más generales
+nombres = [s.get_text(strip=True) for s in sopa.select(".rdm-pipe-name")]
+assert nombres[4:6] == ["Modelado / Análisis", "Ops"], nombres
+assert sopa.select_one("#card-roadmap-modeling h2").get_text(" ", strip=True) == "05 Modelado / Análisis"
+assert sopa.select_one("#card-roadmap-ml h2").get_text(" ", strip=True) == "06 Ops"
+assert not any(v in sopa.get_text() for v in ("Modelado & Serving", "Machine Learning & MLOps", "ML & MLOps"))
+assert rb.TITULOS[4:6] == ["Modelado / Análisis", "Ops"], rb.TITULOS
+assert rb.etiquetas_del_flujo([{"servicio": "Amazon CloudWatch", "capa": "monitorización", "fase": "mvp",
+                                "alternativa": ""}], EN_AWS)["roadmap-ml"] == "CloudWatch"
+print("OK 5: las fases se llaman «Modelado / Análisis» y «Ops» en el flujo, las tarjetas y los logs")
+
 print("\nTodo bien: el fallo 6 está arreglado (en la parte que se puede comprobar sin el LLM real).")

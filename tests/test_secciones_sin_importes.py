@@ -198,7 +198,7 @@ rb.roadmap_builder("PROPUESTA SIMULADA", problem_case=EN_AWS)
 assert roadmap[5].startswith("> **Ojo:") and "Amazon Macie" in roadmap[5] and roadmap[0] == "Fuentes."
 mensajes = [r.getMessage() for r in avisos]
 assert any(m.startswith("[servicios] architecture nombra Amazon Lookout for Vision") for m in mensajes), mensajes
-assert any(m.startswith("[servicios] roadmap: ML y MLOps nombra Amazon Macie") for m in mensajes), mensajes
+assert any(m.startswith("[servicios] roadmap: Ops nombra Amazon Macie") for m in mensajes), mensajes
 print("OK 9: los agentes reciben lo que no hay que proponer en su nube, y la sección que lo nombra lleva una nota")
 
 # 10) Fallo 88: la arquitectura termina con el inventario de servicios; Python lo lee (lista o tabla), lo pone como tabla

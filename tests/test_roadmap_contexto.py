@@ -148,6 +148,9 @@ fuentes, ingesta, almacenamiento, etl, modelado, ml, bi = prompts
 assert "ESTRATEGIA SIMULADA" in fuentes and "ESTRATEGIA SIMULADA" in ml and "BI SIMULADA" in bi and "BI SIMULADA" in modelado
 assert "GOBERNANZA SIMULADA" in almacenamiento and "GOBERNANZA SIMULADA" in etl
 assert not any(s in ingesta for s in ("ESTRATEGIA SIMULADA", "GOBERNANZA SIMULADA", "BI SIMULADA"))
+# Fallo 130: Modelado / Análisis cubre el modelo dimensional y la analítica; Ops, la operación y, si hay modelos, MLOps
+assert "modelo dimensional" in modelado and "análisis que pide el cliente" in modelado
+assert "monitorización y alertas" in ml and "Si no incluye modelos, no los inventes" in ml and "MLOps" in ml
 print("OK 6: con el inventario no se llama al resumen; cada fase recibe el inventario y su sección de la propuesta")
 
 assert hashlib.md5(INFORME.read_bytes()).hexdigest() == huella_antes, "el informe real no debía cambiar"

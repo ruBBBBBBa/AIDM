@@ -46,8 +46,9 @@ PLATAFORMA = (
 # escribe otra: todas desarrollan la misma propuesta de arquitectura, que es la referencia común. Así tampoco se
 # contradicen con ella (el 12 nov, el almacenamiento descartó las tres zonas del lago que proponía la arquitectura).
 HILOS = 7  # fases a la vez; con 1 van en orden, una detrás de otra (los tests lo usan para saber qué salida es cuál)
-TITULOS = ["Fuentes de datos", "Ingesta", "Almacenamiento", "Procesamiento y ETL", "Modelado y serving",
-           "ML y MLOps", "Visualización"]
+# Fallo 130: «Modelado y serving» pasa a «Modelado / Análisis» y «ML y MLOps» a «Ops», con un contenido más general
+TITULOS = ["Fuentes de datos", "Ingesta", "Almacenamiento", "Procesamiento y ETL", "Modelado / Análisis",
+           "Ops", "Visualización"]
 REFERENCIA = (
     "CÓMO ENCAJA TU FASE: las 7 fases del roadmap se escriben a la vez y cada una desarrolla su parte de la misma "
     "propuesta de arquitectura. Usa sus servicios, sus capas, su región y sus decisiones tal cual: no propongas "
@@ -78,11 +79,13 @@ EXTENSION = (f"\nExtensión: {PALABRAS_POR_FASE} palabras como máximo. Ve a lo 
 # Fallo 102: las etiquetas del flujo del roadmap (el nodo de cada fase y el chip de su tarjeta) salían fijas de la
 # plantilla, con servicios de Azure («Azure Data Factory», «ADLS Gen2», «Azure ML»…) aunque la solución fuera en AWS.
 # Ahora salen del inventario de servicios, por la capa de cada uno; la fase sin servicios lleva la plataforma.
-_CAPAS_DE_FASE = [  # por orden: «analítica / IA» es de ML, no de modelado
+_CAPAS_DE_FASE = [  # por orden: «analítica / IA» es de Ops (antes ML), no de modelado
     ("roadmap-sources", ("fuente", "origen")),
     ("roadmap-ingestion", ("ingesta", "ingestion")),
     ("roadmap-storage", ("almacenamiento", "storage", "lago")),
-    ("roadmap-ml", ("ia", "ml", "ai", "mlops", "inteligencia artificial", "machine learning")),
+    # Fallo 130: Ops es la operación y la monitorización y, si hay modelos, MLOps
+    ("roadmap-ml", ("ia", "ml", "ai", "mlops", "inteligencia artificial", "machine learning", "monitorizacion",
+                    "observabilidad", "operacion", "ops")),
     ("roadmap-etl", ("procesamiento", "orquestacion", "transformacion", "etl", "calidad")),
     ("roadmap-modeling", ("analitica", "modelado", "semantica", "consulta")),
     ("roadmap-bi", ("visualizacion", "bi", "informes", "dashboards")),
@@ -343,24 +346,27 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
         description=(
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
             f"{contexto}"
+            # Fallo 130: Modelado / Análisis es el modelado dimensional y la analítica, no solo lo que sirve al ML
             "Basándote en los datos procesados de la última capa del Data Lake de la propuesta y en los "
-            "casos de uso de negocio del cliente, diseña el modelo de datos analítico. Define si "
-            "aplica un esquema en estrella clásico, un modelo más flexible o una capa semántica "
+            "casos de uso de negocio del cliente, diseña el modelado y el análisis de los datos. Define si "
+            "aplica un modelo dimensional (esquema en estrella), un modelo más flexible o una capa semántica "
             "en la herramienta de BI del cliente o en un servicio de modelo semántico. Especifica las entidades principales "
             "(tablas de hechos y dimensiones o equivalentes), las métricas de negocio clave que "
-            "deben estar precalculadas, la estrategia de actualización de datos en esta capa y "
-            "cómo se expondrán los datos para consumo por BI, APIs y modelos de ML. "
+            "deben estar precalculadas, los análisis que pide el cliente (descriptivos, comparativos, de tendencia o, "
+            "si el caso los pide, predictivos), la estrategia de actualización de datos en esta capa y "
+            "cómo se expondrán los datos para consumo por BI, APIs y, si los hay, modelos de ML. "
             "Prioriza la comprensibilidad del modelo para el equipo de negocio del cliente sobre "
             "la elegancia técnica."
         ),
         expected_output=(
-            "Una propuesta, sin tablas, de modelado y serving con las siguientes secciones:\n"
+            "Una propuesta, sin tablas, de modelado y análisis con las siguientes secciones:\n"
             "1. Decisión sobre el tipo de modelo analítico y justificación\n"
             "2. Entidades principales del modelo (hechos, dimensiones o equivalentes)\n"
             "3. Métricas de negocio clave y cálculos precalculados\n"
-            "4. Estrategia de actualización y latencia de datos\n"
-            "5. Exposición de datos para BI, ML y APIs\n"
-            "6. Consideraciones de rendimiento y escalabilidad"
+            "4. Análisis que se harán sobre el modelo y para qué\n"
+            "5. Estrategia de actualización y latencia de datos\n"
+            "6. Exposición de datos para BI, APIs y, si los hay, modelos de ML\n"
+            "7. Consideraciones de rendimiento y escalabilidad"
         ) + EXTENSION,
         agent=modelado_y_serving,
     )
@@ -369,26 +375,29 @@ def roadmap_builder(combined_response: dict, problem_case: dict | None = None) -
         description=(
             "PROPUESTAS DE SOLUCIÓN GENERADAS POR EL EQUIPO:\n"
             f"{contexto}"
-            "Basándote en los casos de uso de IA identificados en la propuesta de solución y en "
-            "los datos disponibles en la capa de serving, define los modelos de ML más adecuados "
-            "para el proyecto. Para cada caso de uso especifica: el tipo de modelo recomendado y "
-            "su justificación (no siempre el más complejo es el mejor), los datos de entrenamiento "
-            "necesarios y su disponibilidad según el caso y la propuesta, la "
-            "infraestructura de ML necesaria en la plataforma (por ejemplo, Azure Machine Learning en Azure, Amazon "
-            "SageMaker en AWS o Vertex AI en Google Cloud: cómputo, entornos y endpoints), el ciclo "
-            "de vida del modelo (entrenamiento, validación, despliegue, monitorización y "
-            "reentrenamiento), y las métricas de evaluación tanto técnicas como de negocio. "
-            "Sé explícito sobre qué puede construirse con el equipo y datos actuales del cliente "
-            "y qué requeriría madurez adicional."
+            # Fallo 130: Ops es la operación y la monitorización de toda la solución y, si hay modelos, su MLOps
+            "Basándote en la propuesta de arquitectura y en el equipo del cliente, diseña cómo se opera la "
+            "solución en producción: monitorización y alertas de los pipelines, del almacenamiento y de los "
+            "cuadros de mando con los servicios de la plataforma (por ejemplo, Azure Monitor en Azure, Amazon "
+            "CloudWatch en AWS o Cloud Monitoring en Google Cloud), gestión de incidencias, despliegues y "
+            "entornos, copias de seguridad y control del gasto. Si la propuesta incluye modelos de IA o ML, "
+            "añade su MLOps: para cada caso de uso, el tipo de modelo y su justificación (no siempre el más "
+            "complejo es el mejor), los datos de entrenamiento y su disponibilidad, la infraestructura de ML "
+            "de la plataforma (por ejemplo, Azure Machine Learning en Azure, Amazon SageMaker en AWS o Vertex AI en "
+            "Google Cloud), el ciclo "
+            "de vida del modelo (entrenamiento, validación, despliegue, monitorización y reentrenamiento) y "
+            "sus métricas técnicas y de negocio. Si no incluye modelos, no los inventes. "
+            "Sé explícito sobre qué puede operar el equipo actual del cliente "
+            "y qué requeriría madurez adicional o soporte externo."
         ),
         expected_output=(
-            "Una propuesta, sin tablas, de estrategia ML y MLOps con las siguientes secciones:\n"
-            "1. Casos de uso de ML priorizados y tipo de modelo recomendado por caso\n"
-            "2. Datos de entrenamiento necesarios y disponibilidad real\n"
-            "3. Infraestructura de ML requerida\n"
-            "4. Ciclo de vida del modelo: entrenamiento, despliegue y monitorización\n"
-            "5. Métricas de evaluación técnicas y de negocio\n"
-            "6. Hoja de ruta de madurez: qué es viable ahora y qué requiere una segunda fase"
+            "Una propuesta, sin tablas, de operación (Ops) con las siguientes secciones:\n"
+            "1. Monitorización y alertas de la solución\n"
+            "2. Operación diaria: incidencias, despliegues, entornos y copias de seguridad\n"
+            "3. Control del gasto y del rendimiento\n"
+            "4. MLOps, solo si la propuesta incluye modelos: casos de uso, modelo por caso, datos, infraestructura, "
+            "ciclo de vida y métricas\n"
+            "5. Quién opera cada parte y qué requiere madurez adicional o una segunda fase"
         ) + EXTENSION,
         agent=ml_mlops,
     )
