@@ -291,6 +291,286 @@
   #rdm-stages-container.rdm-animate .section-card:nth-child(5){animation-delay:.18s}
   #rdm-stages-container.rdm-animate .section-card:nth-child(6){animation-delay:.22s}
   #rdm-stages-container.rdm-animate .section-card:nth-child(7){animation-delay:.26s}
+
+
+/* ===== CRISP-DM: DIAGRAMA INTERACTIVO ===== */
+
+/* ========================================
+   AIDM · CRISP-DM
+   Diseño corporativo del informe
+======================================== */
+
+.crisp-header {
+  padding: 30px 0 24px;
+}
+
+.crisp-header h2 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.crisp-header p {
+  font-size: 13.5px;
+  color: var(--muted);
+  max-width: 760px;
+  line-height: 1.7;
+}
+
+.crisp-container {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(300px, 1fr);
+  gap: 24px;
+  align-items: stretch;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 26px;
+  box-shadow: var(--shadow);
+}
+
+/* Diagrama */
+
+.crisp-diagram {
+  position: relative;
+  width: 100%;
+  max-width: 540px;
+  height: 480px;
+  margin: auto;
+}
+
+.crisp-diagram::before {
+  content: "";
+  position: absolute;
+  width: 310px;
+  height: 310px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border: 2px dashed var(--border-strong);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.crisp-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 136px;
+  height: 136px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--accent-mid);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  box-shadow: var(--shadow);
+}
+
+.crisp-center strong {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.crisp-center span {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+/* Fases */
+
+.crisp-phase {
+  position: absolute;
+  width: 146px;
+  min-height: 84px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: center;
+  color: var(--text);
+  transition:
+    border-color .2s ease,
+    box-shadow .2s ease,
+    background .2s ease;
+  z-index: 3;
+}
+
+.crisp-phase span {
+  display: block;
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+
+.crisp-phase strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.crisp-phase:hover {
+  border-color: var(--accent-mid);
+  box-shadow: 0 4px 16px rgba(15,23,42,.12);
+}
+
+.crisp-phase.active {
+  border: 2px solid var(--accent-mid);
+  background: var(--tag-bg);
+}
+
+.crisp-phase:focus-visible {
+  outline: 3px solid var(--accent-mid);
+  outline-offset: 3px;
+}
+
+/* Distribución alrededor del núcleo */
+
+.crisp-phase.phase-1 {
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.crisp-phase.phase-2 {
+  top: 95px;
+  right: 0;
+}
+
+.crisp-phase.phase-3 {
+  bottom: 95px;
+  right: 0;
+}
+
+.crisp-phase.phase-4 {
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.crisp-phase.phase-5 {
+  bottom: 95px;
+  left: 0;
+}
+
+.crisp-phase.phase-6 {
+  top: 95px;
+  left: 0;
+}
+
+/* Panel de información */
+
+.crisp-details {
+  align-self: center;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 26px;
+  min-height: 275px;
+}
+
+.crisp-details h3 {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+.crisp-details p {
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.75;
+}
+
+.crisp-details ul {
+  margin: 18px 0 0;
+  padding-left: 20px;
+}
+
+.crisp-details li {
+  color: var(--text);
+  font-size: 13.5px;
+  line-height: 1.65;
+  margin-bottom: 10px;
+}
+
+.crisp-details li::marker {
+  color: var(--accent-mid);
+}
+
+/* Adaptación a pantallas pequeñas */
+
+@media (max-width: 1100px) {
+  .crisp-container {
+    grid-template-columns: 1fr;
+  }
+
+  .crisp-details {
+    align-self: stretch;
+  }
+}
+
+@media (max-width: 600px) {
+  .crisp-container {
+    padding: 16px;
+    gap: 20px;
+  }
+
+  .crisp-diagram {
+    height: auto;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .crisp-diagram::before {
+    display: none;
+  }
+
+  .crisp-center {
+    position: static;
+    transform: none;
+    grid-column: 1 / -1;
+    width: 116px;
+    height: 116px;
+    margin: 0 auto 12px;
+  }
+
+  .crisp-phase,
+  .crisp-phase.phase-1,
+  .crisp-phase.phase-2,
+  .crisp-phase.phase-3,
+  .crisp-phase.phase-4,
+  .crisp-phase.phase-5,
+  .crisp-phase.phase-6 {
+    position: static;
+    transform: none;
+    width: 100%;
+    min-height: 90px;
+  }
+
+  .crisp-details {
+    padding: 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crisp-phase {
+    transition: none;
+  }
+}
 </style>
 </head>
 <body>
@@ -322,7 +602,80 @@
 <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24"><rect height="7" rx="1" width="7" x="3" y="3"></rect><rect height="7" rx="1" width="7" x="14" y="3"></rect><rect height="7" rx="1" width="7" x="3" y="14"></rect><rect height="7" rx="1" width="7" x="14" y="14"></rect></svg>
     Roadmap
   </button>
+
+<button class="tab-btn" onclick="switchTab('crispdm', this)">
+  <span style="font-size:17px">⟳</span>
+  CRISP-DM
+</button>
+
 </nav>
+
+
+<!-- ══ TAB: CRISP-DM ══ -->
+<div class="tab-panel" id="tab-crispdm">
+
+  <div class="crisp-header">
+    <h2>Metodología CRISP-DM</h2>
+    <p>
+      Ciclo de vida del proyecto de Datos e Inteligencia Artificial.
+      Un enfoque iterativo orientado a generar valor de negocio.
+    </p>
+  </div>
+
+  <div class="crisp-container">
+
+    <div class="crisp-diagram">
+
+      <div class="crisp-center">
+        <strong>CRISP-DM</strong>
+        <span>Metodología iterativa</span>
+      </div>
+
+      <button class="crisp-phase phase-1" data-phase="1">
+        <span>01</span>
+        <strong>Comprensión del negocio</strong>
+      </button>
+
+      <button class="crisp-phase phase-2" data-phase="2">
+        <span>02</span>
+        <strong>Comprensión de los datos</strong>
+      </button>
+
+      <button class="crisp-phase phase-3" data-phase="3">
+        <span>03</span>
+        <strong>Preparación de datos</strong>
+      </button>
+
+      <button class="crisp-phase phase-4" data-phase="4">
+        <span>04</span>
+        <strong>Modelado</strong>
+      </button>
+
+      <button class="crisp-phase phase-5" data-phase="5">
+        <span>05</span>
+        <strong>Evaluación</strong>
+      </button>
+
+      <button class="crisp-phase phase-6" data-phase="6">
+        <span>06</span>
+        <strong>Despliegue</strong>
+      </button>
+
+    </div>
+
+    <div class="crisp-details" id="crisp-details">
+      <h3>Explora las fases del proyecto</h3>
+      <p>
+        Selecciona una fase del diagrama para consultar
+        sus objetivos, actividades y entregables.
+      </p>
+    </div>
+
+  </div>
+</div>
+<!-- ══ FIN CRISP-DM ══ -->
+
+
 <main>
 <!-- ══ TAB: PROPUESTA ══ -->
 <div class="tab-panel active" id="tab-propuesta">
@@ -3616,6 +3969,109 @@ Estas tareas se ejecutan cómodamente con scripts Python dentro de Glue (Python�
     setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40);
     setTimeout(() => card.classList.remove('rdm-highlighted'), 2400);
   }
+
+
+/* ===== INTERACCIÓN CRISP-DM ===== */
+
+const crispFases = {
+  1: {
+    titulo: "01 · Comprensión del negocio",
+    descripcion: "Definir los objetivos empresariales y los resultados esperados.",
+    actividades: [
+      "Identificar las necesidades de automatización de atención al cliente.",
+      "Definir los casos de uso prioritarios de IA generativa.",
+      "Establecer los indicadores de éxito del proyecto.",
+      "Validar el alcance del MVP previsto a cuatro meses."
+    ]
+  },
+  2: {
+    titulo: "02 · Comprensión de los datos",
+    descripcion: "Analizar la información disponible y comprobar su utilidad.",
+    actividades: [
+      "Inventariar archivos Excel, documentos y preguntas frecuentes.",
+      "Evaluar la calidad, estructura y actualización de las fuentes.",
+      "Identificar información sensible y requisitos de privacidad.",
+      "Detectar carencias de datos que deban resolverse."
+    ]
+  },
+  3: {
+    titulo: "03 · Preparación de datos",
+    descripcion: "Organizar la información para que pueda utilizarla la solución.",
+    actividades: [
+      "Limpiar y normalizar los documentos del cliente.",
+      "Preparar los archivos para su almacenamiento en Amazon S3.",
+      "Fragmentar e indexar el conocimiento para el sistema RAG.",
+      "Aplicar controles de calidad y protección de datos."
+    ]
+  },
+  4: {
+    titulo: "04 · Modelado",
+    descripcion: "Construir la solución de inteligencia artificial.",
+    actividades: [
+      "Configurar el modelo de IA generativa en Amazon Bedrock.",
+      "Implementar la recuperación de conocimiento mediante RAG.",
+      "Desarrollar la integración con AWS Lambda y API Gateway.",
+      "Ajustar las instrucciones y los controles del asistente."
+    ]
+  },
+  5: {
+    titulo: "05 · Evaluación",
+    descripcion: "Comprobar que la solución responde a los objetivos del negocio.",
+    actividades: [
+      "Evaluar la precisión y utilidad de las respuestas.",
+      "Comprobar los tiempos de respuesta y la tasa de resolución.",
+      "Validar la seguridad y el tratamiento de datos personales.",
+      "Revisar los resultados con el cliente antes del despliegue."
+    ]
+  },
+  6: {
+    titulo: "06 · Despliegue",
+    descripcion: "Poner en funcionamiento la solución y facilitar su seguimiento.",
+    actividades: [
+      "Publicar el asistente en el canal digital seleccionado.",
+      "Configurar la monitorización y las alertas operativas.",
+      "Preparar los indicadores de seguimiento en Power BI.",
+      "Formar al equipo y establecer un plan de mejora continua."
+    ]
+  }
+};
+
+document.querySelectorAll(".crisp-phase").forEach(boton => {
+  boton.addEventListener("click", () => {
+    const fase = crispFases[boton.dataset.phase];
+    const panel = document.getElementById("crisp-details");
+
+    if (!fase || !panel) return;
+
+    document.querySelectorAll(".crisp-phase").forEach(b => {
+      b.classList.remove("active");
+      b.setAttribute("aria-pressed", "false");
+    });
+
+    boton.classList.add("active");
+    boton.setAttribute("aria-pressed", "true");
+
+    panel.replaceChildren();
+
+    const titulo = document.createElement("h3");
+    titulo.textContent = fase.titulo;
+
+    const descripcion = document.createElement("p");
+    descripcion.textContent = fase.descripcion;
+
+    const lista = document.createElement("ul");
+
+    fase.actividades.forEach(actividad => {
+      const elemento = document.createElement("li");
+      elemento.textContent = actividad;
+      lista.appendChild(elemento);
+    });
+
+    panel.append(titulo, descripcion, lista);
+  });
+});
+
+
 </script>
 </body>
 </html>
