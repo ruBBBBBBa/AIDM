@@ -190,6 +190,63 @@
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
 
+  /* ── Fallo 132: pestaña Resumen, «Detalle | Resumen» de cada sección y navegación desde el resumen ── */
+  .resumen-cabecera { padding: 24px 0 4px; display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+  .resumen-cabecera h2 { font-size: 22px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+  .resumen-general { font-size: 14px; color: var(--muted); max-width: 760px; line-height: 1.6; }
+  .resumen-pdf { font-size: 12px; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; }
+  .resumen-parte { margin-top: 20px; }
+  .resumen-caja { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); padding: 16px; }
+  .resumen-parte > h3 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 10px; }
+  .resumen-bloques { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+  .resumen-bloque { display: block; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; color: var(--text); text-decoration: none; box-shadow: var(--shadow); }
+  a.resumen-bloque:hover, a.resumen-bloque:focus-visible { border-color: var(--accent-mid); }
+  .resumen-bloque h3 { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+  .resumen-bloque p { font-size: 13px; color: var(--muted); line-height: 1.55; }
+  .resumen-puntos { padding-left: 18px; font-size: 13.5px; line-height: 1.6; color: var(--text); }
+  .resumen-puntos a { color: var(--text); }
+  .resumen-puntos-fase { list-style: disc; padding-left: 14px; margin-top: 6px; font-size: 10.5px; line-height: 1.35; color: var(--muted); text-align: left; font-weight: 400; }
+  #resumen-flujo a.rdm-pipe-node, #resumen-crisp a.crisp-phase { text-decoration: none; color: inherit; }
+  /* La copia del diagrama CRISP-DM en el resumen, más ancha para que quepan los puntos sin que se monten los nodos */
+  #resumen-crisp .crisp-diagram { max-width: 760px; height: 560px; }
+  #resumen-crisp .crisp-diagram::before { width: 360px; height: 360px; }
+  #resumen-crisp .crisp-phase { width: 220px; min-height: 0; padding: 8px 10px; }
+  #resumen-crisp div.crisp-phase { cursor: default; }
+  #resumen-crisp .crisp-phase span { margin-bottom: 2px; }
+  .vista-seccion { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; margin: 0 0 12px 12px; }
+  .vista-btn { font-size: 12px; padding: 4px 12px; border: 0; background: var(--surface); color: var(--muted); cursor: pointer; }
+  .vista-btn[aria-pressed="true"] { background: var(--tag-bg); color: var(--text); font-weight: 600; }
+  .resumen-seccion { display: none; font-size: 14px; line-height: 1.6; color: var(--text); }
+  .resumen-seccion h4 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 12px 0 4px; }
+  .resumen-seccion ul { padding-left: 18px; }
+  .section-card.modo-resumen .resumen-seccion { display: block; }
+  .section-card.modo-resumen .section-body > .prose { display: none; }
+  .volver-resumen { display: inline-block; font-size: 12px; color: var(--accent); margin-bottom: 10px; }
+  .resaltado { outline: 2px solid var(--accent-mid); outline-offset: 3px; border-radius: 12px; }
+  .tab-btn[hidden], .tab-panel[hidden], .resumen-parte[hidden] { display: none !important; }
+  @page { size: A4; margin: 12mm; }
+  @media print {
+    .topbar, .hero, .tab-bar, footer, .resumen-pdf, .tab-panel:not(#tab-resumen) { display: none !important; }
+    #tab-resumen { display: block !important; }
+    main { margin: 0; padding: 0; max-width: none; }
+    body { background: #fff; }
+    #tab-resumen a { color: inherit; text-decoration: none; }
+    .resumen-cabecera { padding: 0 0 2px; }
+    .resumen-cabecera h2 { font-size: 17px; margin-bottom: 2px; }
+    .resumen-general { font-size: 10.5px; line-height: 1.4; max-width: none; }
+    .resumen-parte { margin-top: 8px; }
+    .resumen-parte > h3 { font-size: 9.5px; margin-bottom: 4px; }
+    .resumen-bloques { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .resumen-bloque, .resumen-caja { box-shadow: none; break-inside: avoid; padding: 6px 8px; border-radius: 8px; }
+    .resumen-bloque h3 { font-size: 10.5px; margin-bottom: 1px; }
+    .resumen-bloque p { font-size: 9px; line-height: 1.35; }
+    .resumen-puntos { font-size: 9.5px; line-height: 1.35; }
+    .resumen-puntos-fase { font-size: 8px; line-height: 1.25; margin-top: 3px; }
+    #resumen-flujo .rdm-pipeline { zoom: .85; }
+    #resumen-crisp .crisp-diagram { zoom: .54; }
+    #resumen-crisp .resumen-puntos-fase { font-size: 12px; }
+  }
+
   /* ── Footer ── */
   footer { text-align: center; font-size: 12px; color: var(--muted); padding: 24px 32px; border-top: 1px solid var(--border); }
 
@@ -598,7 +655,11 @@
 </div>
 </div>
 <nav class="tab-bar">
-<button class="tab-btn active" onclick="switchTab('propuesta', this)">
+<button class="tab-btn active" onclick="switchTab('resumen', this)">
+<svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24"><line x1="4" x2="20" y1="6" y2="6"></line><line x1="4" x2="20" y1="12" y2="12"></line><line x1="4" x2="14" y1="18" y2="18"></line></svg>
+    Resumen
+  </button>
+<button class="tab-btn" onclick="switchTab('propuesta', this)">
 <svg fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" x2="8" y1="13" y2="13"></line><line x1="16" x2="8" y1="17" y2="17"></line></svg>
     Propuesta de solución
   </button>
@@ -681,13 +742,27 @@
 
 
 <main>
+<!-- ══ TAB: RESUMEN (fallo 132): la rellena agents/resumen_secciones.py al acabar el roadmap ══ -->
+<div class="tab-panel active" id="tab-resumen">
+<div class="resumen-cabecera" id="resumen">
+<div>
+<h2>Resumen de la propuesta</h2>
+<p class="resumen-general" id="resumen-general"></p>
+</div>
+<button class="resumen-pdf" onclick="window.print()" type="button">Descargar resumen en PDF</button>
+</div>
+<section class="resumen-parte"><h3>La propuesta, por partes</h3><div class="resumen-bloques" id="resumen-bloques"></div></section>
+<section class="resumen-parte" id="resumen-puntos-parte"><h3>Puntos clave</h3><ul class="resumen-puntos" id="resumen-puntos"></ul></section>
+<section class="resumen-parte" id="resumen-flujo-parte"><h3>Roadmap</h3><div class="resumen-caja" id="resumen-flujo"></div></section>
+<section class="resumen-parte" id="resumen-crisp-parte"><h3>Metodología CRISP-DM</h3><div class="resumen-caja" id="resumen-crisp"></div></section>
+</div>
 <!-- ══ TAB: PROPUESTA ══ -->
-<div class="tab-panel active" id="tab-propuesta">
+<div class="tab-panel" id="tab-propuesta">
 <div style="display:flex;justify-content:flex-end;padding:20px 0 4px">
 <button id="toggle-all" onclick="toggleAll()" style="font-size:12px;padding:5px 14px;border-radius:8px;border:1px solid var(--border-strong);background:var(--surface);color:var(--muted);cursor:pointer;">Colapsar todo</button>
 </div>
 <div class="section-card">
-<div class="section-header">
+<div class="section-header" id="seccion-plataforma">
 <div class="section-icon icon-plat">
 <svg fill="none" stroke="#15803d" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24">
 <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path>
@@ -778,7 +853,7 @@
 </div>
 </div>
 <div class="section-card">
-<div class="section-header">
+<div class="section-header" id="seccion-arquitectura">
 <div class="section-icon icon-arch">
 <svg fill="none" stroke="#0369a1" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24">
 <rect height="10" rx="1" width="6" x="2" y="7"></rect><rect height="14" rx="1" width="6" x="9" y="3"></rect><rect height="7" rx="1" width="6" x="16" y="10"></rect><path d="M5 17v2M12 17v2M19 17v2"></path>
@@ -891,7 +966,7 @@
 </div></div>
 </div>
 <div class="section-card">
-<div class="section-header">
+<div class="section-header" id="seccion-gobernanza">
 <div class="section-icon icon-gov">
 <svg fill="none" stroke="#92400e" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24">
 <path d="M12 2l9 4v6c0 5-3.8 9.7-9 11C3.8 21.7 3 17 3 12V6l9-4z"></path><polyline points="9 12 11 14 15 10"></polyline>
@@ -1035,7 +1110,7 @@
 </div></div>
 </div>
 <div class="section-card">
-<div class="section-header">
+<div class="section-header" id="seccion-datos-ia">
 <div class="section-icon icon-ai">
 <svg fill="none" stroke="#6d28d9" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24">
 <circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"></path>
@@ -1184,7 +1259,7 @@
 </div></div>
 </div>
 <div class="section-card">
-<div class="section-header">
+<div class="section-header" id="seccion-visualizacion">
 <div class="section-icon icon-bi">
 <svg fill="none" stroke="#9d174d" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24">
 <line x1="18" x2="18" y1="20" y2="10"></line><line x1="12" x2="12" y1="20" y2="4"></line><line x1="6" x2="6" y1="20" y2="14"></line>
@@ -1362,7 +1437,7 @@
 </div></div>
 </div>
 <div class="section-card">
-<div class="section-header">
+<div class="section-header" id="seccion-costes">
 <div class="section-icon" style="background:#d1fae5">
 <svg fill="none" stroke="#15803d" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24">
 <circle cx="12" cy="12" r="10"></circle><path d="M14.5 9.5a3.5 3.5 0 1 0 0 5"></path><line x1="9" x2="15" y1="12" y2="12"></line>
@@ -1632,7 +1707,7 @@
 <!-- Stage cards -->
 <div id="rdm-stages-container">
 <div class="section-card collapsed" id="card-roadmap-sources">
-<div class="section-header">
+<div class="section-header" id="fase-fuentes">
 <div class="section-icon icon-sources">
 <svg fill="none" stroke="currentColor" stroke-width="1.5" viewbox="0 0 24 24">
 <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v4c0 1.66 4.03 3 9 3s9-1.34 9-3V5"></path><path d="M3 9v4c0 1.66 4.03 3 9 3s9-1.34 9-3V9"></path><path d="M3 13v4c0 1.66 4.03 3 9 3s9-1.34 9-3v-4"></path>
@@ -1783,7 +1858,7 @@
 </div>
 </div>
 <div class="section-card collapsed" id="card-roadmap-ingestion">
-<div class="section-header">
+<div class="section-header" id="fase-ingesta">
 <div class="section-icon icon-ingestion">
 <svg fill="none" stroke="currentColor" stroke-width="1.5" viewbox="0 0 24 24">
 <polyline points="8 17 12 21 16 17"></polyline><line x1="12" x2="12" y1="12" y2="21"></line><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"></path>
@@ -2044,7 +2119,7 @@
 </div>
 </div>
 <div class="section-card collapsed" id="card-roadmap-storage">
-<div class="section-header">
+<div class="section-header" id="fase-almacenamiento">
 <div class="section-icon icon-storage">
 <svg fill="none" stroke="currentColor" stroke-width="1.5" viewbox="0 0 24 24">
 <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline>
@@ -2397,7 +2472,7 @@ s3://lake-silver/
 </div>
 </div>
 <div class="section-card collapsed" id="card-roadmap-etl">
-<div class="section-header">
+<div class="section-header" id="fase-etl">
 <div class="section-icon icon-etl">
 <svg fill="none" stroke="currentColor" stroke-width="1.5" viewbox="0 0 24 24">
 <circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"></path>
@@ -2680,7 +2755,7 @@ Estas tareas se ejecutan cómodamente con scripts Python dentro de Glue (Python�
 </div>
 </div>
 <div class="section-card collapsed" id="card-roadmap-modeling">
-<div class="section-header">
+<div class="section-header" id="fase-modelado">
 <div class="section-icon icon-modeling">
 <svg fill="none" stroke="currentColor" stroke-width="1.5" viewbox="0 0 24 24">
 <rect height="18" rx="2" width="18" x="3" y="3"></rect><line x1="3" x2="21" y1="9" y2="9"></line><line x1="3" x2="21" y1="15" y2="15"></line><line x1="9" x2="9" y1="3" y2="21"></line><line x1="15" x2="15" y1="3" y2="21"></line>
@@ -3048,7 +3123,7 @@ Estas tareas se ejecutan cómodamente con scripts Python dentro de Glue (Python�
 </div>
 </div>
 <div class="section-card collapsed" id="card-roadmap-ml">
-<div class="section-header">
+<div class="section-header" id="fase-ops">
 <div class="section-icon icon-ml">
 <svg fill="none" stroke="currentColor" stroke-width="1.5" viewbox="0 0 24 24">
 <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-1.04Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-1.04Z"></path>
@@ -3315,7 +3390,7 @@ Estas tareas se ejecutan cómodamente con scripts Python dentro de Glue (Python�
 </div>
 </div>
 <div class="section-card collapsed" id="card-roadmap-bi">
-<div class="section-header">
+<div class="section-header" id="fase-visualizacion">
 <div class="section-icon icon-rdmbi">
 <svg fill="none" stroke="currentColor" stroke-width="1.5" viewbox="0 0 24 24">
 <line x1="18" x2="18" y1="20" y2="10"></line><line x1="12" x2="12" y1="20" y2="4"></line><line x1="6" x2="6" y1="20" y2="14"></line><line x1="2" x2="22" y1="20" y2="20"></line>
@@ -3919,6 +3994,44 @@ Estas tareas se ejecutan cómodamente con scripts Python dentro de Glue (Python�
     btn.classList.add('active');
     if (id === 'roadmap') initRoadmap();
   }
+
+  // ── Fallo 132: desde la pestaña Resumen, cada enlace lleva a su sección por el hash de la URL (así el botón Atrás
+  // vuelve): cambia de pestaña, abre el desplegable en «Resumen», baja hasta él y lo resalta un momento ──
+  function ponerVista(card, vista) {
+    if (!card || !card.querySelector('.vista-seccion')) return;
+    card.classList.toggle('modo-resumen', vista === 'resumen');
+    card.querySelectorAll('.vista-btn').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.vista === vista)));
+  }
+
+  function abrirDestino() {
+    const id = decodeURIComponent(location.hash.slice(1));
+    const destino = id ? document.getElementById(id) : null;
+    if (!destino) return;
+    const panel = destino.closest('.tab-panel');
+    if (panel && !panel.classList.contains('active')) {
+      const nombre = panel.id.replace(/^tab-/, '');
+      const boton = document.querySelector(".tab-btn[onclick*=\"'" + nombre + "'\"]");
+      if (boton) switchTab(nombre, boton);
+    }
+    const card = destino.closest('.section-card');
+    if (card) { card.classList.remove('collapsed'); ponerVista(card, 'resumen'); }
+    if (destino.classList.contains('crisp-phase')) destino.click();
+    const marca = card || destino;
+    if (id !== 'resumen') {
+      marca.classList.add('resaltado');
+      setTimeout(() => marca.classList.remove('resaltado'), 2400);
+    }
+    setTimeout(() => destino.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40);
+  }
+
+  document.addEventListener('click', e => {
+    const boton = e.target.closest('.vista-btn');
+    if (boton) { ponerVista(boton.closest('.section-card'), boton.dataset.vista); return; }
+    const enlace = e.target.closest('a[href^="#"]');
+    if (enlace && enlace.getAttribute('href') === location.hash) { e.preventDefault(); abrirDestino(); }  // mismo hash
+  });
+  window.addEventListener('hashchange', abrirDestino);
+  abrirDestino();
 
   // ── Propuesta: collapsible sections ──
   document.querySelectorAll('.section-header').forEach(header => {

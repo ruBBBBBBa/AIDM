@@ -208,6 +208,15 @@ resultado = ec.run_estimation_crew("PROPUESTA SIMULADA", "groq/openai/gpt-oss-20
 assert "Proyecto completo (equipo incluido)" in resultado.cost_estimation
 assert "### MVP" in resultado.team_profiles and "### Resto del proyecto, después del MVP" in resultado.team_profiles
 assert "Data Scientist" in resultado.team_profiles.split("### Resto del proyecto")[1]
+# Fallo 132: las cifras de la pestaña Resumen son las mismas variables que pinta el «Resumen ejecutivo»
+cifras = {}
+html = ec._format_cost_report(informe, "", calculado, dos, cifras=cifras)
+assert html == ec._format_cost_report(informe, "", calculado, dos), "pedir las cifras no cambia la sección"
+assert cifras == {"total_etiqueta": "Proyecto completo (equipo incluido)", "total": ec._eur(completo),
+                  "meses": "10 meses", "mvp": ec._eur(mvp_total), "al_mes": ec._eur(1_500)}, cifras
+assert f">{cifras['total']}</div>" in html and f">{cifras['mvp']}</div>" in html
+assert resultado.cifras_costes["total_etiqueta"] == "Proyecto completo (equipo incluido)"
+assert f">{resultado.cifras_costes['total']}</div>" in resultado.cost_estimation
 print(f"OK 8: el MVP ({ec._eur(mvp_total)}, {pct} %) y el proyecto completo ({ec._eur(completo)}) se valoran por separado")
 
 # 9) Fallo 88: costes valora los servicios del inventario de la arquitectura, cada uno desde su fase; avisa de lo que

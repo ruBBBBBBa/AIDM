@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 
@@ -6,6 +7,7 @@ from agents.plataforma import elegir_plataforma
 from agents.structure_proposal_agent_logic import build_structure_proposal
 from agents.solution_builder_crew import propose_solution
 from agents.roadmap_builder import leer_fases, roadmap_builder
+from agents.resumen_secciones import completar_resumen, resumir_propuesta
 
 from utils import PLATAFORMA_OBJETIVO, load_problem_case
 
@@ -13,8 +15,8 @@ import gateway
 import progreso
 
 # Fallo 94: los pasos de la barra de progreso, de la plataforma al informe: plataforma, estructura, propuesta, costes,
-# perfiles y equipo, resumen y las 7 fases del roadmap
-PASOS_DEL_INFORME = 13
+# perfiles y equipo, resumen y las 7 fases del roadmap. Fallo 132: y las 2 llamadas del resumidor
+PASOS_DEL_INFORME = 15
 
 class AgentState(TypedDict):
     user_prompt: str
@@ -100,9 +102,16 @@ def solution_building_node(state: AgentState) -> AgentState:
 def roadmap_node(state: AgentState) -> AgentState:
     problem_solution = state.get("problem_solution")
 
-    roadmap_response = roadmap_builder(problem_solution, state.get("problem_case"),
-                                       fases=state.get("fases_roadmap"))  # fallo 131
+    # Fallo 132: la llamada 1 del resumidor (las secciones de la propuesta) va en un hilo, a la vez que el roadmap
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="resumen") as hilo:
+        resumen_propuesta = hilo.submit(resumir_propuesta, state.get("problem_case"))
+        roadmap_response = roadmap_builder(problem_solution, state.get("problem_case"),
+                                           fases=state.get("fases_roadmap"))  # fallo 131
+        progreso.esperar([resumen_propuesta])
     print("ROADMAP COMPLETADO\n\n\n")
+    # Fallo 132: la llamada 2 (general, puntos clave, fases y CRISP-DM) y la pestaña Resumen del informe
+    completar_resumen(resumen_propuesta.result(), problem_solution, state.get("problem_case"),
+                      state.get("fases_roadmap"))
 
     return {
         **state,

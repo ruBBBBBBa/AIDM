@@ -257,6 +257,7 @@ class CostEstimationReport(BaseModel):
 class EstimationResult(BaseModel):
     cost_estimation: str
     team_profiles: str
+    cifras_costes: dict = {}  # fallo 132: las del «Resumen ejecutivo», para la pestaña Resumen del informe
 
 
 
@@ -1103,7 +1104,9 @@ def _equipo_por_fases(equipo: dict) -> str:
 
 def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", equipo: dict | None = None,
                         problem_case: dict | None = None, avisar_tarifas: bool = True,
-                        inventario: list[dict] | None = None) -> str:
+                        inventario: list[dict] | None = None, cifras: dict | None = None) -> str:
+    """cifras (fallo 132): si se pasa un dict, se rellena con las cifras del «Resumen ejecutivo» tal como salen en él
+    (total, MVP, lo que cuesta al mes lo que queda funcionando y los meses), para la pestaña Resumen del informe."""
     r = report.resumen_ejecutivo
     # Fallo 53: los componentes que están en la tabla de precios llevan su precio; el resto, el del modelo
     # Fallo 87: sin filas de la nube del cliente en la tabla, sin avisos de «Tarifa desconocida»
@@ -1475,6 +1478,13 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
             f'{escaped}</pre>'
             f'</div></div>'
         )
+
+    if cifras is not None:  # fallo 132: las mismas variables que pinta el «Resumen ejecutivo» de abajo
+        cifras.update({
+            "total_etiqueta": ("Proyecto completo (equipo incluido)" if resto else "Coste total (equipo incluido)"
+                               if equipo else "Coste estimado (sin equipo)"),
+            "total": _rango(total_min, total_max), "meses": meses_txt,
+            "mvp": _rango(mvp["min"], mvp["max"]) if mvp else "", "al_mes": _eur(al_mes) if al_mes else ""})
 
     # Section label style matches .prose h4 from the template
     lbl = ('font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;'
@@ -2199,9 +2209,11 @@ def run_estimation_crew(
 
     # Costes: el JSON ya validado por el guardrail; si no llegó, la sección lo avisa y el informe sigue
     report = _leer_salida(cost_report_task, CostEstimationReport)
+    cifras_costes: dict = {}
     if report:
         cost_estimation = _format_cost_report(report, infracost_prices or "", equipo, problem_case,
-                                              avisar_tarifas=bool(filas_nube), inventario=inventario)
+                                              avisar_tarifas=bool(filas_nube), inventario=inventario,
+                                              cifras=cifras_costes)  # fallo 132
     else:
         logger.error("[estimation_crew] Sin costes: el modelo %s no devolvió un JSON válido", model_name)
         cost_estimation = _aviso_sin_costes(model_name)
@@ -2242,4 +2254,5 @@ def run_estimation_crew(
     return EstimationResult(
         cost_estimation=cost_estimation,
         team_profiles=team_profiles,
+        cifras_costes=cifras_costes,  # fallo 132
     )

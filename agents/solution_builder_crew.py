@@ -34,6 +34,7 @@ class SolutionResult(BaseModel):
     cost_estimation: str
     team_profiles: str
     inventario: list[dict] = []  # fallo 88: lo lee el roadmap
+    cifras_costes: dict = {}  # fallo 132: las del «Resumen ejecutivo» de costes, para la pestaña Resumen
 
 
 def _inject_into_html(

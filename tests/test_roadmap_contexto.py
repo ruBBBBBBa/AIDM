@@ -264,5 +264,157 @@ assert len(prompts) == 7
 logging.getLogger("aidm").removeHandler(recoger)
 print("OK 7: solo las fases «sí» (5 del 01 al 05; o 1 con 4 «Ya implantado» validadas por el stack); sin stack, se genera; todas «no»/«ya» o sin bloque, las 7")
 
+# 8) Fallo 132: el resumidor. La llamada 1 (las secciones de la propuesta) va a la vez que las fases del roadmap y la 2,
+#    al acabar. El JSON llega a los bloques de la pestaña Resumen, a los puntos clave, a los interruptores «Detalle |
+#    Resumen», al flujo y al CRISP-DM; una frase con una cifra que no está en su sección y un punto clave con un servicio
+#    se quitan y lo dice el log; el bloque de costes lleva las cifras de Python; la barra suma los 2 pasos. Si las
+#    llamadas fallan o su JSON no se lee: bloques sin texto, sin interruptores, una línea en el log y el informe sigue.
+import json
+
+from agents import resumen_secciones as rs
+from agents.discovery_agent_logic import _cifras
+
+graph.roadmap_builder = rb.roadmap_builder
+graph.resumir_propuesta, graph.completar_resumen = rs.resumir_propuesta, rs.completar_resumen
+rb.HILOS = 1
+empezado = {"resumen": threading.Event(), "fase": threading.Event()}
+a_la_vez: list[bool] = []
+respuestas: dict = {}
+prompts_resumen: dict = {}
+
+
+def kickoff_resumen(self, *args, **kwargs):
+    descripcion = self.tasks[0].description
+    llamada = 1 if descripcion.startswith("Resume cada sección") else 2 if descripcion.startswith(
+        "Con lo que ya se ha escrito") else 0
+    if llamada:
+        prompts_resumen[llamada] = descripcion
+        if llamada == 1:
+            empezado["resumen"].set()
+            a_la_vez.append(empezado["fase"].wait(5))  # las fases empiezan mientras la llamada 1 sigue en marcha
+        respuesta = respuestas.get(llamada, "")
+        if isinstance(respuesta, Exception):
+            raise respuesta
+        return SimpleNamespace(raw=respuesta)
+    empezado["fase"].set()
+    a_la_vez.append(empezado["resumen"].wait(5))  # y la llamada 1 ha empezado sin esperar a que acaben
+    return kickoff_simulado(self, *args, **kwargs)
+
+
+plantilla = BeautifulSoup(INFORME.read_text(encoding="utf-8"), "html.parser")
+cifra_buena = max(_cifras(plantilla.find(id="content-architecture").get_text(" ", strip=True)), key=len)
+respuestas[1] = "```json\n" + json.dumps({
+    "arquitectura": {"para_todos": "Una plataforma en la nube que reúne los datos del cliente.",
+                     "decision_principal": f"Arquitectura sin servidores con {cifra_buena} piezas.",
+                     "por_que": "Escala sola. Ahorra 9137 horas al año.",
+                     "piezas_clave": ["Un lago de datos", "Un flujo de 9137 tareas"],
+                     "riesgos": ["Depender de un proveedor"], "siguiente_paso": "Validar el piloto."},
+    "gobernanza": {"para_todos": "Reglas claras sobre quién ve cada dato.", "decision_principal": "Un comité del dato."},
+    "plataforma": "no es un objeto"}, ensure_ascii=False) + "\n```"
+respuestas[2] = json.dumps({
+    "resumen_general": "El cliente tendrá sus datos en un solo sitio y cuadros para decidir.",
+    "puntos_clave": [{"texto": "Los datos se reúnen en un único lugar.", "seccion": "arquitectura"},
+                     {"texto": "Los cuadros de ventas llegan a dirección.", "seccion": "visualizacion_roadmap"},
+                     {"texto": "Se orquesta con AWS Step Functions.", "seccion": "etl"},
+                     {"texto": "Se ahorran 9137 horas.", "seccion": "arquitectura"},
+                     {"texto": "El equipo se forma desde el principio.", "seccion": None},
+                     {"texto": "Un sexto punto que sobra.", "seccion": None}],
+    "fases": {"fuentes": {"puntos": ["El ERP y el CRM", "Ficheros de ventas"], "decision_principal": "Conectar el ERP."},
+              "ops": {"puntos": ["Alertas de los procesos"], "decision_principal": "Vigilar las cargas."}},
+    "crisp": {clave: [f"Punto de {clave}"] for clave, _, _ in rs.CRISP}}, ensure_ascii=False)
+solucion = {**propuesta, "cifras_costes": {"total_etiqueta": "Coste total (equipo incluido)",
+                                           "total": "72.000 € – 80.000 €", "meses": "4 meses", "mvp": "",
+                                           "al_mes": "1.200 €"}}
+
+
+def resumir(fases_=None) -> BeautifulSoup:
+    shutil.copy(INFORME, copia)
+    for evento in empezado.values():
+        evento.clear()
+    a_la_vez.clear()
+    avisos.clear()
+    pintadas.clear()
+    prompts_resumen.clear()
+    Crew.kickoff = kickoff_resumen
+    # 1 (el inventario, sin resumen) + las 7 fases + las 2 llamadas del resumidor
+    progreso.empezar(lambda fraccion, texto: pintadas.append((threading.get_ident(), fraccion, texto)), total=10)
+    try:
+        graph.roadmap_node({"problem_solution": solucion, "problem_case": caso, "fases_roadmap": fases_})
+    finally:
+        progreso.terminar()
+        Crew.kickoff = kickoff_simulado
+    assert pintadas[-1][1] == 1.0 and {hilo for hilo, _, _ in pintadas} == {threading.get_ident()}, pintadas
+    pasos = [texto for _, _, texto in pintadas]
+    assert pasos[-1].endswith("10 de 10 pasos"), pasos  # la llamada 1 cuenta aunque su texto no llegue a pintarse
+    assert any(t.startswith("Resumen: puntos clave y fases") for t in pasos), pasos
+    return BeautifulSoup(copia.read_text(encoding="utf-8"), "html.parser")
+
+
+logging.getLogger("aidm").addHandler(recoger)
+sopa = resumir()
+assert a_la_vez and all(a_la_vez), "la llamada 1 del resumidor no va a la vez que las fases del roadmap"
+assert graph.PASOS_DEL_INFORME == 15
+assert "fases: solo estas: fuentes, ingesta, almacenamiento, etl, modelado, ops, visualizacion_roadmap." \
+       in prompts_resumen[2] and "72.000" not in prompts_resumen[2], "la llamada 2 no recibe cifras de costes"
+# La pestaña Resumen va primera y activa
+assert sopa.select(".tab-btn")[0].get_text(strip=True) == "Resumen" and "active" in sopa.select(".tab-btn")[0]["class"]
+assert "active" in sopa.find(id="tab-resumen")["class"] and "active" not in sopa.find(id="tab-propuesta")["class"]
+assert sopa.find(id="resumen-general").get_text() == "El cliente tendrá sus datos en un solo sitio y cuadros para decidir."
+# Bloques: todos con enlace (todo se generó); el texto de la llamada 1 y, en costes, las cifras de Python
+bloques = sopa.select("#resumen-bloques > .resumen-bloque")
+assert [b.h3.get_text() for b in bloques] == ["Plataforma", "Arquitectura", "Gobernanza", "Datos e IA", "Visualización",
+                                               "Costes"]
+assert [b.get("href") for b in bloques] == ["#seccion-plataforma", "#seccion-arquitectura", "#seccion-gobernanza",
+                                            "#seccion-datos-ia", "#seccion-visualizacion", "#seccion-costes"]
+assert [b.p.get_text() if b.p else "" for b in bloques] == [
+    "", "Una plataforma en la nube que reúne los datos del cliente.", "Reglas claras sobre quién ve cada dato.", "", "",
+    "Coste total (equipo incluido): 72.000 € – 80.000 € · al mes, lo que queda funcionando: 1.200 € · plazo: 4 meses."]
+# El «Resumen» de arquitectura: sin la frase de 9137 ni la pieza de 9137; la cifra que sí está en la sección se queda
+tarjeta = sopa.find(id="seccion-arquitectura").find_parent(class_="section-card")
+assert [(b.get_text(), b["aria-pressed"]) for b in tarjeta.select(".vista-btn")] == [("Detalle", "true"),
+                                                                                      ("Resumen", "false")]
+resumen_arq = tarjeta.select_one(".resumen-seccion")
+assert cifra_buena in resumen_arq.get_text() and "9137" not in resumen_arq.get_text(), resumen_arq
+assert [li.get_text() for li in resumen_arq.select("li")] == ["Un lago de datos", "Depender de un proveedor"]
+assert "Escala sola." in resumen_arq.get_text() and "Ahorra" not in resumen_arq.get_text()
+assert any("fuera una frase con cifras" in a and "9137" in a for a in avisos), avisos
+# Interruptor solo donde hay resumen: arquitectura, gobernanza y las fases Fuentes y Ops (nunca costes ni perfiles)
+con_interruptor = [s.find_parent(class_="section-card").select_one(".section-header")["id"]
+                   for s in sopa.select(".vista-seccion")]
+assert con_interruptor == ["seccion-arquitectura", "seccion-gobernanza", "fase-fuentes", "fase-ops"], con_interruptor
+# Puntos clave: el del servicio y el de la cifra, fuera; como mucho 5; cada uno con el enlace a su sección
+puntos = sopa.select("#resumen-puntos > li")
+assert [(li.get_text(), li.a["href"] if li.a else None) for li in puntos] == [
+    ("Los datos se reúnen en un único lugar.", "#seccion-arquitectura"),
+    ("Los cuadros de ventas llegan a dirección.", "#fase-visualizacion"),
+    ("El equipo se forma desde el principio.", None)], puntos
+assert any("nombra un servicio (AWS Step Functions)" in a for a in avisos), avisos
+# El flujo y el CRISP-DM, con sus puntos; la pestaña de Asier aún no lee #crisp-datos: oculta y sin enlaces
+nodos = sopa.select("#resumen-flujo .rdm-pipe-node")
+assert [n.get("href") for n in nodos] == [f"#{d}" for _, _, d in rs.FASES] and not any(n.get("onclick") for n in nodos)
+assert [li.get_text() for li in nodos[0].select(".resumen-puntos-fase li")] == ["El ERP y el CRM", "Ficheros de ventas"]
+assert sopa.find(id="tab-crispdm").has_attr("hidden") and any("no lee #crisp-datos" in a for a in avisos), avisos
+fases_crisp = sopa.select("#resumen-crisp .crisp-phase")
+assert len(fases_crisp) == 6 and all(f.name == "div" for f in fases_crisp), fases_crisp
+assert fases_crisp[0].select_one(".resumen-puntos-fase li").get_text() == "Punto de negocio"
+assert json.loads(sopa.find(id="crisp-datos").string)["1"] == {"titulo": "01 · Comprensión del negocio",
+                                                              "actividades": ["Punto de negocio"]}
+assert "roadmap-" not in sopa.find(id="tab-resumen").get_text(), "un id interno se ve en la pestaña Resumen"
+
+# Si el JSON no se lee (llamada 2) o la llamada falla (llamada 1): bloques sin texto, sin interruptores, el log lo dice
+respuestas.update({1: RuntimeError("503 simulado"), 2: "Lo siento, no puedo."})
+sopa = resumir()
+assert not sopa.select(".vista-seccion, .resumen-seccion"), "sin resumen no hay interruptor"
+assert [b.p.get_text() for b in sopa.select("#resumen-bloques > .resumen-bloque") if b.p] == [
+    "Coste total (equipo incluido): 72.000 € – 80.000 € · al mes, lo que queda funcionando: 1.200 € · plazo: 4 meses."]
+assert sopa.find(id="resumen-puntos-parte").has_attr("hidden") and not sopa.find(id="resumen-general").get_text()
+assert len(sopa.select("#resumen-flujo .rdm-pipe-node")) == 7 and not sopa.select(".resumen-puntos-fase")
+assert any("La llamada 1 ha fallado (RuntimeError: 503 simulado)" in a for a in avisos), avisos
+assert any(a.startswith("[resumen] Llamada 2 sin JSON") for a in avisos), avisos
+assert sopa.select_one("#roadmap-sources").get_text(strip=True), "el roadmap sigue en el informe"
+logging.getLogger("aidm").removeHandler(recoger)
+print("OK 8: el resumen de la propuesta va a la vez que el roadmap; el JSON se reparte; cifras inventadas y servicios, "
+      "fuera; costes con las cifras de Python; sin JSON, sin interruptores y el informe sigue")
+
 assert hashlib.md5(INFORME.read_bytes()).hexdigest() == huella_antes, "el informe real no debía cambiar"
-print("\nTodo bien: los fallos 4, 73, 88, 94 y 131 están arreglados.")
+print("\nTodo bien: los fallos 4, 73, 88, 94, 131 y 132 están arreglados.")

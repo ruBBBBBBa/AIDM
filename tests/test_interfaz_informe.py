@@ -257,4 +257,105 @@ print("OK 4: las noticias buscan solo con el sector en Bing (Google de reserva),
       "es la descripción del medio, limpia y recortada; un título genérico se cambia por el de la página o se descarta; "
       "si fallan, las generales")
 
-print("\nTodo bien: los fallos 3 y 127 están arreglados.")
+# 5) Fallo 132: la pestaña Resumen. Cada enlace del resumen (bloques, puntos clave, flujo, CRISP-DM y «← Volver al
+#    resumen») apunta a un id que existe en el HTML, también con fases «no» y «ya lo tiene» y con una sección sin
+#    generar (su bloque, sin enlace); no hay ids repetidos ni ids internos a la vista. La pestaña CRISP-DM de Asier se
+#    oculta mientras su JS no lea #crisp-datos (y sus nodos del resumen van sin enlace); cuando lo lea, se ve y enlazan.
+import re
+
+from bs4 import BeautifulSoup
+
+from agents import resumen_secciones as rs
+from agents import roadmap_builder as rb
+
+PROPUESTA = {clave: {"para_todos": f"Texto de {clave}.", "decision_principal": f"Decisión de {clave}."}
+             for clave, _, _, _ in rs.SECCIONES}
+PROYECTO = {"general": "Resumen general.",
+            "puntos": [("Punto de arquitectura.", "arquitectura"), ("Punto de gobernanza.", "gobernanza"),
+                       ("Punto de fuentes.", "fuentes"), ("Punto de Ops.", "ops"), ("Punto suelto.", None)],
+            "fases": {clave: {"puntos": [f"Punto de {clave}"], "decision_principal": "Decisión."}
+                      for clave, _, _ in rs.FASES},
+            "crisp": {clave: [f"Punto de {clave}"] for clave, _, _ in rs.CRISP}}
+CIFRAS = {"total_etiqueta": "Coste total (equipo incluido)", "total": "50.000 €", "meses": "4 meses", "mvp": "",
+          "al_mes": ""}
+
+
+def montar(no_aplican=None, ya=None, sin_generar=(), crisp_lee=False) -> BeautifulSoup:
+    rb.REPORT_PATH = Path(tempfile.mkdtemp()) / "informe_generado.html"
+    shutil.copy(utils.PLANTILLA_INFORME, rb.REPORT_PATH)
+    rb.inject_roadmap_into_html(*[f"Texto de la fase {n}." for n in range(7)], no_aplican=no_aplican or {},
+                                ya_implantadas=ya or {})
+    sopa = BeautifulSoup(rb.REPORT_PATH.read_text(encoding="utf-8"), "html.parser")
+    for div_id in sin_generar:
+        sopa.find(id=div_id).clear()
+    if crisp_lee:  # como lo dejará Asier: su JS lee los textos de #crisp-datos
+        script = sopa.new_tag("script")
+        script.string = 'const datos = JSON.parse(document.getElementById("crisp-datos").textContent);'
+        sopa.body.append(script)
+    estados = {**{d: rb.NO for d in no_aplican or {}}, **{d: rb.YA for d in ya or {}}}
+    rs.montar_resumen(sopa, PROPUESTA, PROYECTO, CIFRAS, estados)
+    return BeautifulSoup(str(sopa), "html.parser")  # como queda escrito en el informe
+
+
+def comprobar_enlaces(sopa: BeautifulSoup) -> None:
+    ids = [tag["id"] for tag in sopa.find_all(id=True)]
+    repetidos = sorted({i for i in ids if ids.count(i) > 1})
+    assert not repetidos, f"ids repetidos: {repetidos}"
+    rotos = [a["href"] for a in sopa.select('a[href^="#"]') if a["href"][1:] not in ids]
+    assert not rotos, f"enlaces sin destino: {rotos}"
+    resumen = sopa.find(id="tab-resumen")
+    assert all(a["href"].startswith("#") for a in resumen.find_all("a")), "un enlace del resumen sale del informe"
+    assert not resumen.select("[src]") and "http" not in str(resumen), "la pestaña Resumen carga algo de fuera"
+    assert "roadmap-" not in resumen.get_text() and "content-" not in resumen.get_text(), "un id interno a la vista"
+    assert sopa.select('a.volver-resumen[href="#resumen"]'), "sin «← Volver al resumen»"
+
+
+# a) Todo generado
+sopa = montar()
+comprobar_enlaces(sopa)
+assert [a["href"] for a in sopa.select("#resumen-bloques > a")] == [f"#{d}" for *_, d in rs.SECCIONES + [rs.COSTES]]
+assert [a["href"] for a in sopa.select("#resumen-flujo a.rdm-pipe-node")] == [f"#{d}" for *_, d in rs.FASES]
+assert sopa.select_one(".resumen-pdf")["onclick"] == "window.print()"
+assert len(sopa.select(".volver-resumen")) == 6 + 7, "un «Volver» por sección de destino (sin CRISP-DM, oculta)"
+
+# b) Ops «no», Fuentes e Ingesta «ya lo tiene» y gobernanza sin generar
+sopa = montar(no_aplican={"roadmap-ml": "sin modelos"}, ya={"roadmap-sources": "su ERP", "roadmap-ingestion": "SSIS"},
+              sin_generar=["content-governance"])
+comprobar_enlaces(sopa)
+gobernanza = sopa.select("#resumen-bloques > .resumen-bloque")[2]
+assert gobernanza.name == "div" and gobernanza.h3.get_text() == "Gobernanza", "sin generar: bloque sin enlace"
+nodos = sopa.select("#resumen-flujo .rdm-pipe-node")
+assert [n.get_text(" ", strip=True).split(" ")[0] for n in nodos][:2] == ["Fuentes", "Ingesta"] and len(nodos) == 6
+assert [n.get("href") for n in nodos] == ["#fases-reutilizadas"] * 2 + ["#fase-almacenamiento", "#fase-etl",
+                                                                        "#fase-modelado", "#fase-visualizacion"]
+assert [(li.get_text(), li.a["href"] if li.a else None) for li in sopa.select("#resumen-puntos > li")] == [
+    ("Punto de arquitectura.", "#seccion-arquitectura"), ("Punto de gobernanza.", None),
+    ("Punto de fuentes.", "#fases-reutilizadas"), ("Punto de Ops.", None), ("Punto suelto.", None)]
+assert sopa.select_one("#resumen-flujo .rdm-ya-implantado").get_text().startswith("Se reutiliza: Fuentes")
+assert sopa.select_one("#resumen-flujo .rdm-no-aplica").get_text().startswith("No aplica a este proyecto: Ops")
+assert sopa.find(id="fases-reutilizadas").find_next_sibling("a")["href"] == "#resumen"
+assert sopa.select_one("#tab-roadmap > #fases-reutilizadas"), "la línea «Se reutiliza» va en la pestaña Roadmap"
+
+# c) La pestaña CRISP-DM sin soporte de #crisp-datos: oculta y sus nodos del resumen sin enlace; con soporte: visible
+for crisp_lee in (False, True):
+    sopa = montar(crisp_lee=crisp_lee)
+    comprobar_enlaces(sopa)
+    tab, boton = sopa.find(id="tab-crispdm"), sopa.find("button", onclick=re.compile("'crispdm'"))
+    assert tab.has_attr("hidden") == boton.has_attr("hidden") == (not crisp_lee)
+    nodos = sopa.select("#resumen-crisp .crisp-phase")
+    assert len(nodos) == 6 and not any(n.has_attr("data-phase") for n in nodos)
+    if crisp_lee:
+        assert [n.get("href") for n in nodos] == [f"#{i}" for _, _, i in rs.CRISP]
+        assert [b["id"] for b in tab.select(".crisp-phase")] == [i for _, _, i in rs.CRISP]
+        assert tab.find("a", class_="volver-resumen") is not None
+    else:
+        assert all(n.name == "div" for n in nodos), "con la pestaña oculta, los nodos van sin enlace"
+    assert len(json.loads(sopa.find(id="crisp-datos").string)) == 6
+
+# d) La web deja abrir el diálogo de imprimir (window.print) desde el iframe del informe
+assert "allow-modals" in re.search(r'<iframe id="report" sandbox="([^"]+)"', Path("index.html").read_text(
+    encoding="utf-8")).group(1)
+print("OK 5: la pestaña Resumen va primera; cada enlace llega a un id que existe (con fases «no» y «ya lo tiene» y una "
+      "sección sin generar), sin ids repetidos; CRISP-DM oculta y sin enlaces hasta que lea #crisp-datos")
+
+print("\nTodo bien: los fallos 3, 127 y 132 están arreglados.")

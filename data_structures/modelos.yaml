@@ -72,6 +72,7 @@ tareas:
   roadmap_modelado: tecnico
   roadmap_ml: tecnico
   roadmap_bi: tecnico
+  resumen_secciones: contexto_largo   # fallo 132: la pestaña Resumen del informe (agents/resumen_secciones.py)
 
 # Reglas de cada proveedor, para todos sus modelos; las de «modelos:», más abajo, mandan sobre estas.
 # Con SambaNova y NVIDIA, LiteLLM hace 3 conexiones por cada intento (el cliente de OpenAI que usa por debajo reintenta

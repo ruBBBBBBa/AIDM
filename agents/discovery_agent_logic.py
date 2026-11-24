@@ -94,8 +94,9 @@ def _extract_json_object(text: str) -> str:
 _ESCAPE_NO_VALIDO = re.compile(r'\\u(?![0-9a-fA-F]{4})[0-9a-fA-F]{0,3}|\\(?=[^"\\/bfnrtu])')
 
 
-def _leer_json(raw_output: str) -> Any:
-    """El objeto del JSON del modelo, o None si no se puede leer ni reparándolo."""
+def _leer_json(raw_output: str, etiqueta: str = "discovery", si_falla: str = "el turno sale sin cambios") -> Any:
+    """El objeto del JSON del modelo, o None si no se puede leer ni reparándolo.
+    Fallo 132: etiqueta y si_falla, para que el resumidor del informe lo use con sus propias líneas de log."""
     bruto = _extract_json_object(raw_output)
     try:
         return json.loads(bruto, strict=False)
@@ -103,7 +104,7 @@ def _leer_json(raw_output: str) -> Any:
         error = exc
     try:
         payload = json.loads(_ESCAPE_NO_VALIDO.sub("", bruto), strict=False)
-        logger.warning("[discovery] El JSON del modelo traía escapes no válidos (%s): se han quitado", error)
+        logger.warning("[%s] El JSON del modelo traía escapes no válidos (%s): se han quitado", etiqueta, error)
         return payload
     except ValueError:
         pass
@@ -111,11 +112,11 @@ def _leer_json(raw_output: str) -> Any:
         from json_repair import repair_json
         payload = repair_json(bruto, return_objects=True)
         if isinstance(payload, dict) and payload:
-            logger.warning("[discovery] El JSON del modelo no era válido (%s): se ha reparado con json_repair", error)
+            logger.warning("[%s] El JSON del modelo no era válido (%s): se ha reparado con json_repair", etiqueta, error)
             return payload
     except Exception:
         pass
-    logger.error("[discovery] No se ha podido leer el JSON del modelo (%s): el turno sale sin cambios", error)
+    logger.error("[%s] No se ha podido leer el JSON del modelo (%s): %s", etiqueta, error, si_falla)
     return None
 
 

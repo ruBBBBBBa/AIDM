@@ -80,6 +80,8 @@ graph.elegir_plataforma = lambda c: orden.append("plataforma") or {
 graph.build_structure_proposal = lambda *a: orden.append("estructura") or "estructura"
 graph.propose_solution = lambda *a: orden.append("propuesta") or "propuesta"
 graph.roadmap_builder = lambda *a, **k: orden.append("roadmap") or "roadmap"
+graph.resumir_propuesta = lambda *a, **k: {}  # fallo 132: el resumidor, sin modelo ni informe
+graph.completar_resumen = lambda *a, **k: None
 graph.gateway.resumen_consumo = lambda *a, **k: None
 with contextlib.redirect_stdout(io.StringIO()):
     graph.run_graph("Ya está todo", [], avisar=lambda t: orden.append(f"chat: {t}"))

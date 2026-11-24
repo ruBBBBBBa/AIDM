@@ -289,9 +289,10 @@ def parametros(model_name: str, **extra) -> dict:
     return {**params, **extra}
 
 
-def build_llm(model_name: str):
-    """LLM para CrewAI con las reglas del modelo, sus reservas y su tarea."""
-    params = parametros(model_name)
+def build_llm(model_name: str, **extra):
+    """LLM para CrewAI con las reglas del modelo, sus reservas y su tarea. `extra` (fallo 132: max_tokens) manda sobre
+    las reglas del primer modelo; las reservas siguen con las suyas."""
+    params = parametros(model_name, **extra)
     if str(model_name).startswith("gemini/"):
         # Gemini también por LiteLLM: el cliente nativo de CrewAI no admite reservas y pide instalar google-genai
         params["provider"] = "litellm"
