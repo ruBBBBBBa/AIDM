@@ -4090,67 +4090,84 @@ Estas tareas se ejecutan cómodamente con scripts Python dentro de Glue (Python�
 
 /* ===== INTERACCIÓN CRISP-DM ===== */
 
+function obtenerExtractoInforme(id, maxCaracteres = 350) {
+  const elemento = document.getElementById(id);
+
+  if (!elemento) {
+    return "Información no disponible en el informe.";
+  }
+
+  const texto = (elemento.textContent || "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!texto) {
+    return "Información pendiente de completar.";
+  }
+
+  if (texto.length <= maxCaracteres) {
+    return texto;
+  }
+
+  return texto.slice(0, maxCaracteres).trimEnd() + "…";
+}
+
 const crispFases = {
+  
   1: {
     titulo: "01 · Comprensión del negocio",
-    descripcion: "Definir los objetivos empresariales y los resultados esperados.",
+    descripcion: "Objetivos de negocio, indicadores de éxito y plataforma recomendada para el proyecto.",
     actividades: [
-      "Identificar las necesidades de automatización de atención al cliente.",
-      "Definir los casos de uso prioritarios de IA generativa.",
-      "Establecer los indicadores de éxito del proyecto.",
-      "Validar el alcance del MVP previsto a cuatro meses."
+      "Objetivos y KPIs: " + obtenerExtractoInforme("content-data-ai", 350),
+      "Plataforma recomendada: " + obtenerExtractoInforme("content-platform", 350)
     ]
   },
+
+  
   2: {
-    titulo: "02 · Comprensión de los datos",
-    descripcion: "Analizar la información disponible y comprobar su utilidad.",
+   titulo: "02 · Comprensión de los datos",
+    descripcion: "Análisis de las fuentes de información identificadas por AIDM.",
     actividades: [
-      "Inventariar archivos Excel, documentos y preguntas frecuentes.",
-      "Evaluar la calidad, estructura y actualización de las fuentes.",
-      "Identificar información sensible y requisitos de privacidad.",
-      "Detectar carencias de datos que deban resolverse."
+      obtenerExtractoInforme("roadmap-sources", 500)
     ]
   },
+
   3: {
-    titulo: "03 · Preparación de datos",
-    descripcion: "Organizar la información para que pueda utilizarla la solución.",
+    titulo: "03 · Preparación de los datos",
+    descripcion: "Procesos de ingesta, almacenamiento y transformación propuestos por AIDM.",
     actividades: [
-      "Limpiar y normalizar los documentos del cliente.",
-      "Preparar los archivos para su almacenamiento en Amazon S3.",
-      "Fragmentar e indexar el conocimiento para el sistema RAG.",
-      "Aplicar controles de calidad y protección de datos."
+      "Ingesta: " + obtenerExtractoInforme("roadmap-ingestion", 250),
+      "Almacenamiento: " + obtenerExtractoInforme("roadmap-storage", 250),
+      "ETL: " + obtenerExtractoInforme("roadmap-etl", 250)
     ]
   },
+  
   4: {
     titulo: "04 · Modelado",
-    descripcion: "Construir la solución de inteligencia artificial.",
+    descripcion: "Propuesta de modelado y análisis generada por AIDM.",
     actividades: [
-      "Configurar el modelo de IA generativa en Amazon Bedrock.",
-      "Implementar la recuperación de conocimiento mediante RAG.",
-      "Desarrollar la integración con AWS Lambda y API Gateway.",
-      "Ajustar las instrucciones y los controles del asistente."
+     obtenerExtractoInforme("roadmap-modeling", 500)
     ]
   },
-  5: {
-    titulo: "05 · Evaluación",
-    descripcion: "Comprobar que la solución responde a los objetivos del negocio.",
-    actividades: [
-      "Evaluar la precisión y utilidad de las respuestas.",
-      "Comprobar los tiempos de respuesta y la tasa de resolución.",
-      "Validar la seguridad y el tratamiento de datos personales.",
-      "Revisar los resultados con el cliente antes del despliegue."
-    ]
-  },
-  6: {
-    titulo: "06 · Despliegue",
-    descripcion: "Poner en funcionamiento la solución y facilitar su seguimiento.",
-    actividades: [
-      "Publicar el asistente en el canal digital seleccionado.",
-      "Configurar la monitorización y las alertas operativas.",
-      "Preparar los indicadores de seguimiento en Power BI.",
-      "Formar al equipo y establecer un plan de mejora continua."
-    ]
-  }
+
+ 5: {
+  titulo: "05 · Evaluación",
+  descripcion: "Indicadores, criterios de validación y evaluación de la solución propuesta.",
+  actividades: [
+    "KPIs y resultados esperados: " + obtenerExtractoInforme("content-bi", 350),
+    "Validación del modelo: " + obtenerExtractoInforme("roadmap-ml", 350)
+  ]
+},
+
+6: {
+  titulo: "06 · Despliegue",
+  descripcion: "Operación, implantación y visualización de los resultados del proyecto.",
+  actividades: [
+    "Operación y despliegue: " + obtenerExtractoInforme("roadmap-ml", 350),
+    "Visualización y seguimiento: " + obtenerExtractoInforme("roadmap-bi", 350),
+    "Arquitectura de implantación: " + obtenerExtractoInforme("content-architecture", 250)
+  ]
+},
 };
 
 document.querySelectorAll(".crisp-phase").forEach(boton => {

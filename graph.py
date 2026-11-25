@@ -54,6 +54,7 @@ _avisar = None
 def plataforma_node(state: AgentState) -> AgentState:
     """Fallo 67: después del discovery se elige el hiperescalar; su nube manda en todo el informe.
     Fallo 72: lo que ha decidido sale en el chat antes de que empiecen los agentes del informe."""
+    progreso.pintar_pendiente()  # fallo 94: la barra sale en 0 en cuanto empieza el informe
     gateway.escribir_cupos("Al empezar el informe")  # fallo 92: cuántas peticiones de Gemini quedan hoy
     progreso.pintar_pendiente()  # fallo 94: la barra sale en 0 en cuanto empieza el informe
     problem_case = elegir_plataforma(state.get("problem_case", {}))

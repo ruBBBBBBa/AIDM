@@ -51,13 +51,23 @@ lock = threading.Lock()  # problem_case.json es un único archivo: una ejecució
 # ---- Estado compartido con el frontend (GET /api/estado) ----
 _estado_lock = threading.Lock()
 _n_avisos = 0  # contador que no se reinicia: el frontend se queda con el último id que ya pintó
-estado = {"ocupado": False, "fraccion": 0.0, "texto": "", "avisos": [], "completado": False}
+
+estado = {
+    "ocupado": False,
+    "generando_informe": False,
+    "fraccion": 0.0,
+    "texto": "",
+    "avisos": [],
+    "completado": False
+}
 informe = None  # {"report_html": ..., "filename": ...} cuando el caso está completo y el informe hecho (fallo 48)
+
 
 
 def pintar_progreso(fraccion, texto=""):
     """Fallo 94: guarda el avance real (0..1) y su texto para que la web lo lea."""
     with _estado_lock:
+        estado["generando_informe"] = True
         estado["fraccion"] = max(0.0, min(1.0, float(fraccion)))
         estado["texto"] = str(texto or "")
 
@@ -107,7 +117,7 @@ def chat(body: ChatIn):
             return {"reply": "", "completed": True, **informe}
 
         with _estado_lock:
-            estado.update(ocupado=True, fraccion=0.0, texto="")
+                estado.update(ocupado=True, generando_informe=False, fraccion=0.0, texto="")
         try:
             raw = run_graph(body.prompt, chat_history=body.history, **_extras_graph())
         except Exception as e:
@@ -115,6 +125,7 @@ def chat(body: ChatIn):
         finally:
             with _estado_lock:
                 estado["ocupado"] = False
+                estado["generando_informe"] = False
 
         res = raw if isinstance(raw, dict) else {"assistant_response": str(raw)}
         out = {
