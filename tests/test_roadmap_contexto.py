@@ -250,6 +250,24 @@ assert any(a.startswith("[fases] Fuentes") and "se genera" in a for a in avisos)
 _, fases = rb.leer_fases(bloque("ya lo tiene | Su ERP SAP Business One", *["sí | x"] * 6), caso)  # caso sin stack
 assert fases["roadmap-sources"][0] == rb.SI, fases
 
+# c2) Fallo 131 (parte 2): «ya lo tiene» por la herramienta, con trabajo por hacer en la frase, va como «sí» y lo dice
+#     el log; las fuentes que de verdad tiene siguen como «ya lo tiene», y una negación («nada nuevo») no cuenta
+CON_BI = {**CON_STACK, "stack_tecnologico_actual": {"description": "Stack", "value": [
+    "SAP Business One como ERP", "Power BI Pro para dirección"]}}
+avisos.clear()
+_, fases = rb.leer_fases(bloque("ya lo tiene | Su ERP SAP Business One", "sí | a", "sí | b", "sí | c", "sí | d",
+                                "no | e", "ya lo tiene | Sus licencias de Power BI Pro, que se reutilizarán para "
+                                "conectar los nuevos modelos de datos"), CON_BI)
+assert fases["roadmap-sources"][0] == rb.YA and fases["roadmap-bi"][0] == rb.SI, fases
+assert any(a.startswith("[fases] Visualización") and "trabajo por hacer («se reutilizaran para»)" in a
+           for a in avisos), avisos
+avisos.clear()
+_, fases = rb.leer_fases(bloque("ya lo tiene | Su ERP SAP Business One", "sí | a", "sí | b", "sí | c", "sí | d",
+                                "no | e", "ya lo tiene | Sus cuadros de mando en Power BI Pro; no hace falta nada "
+                                "nuevo"), CON_BI)
+assert fases["roadmap-bi"][0] == rb.YA and not any("trabajo por hacer" in a for a in avisos), (fases, avisos)
+assert "Si solo tiene la herramienta o las licencias" in rb.INSTRUCCION_FASES
+
 # d) Todas «no» o «ya lo tiene», y sin bloque: las 7, con su línea en el log
 avisos.clear()
 _, fases = rb.leer_fases(bloque("ya lo tiene | Su ERP SAP Business One", *["no | x"] * 6), CON_STACK)
@@ -262,7 +280,7 @@ prompts.clear()
 rb.roadmap_builder(propuesta, problem_case=caso, fases=sin_fases)
 assert len(prompts) == 7
 logging.getLogger("aidm").removeHandler(recoger)
-print("OK 7: solo las fases «sí» (5 del 01 al 05; o 1 con 4 «Ya implantado» validadas por el stack); sin stack, se genera; todas «no»/«ya» o sin bloque, las 7")
+print("OK 7: solo las fases «sí» (5 del 01 al 05; o 1 con 4 «Ya implantado» validadas por el stack); sin stack o con trabajo por hacer, se genera; todas «no»/«ya» o sin bloque, las 7")
 
 # 8) Fallo 132: el resumidor. La llamada 1 (las secciones de la propuesta) va a la vez que las fases del roadmap y la 2,
 #    al acabar. El JSON llega a los bloques de la pestaña Resumen, a los puntos clave, a los interruptores «Detalle |

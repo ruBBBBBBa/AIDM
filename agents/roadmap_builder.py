@@ -66,8 +66,10 @@ INSTRUCCION_FASES = (
     f"de estas 7 fases del roadmap, en este orden: {', '.join(NOMBRES_FASES)}. Formato de cada línea:\n"
     "- fase | sí / no / ya lo tiene | una frase\n"
     "«sí»: el objetivo la necesita y hay que construirla; la frase dice por qué. «no»: el objetivo no la necesita; la "
-    "frase dice por qué. «ya lo tiene»: el cliente ya la tiene implantada y se reutiliza; la frase dice qué tiene, "
-    "con sus palabras y el nombre de su herramienta (por ejemplo, «su almacén de datos en SQL Server»). Ninguna fase "
+    "frase dice por qué. «ya lo tiene»: el cliente ya tiene hecho lo que entregaría esta fase y no queda nada que "
+    "construir en ella; la frase dice qué tiene, con sus palabras y el nombre de su herramienta (por ejemplo, «su "
+    "almacén de datos en SQL Server»). Si solo tiene la herramienta o las licencias (por ejemplo, Power BI, pero no los "
+    "cuadros de mando que pide el proyecto), la fase va como «sí» y la frase dice qué se reutiliza. Ninguna fase "
     "va siempre: un cliente que ya tiene sus fuentes, su ingesta, su almacén y su ETL y solo pide cuadros de mando "
     "necesita solo Visualización (y quizá Modelado / Análisis). Lo que el cliente ya tiene se reutiliza: la "
     "arquitectura lo integra y los costes no lo presupuestan como nuevo. Ningún otro texto después del bloque."
@@ -108,6 +110,23 @@ def _herramienta_en_stack(frase: str, stack: str) -> str | None:
     return None
 
 
+# Fallo 131 (parte 2): una frase de «ya lo tiene» que habla de trabajo por hacer. El 25 nov, Visualización salió «ya lo
+# tiene» por las licencias de Power BI, con «se reutilizarán para conectar los nuevos modelos de datos»
+_TRABAJO_POR_HACER = re.compile(r"\b(?:se reutilizar(?:a|an) para|conectar(?:a|an)?|nuev[oa]s?|crear(?:a|an)?|"
+                                r"desarrollar(?:a|an)?)\b")
+_NEGACION = {"no", "sin", "nada", "ni", "ningun", "ninguna", "ninguno"}
+
+
+def _trabajo_por_hacer(frase: str) -> str | None:
+    """Fallo 131 (parte 2): lo que en la frase dice que queda trabajo («conectar», «nuevos»…), o None. No cuenta si
+    va negado en las palabras de antes («no hace falta nada nuevo»)."""
+    normal = _normalize_text(frase or "")
+    for m in _TRABAJO_POR_HACER.finditer(normal):
+        if not _NEGACION & set(normal[:m.start()].split()[-4:]):
+            return m.group(0)
+    return None
+
+
 def leer_fases(texto: str, problem_case: dict | None = None) -> tuple[str, dict[str, tuple[str, str]] | None]:
     """Fallo 131: el texto de la estructura sin el bloque «FASES DEL ROADMAP» y, por fase ({div_id: (estado, frase)},
     estado SI, NO o YA), lo que dice el bloque. «ya lo tiene» solo vale si el stack del cliente nombra lo que dice la
@@ -142,6 +161,10 @@ def leer_fases(texto: str, problem_case: dict | None = None) -> tuple[str, dict[
         estado, frase = leidas.get(n, (SI, ""))
         if n not in leidas:
             logger.warning("[fases] El bloque %s no dice nada de %s: se genera", FASES_TITULO, NOMBRES_FASES[n])
+        elif estado == YA and (trabajo := _trabajo_por_hacer(frase)):  # fallo 131 (parte 2)
+            logger.warning("[fases] %s: «ya lo tiene» («%s»), pero la frase habla de trabajo por hacer («%s»): se "
+                           "genera", NOMBRES_FASES[n], frase, trabajo)
+            estado = SI
         elif estado == YA and not _herramienta_en_stack(frase, stack):
             logger.warning("[fases] %s: «ya lo tiene» («%s»), pero ni stack_tecnologico_actual ni "
                            "madurez_analitica_actual lo nombran: se genera", NOMBRES_FASES[n], frase)
