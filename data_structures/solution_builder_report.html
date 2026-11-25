@@ -213,6 +213,10 @@
   #resumen-crisp .crisp-phase { width: 220px; min-height: 0; padding: 8px 10px; }
   #resumen-crisp div.crisp-phase { cursor: default; }
   #resumen-crisp .crisp-phase span { margin-bottom: 2px; }
+  /* Fallo 132 (parte 2): el flujo del resumen, con los nodos alineados arriba y las etiquetas largas en varias líneas */
+  #resumen-flujo .rdm-pipeline { align-items: flex-start; }
+  #resumen-flujo .rdm-pipe-arrow { margin-top: 10px; margin-bottom: 0; }
+  #resumen-flujo .rdm-pipe-tech { white-space: normal; max-width: 140px; }
   .vista-seccion { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; margin: 0 0 12px 12px; }
   .vista-btn { font-size: 12px; padding: 4px 12px; border: 0; background: var(--surface); color: var(--muted); cursor: pointer; }
   .vista-btn[aria-pressed="true"] { background: var(--tag-bg); color: var(--text); font-weight: 600; }
@@ -243,8 +247,10 @@
     .resumen-puntos { font-size: 9.5px; line-height: 1.35; }
     .resumen-puntos-fase { font-size: 8px; line-height: 1.25; margin-top: 3px; }
     #resumen-flujo .rdm-pipeline { zoom: .85; }
-    #resumen-crisp .crisp-diagram { zoom: .54; }
+    #resumen-crisp .crisp-diagram { zoom: .46; }  /* fallo 132 (parte 2): con .54 pasaba entero a la segunda cara */
     #resumen-crisp .resumen-puntos-fase { font-size: 12px; }
+    /* Fallo 132 (parte 2): con el id, para que no la pise la de la pestaña Roadmap (13px), que va después */
+    #resumen-flujo .rdm-linea-fases { font-size: 8.5px; line-height: 1.3; margin: 4px 0 0; }
   }
 
   /* ── Footer ── */
