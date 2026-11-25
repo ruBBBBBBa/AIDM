@@ -416,5 +416,45 @@ logging.getLogger("aidm").removeHandler(recoger)
 print("OK 8: el resumen de la propuesta va a la vez que el roadmap; el JSON se reparte; cifras inventadas y servicios, "
       "fuera; costes con las cifras de Python; sin JSON, sin interruptores y el informe sigue")
 
+# 9) Fallo 132 (parte 3): un punto clave que nombra un servicio nuevo, aunque sea a medias («Microsoft Fabric»,
+#    «Fabric»), se quita; la nube, lo que el cliente ya usa y los conceptos se quedan («Power BI Premium» se quita si
+#    solo tiene Pro). Con menos de 4, lo dice el log. Una viñeta larga nunca se corta a mitad: en su última coma o
+#    entera. Las cifras de los datos del cliente valen. Los prompts llevan las reglas.
+caso_8, solucion_8 = caso, solucion
+caso = {**caso_8, "volumen_de_datos": {"description": "Volumen", "value": "38 tiendas y 2 TB de histórico"},
+        "stack_tecnologico_actual": {"description": "Stack", "value": "Microsoft Dynamics 365 Business Central, "
+                                     "Microsoft 365, Azure, Power BI Pro y SQL Server en local para los TPV"}}
+solucion = {**solucion_8, "inventario": [{"servicio": s, "capa": c, "fase": "mvp", "alternativa": ""} for s, c in (
+    ("Microsoft Dynamics 365 Business Central", "fuentes"), ("Microsoft Fabric OneLake", "almacenamiento"),
+    ("Delta Lake", "almacenamiento"), ("Power BI Premium", "visualización"), ("Microsoft Purview", "gobierno"))]}
+SIN_COMA = "Las ventas de cada tienda llegan solas al almacén central cada noche sin que nadie tenga que tocar nada"
+CON_COMA = "Los datos se revisan antes de cargarse, para evitar errores en los cuadros de mando de la dirección general"
+respuestas.update({1: json.dumps({"arquitectura": {"para_todos": "Un almacén único para los datos.",
+                                                   "riesgos": ["Coordinar las 38 tiendas a la vez."]}}),
+                   2: json.dumps({"resumen_general": "Los datos de la cadena, juntos y al día.", "puntos_clave": [
+                       {"texto": "Arquitectura Lakehouse con Microsoft Fabric unifica los datos.", "seccion": None},
+                       {"texto": "Todo queda guardado en Fabric.", "seccion": None},
+                       {"texto": "Power BI Premium para toda la plantilla.", "seccion": None},
+                       {"texto": "Los datos de Business Central y de los TPV llegan cada noche a Azure.", "seccion": None},
+                       {"texto": "Un Lakehouse (un almacén único) alimenta los cuadros de Power BI.", "seccion": None}],
+                       "fases": {"fuentes": {"puntos": [SIN_COMA, CON_COMA]}},
+                       "crisp": {"negocio": ["Entender qué decide la dirección cada semana."]}})})
+sopa = resumir()
+assert [li.get_text() for li in sopa.select("#resumen-puntos > li")] == [
+    "Los datos de Business Central y de los TPV llegan cada noche a Azure.",
+    "Un Lakehouse (un almacén único) alimenta los cuadros de Power BI."], sopa.select("#resumen-puntos > li")
+assert sum("nombra un servicio (Microsoft Fabric OneLake)" in a for a in avisos) == 2, avisos
+assert any("nombra un servicio (Power BI Premium)" in a for a in avisos), avisos
+assert any("Solo 2 puntos clave" in a for a in avisos), avisos
+assert [li.get_text() for li in sopa.select("#resumen-flujo .rdm-pipe-node")[0].select(".resumen-puntos-fase li")] == [
+    SIN_COMA, "Los datos se revisan antes de cargarse"]
+riesgos = sopa.find(id="seccion-arquitectura").find_parent(class_="section-card").select(".resumen-seccion li")
+assert [li.get_text() for li in riesgos] == ["Coordinar las 38 tiendas a la vez."], riesgos
+assert all("Lakehouse (un almacén único para todos los datos)" in prompts_resumen[n] for n in (1, 2))
+assert "ni su marca ni su nombre corto" in prompts_resumen[2] and prompts_resumen[2].count("VACUUM/OPTIMIZE") == 2
+caso, solucion = caso_8, solucion_8
+print("OK 9: fuera el punto clave con un servicio nuevo, también a medias; se quedan la nube, lo del cliente y los "
+      "conceptos; las viñetas no se cortan a mitad y valen las cifras del cliente")
+
 assert hashlib.md5(INFORME.read_bytes()).hexdigest() == huella_antes, "el informe real no debía cambiar"
 print("\nTodo bien: los fallos 4, 73, 88, 94, 131 y 132 están arreglados.")

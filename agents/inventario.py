@@ -10,8 +10,8 @@ antes y el log lo avisa.
 import logging
 import re
 
-from utils import (INTEGRATION_RUNTIME, PUERTA_DE_ENLACE, _normalize_text, necesita_integration_runtime,
-                   necesita_puerta_de_enlace, revisar_servicios)
+from utils import (INTEGRATION_RUNTIME, PUERTA_DE_ENLACE, _normalize_text, es_valor_de_relleno,
+                   necesita_integration_runtime, necesita_puerta_de_enlace, revisar_servicios)
 
 logger = logging.getLogger("aidm")
 
@@ -87,6 +87,40 @@ def _base(nombre: str) -> str:
     """Fallo 108: la clave sin lo que va detrás de « - », « – » o una coma: 'AWS DMS (DMS) - instancia t3.medium' →
     'dms'. Es el nombre del servicio; lo demás es la instancia, el uso o las licencias."""
     return re.split(r"\s-\s|,", _clave(nombre))[0].strip()
+
+
+# Fallo 132 (parte 3) y 136: lo que el cliente ya usa según sus datos, y si un servicio está entre ello
+CAMPOS_DEL_CLIENTE = ("stack_tecnologico_actual", "madurez_analitica_actual", "herramienta_de_visualizacion")
+_VACIAS = {"de", "del", "la", "el", "los", "las", "en", "para", "y", "e", "con", "por", "a", "al", "su", "sus", "un",
+           "una", "-"}
+_PALABRA = re.compile(r"[a-z0-9][a-z0-9.+-]*")
+
+
+def trozos_del_cliente(problem_case: dict | None, campos: tuple[str, ...] = CAMPOS_DEL_CLIENTE) -> list[str]:
+    """Lo que el cliente ya usa según sus datos, normalizado y en trozos (por comas, puntos y coma, dos puntos,
+    paréntesis o « y »), sin los rellenos: 'Microsoft Dynamics 365 Business Central, SQL Server en local para los TPV y
+    SharePoint' → ['microsoft dynamics 365 business central', 'sql server en local para los tpv', 'sharepoint']."""
+    textos = []
+    for campo in campos:
+        valor = (problem_case or {}).get(campo)
+        valor = valor.get("value") if isinstance(valor, dict) else valor
+        textos += [v for v in (valor if isinstance(valor, list) else [valor])
+                   if isinstance(v, str) and not es_valor_de_relleno(v)]
+    trozos = re.split(r"[,;:()\[\]·]|\s+(?:y|e|and)\s+", _normalize_text(" , ".join(textos)))
+    return [t.strip() for t in trozos if t.strip()]
+
+
+def lo_tiene_el_cliente(nombre: str, trozos: list[str]) -> bool:
+    """Todas las palabras significativas del nombre (sin paréntesis ni palabras vacías) están en un mismo trozo de
+    trozos_del_cliente(), aunque el trozo sea largo; sin la nube delante, si quedan al menos dos. 'TPV SQL Server' casa
+    con 'sql server en local para los tpv'; 'Power BI Premium' no casa con 'power bi': lo nuevo no sale como suyo."""
+    entero = re.sub(r"\s+", " ", _normalize_text(re.sub(r"\([^)]*\)?", " ", (nombre or "").translate(_GUIONES))))
+    candidatos = [set(_PALABRA.findall(entero)) - _VACIAS]
+    sin_nube = set(_PALABRA.findall(_clave(nombre))) - _VACIAS
+    if len(sin_nube) >= 2:
+        candidatos.append(sin_nube)
+    de_cada_trozo = [set(_PALABRA.findall(t)) for t in trozos]
+    return any(palabras and any(palabras <= t for t in de_cada_trozo) for palabras in candidatos)
 
 
 def corresponde(servicio: str, componente: str) -> bool:

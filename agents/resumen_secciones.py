@@ -23,6 +23,7 @@ from crewai import Agent, Crew, Process, Task
 
 import gateway
 import progreso
+from agents import inventario
 from agents import roadmap_builder as rb
 from agents.discovery_agent_logic import _cifras, _leer_json
 from agents.roadmap_builder import NO, SI, YA
@@ -80,7 +81,19 @@ _TOPES = ("decision_principal: la decisión principal, 40 palabras como máximo.
           "piezas_clave: hasta 5, de 12 palabras como máximo. riesgos: hasta 3, de 20 como máximo. "
           "siguiente_paso: 30 como máximo.")
 _REGLAS = ("Solo resume: nada que no esté en los textos de abajo. Escribe en el idioma de esos textos. "
-           "No escribas importes ni cifras de dinero; si das otra cifra, tiene que estar en el texto del que sale.\n")
+           "No escribas importes ni cifras de dinero; si das otra cifra, tiene que estar en el texto del que sale. "
+           # Fallo 132 (parte 3): «arquitectura tipo lago-casa» por Lakehouse
+           "Los nombres técnicos no se traducen: para quien no es técnico, se nombran y se dice qué hacen (por ejemplo, "
+           "«un Lakehouse (un almacén único para todos los datos)»). Frases cortas.\n")
+# Fallo 132 (parte 3): las viñetas de las fases y del CRISP-DM, para la dirección, sin los detalles de implementación
+_VINETAS = ("de 12 palabras como máximo, cada una una frase completa que empieza por lo que consigue el cliente; usa el "
+            "nombre técnico cuando haga falta, con lo que hace si no es evidente, y deja fuera los detalles de "
+            "implementación que a un directivo no le dicen nada (por ejemplo, «watermark», «VACUUM/OPTIMIZE», "
+            "«particionado por año/mes» o el motor que ejecuta cada paso).")
+# Fallo 132 (parte 3): palabras de un nombre de servicio que, sueltas, no lo nombran («Data», «Lake», «Delta»…)
+_NO_SUELTAS = {"data", "lake", "delta", "key", "machine", "learning", "power", "sql", "server", "entra", "self-hosted",
+               "integration", "pipelines", "analytics", "storage", "engineering", "science", "factory", "runtime",
+               "endpoint", "monitor", "functions", "service", "services", "cloud", "ai"}
 
 
 # ── Lectura y validación ──
@@ -94,9 +107,21 @@ def _texto(soup, div_id: str) -> str:
 
 
 def _palabras(valor, tope: int) -> str:
+    """Fallo 132 (parte 3): nunca a mitad de frase. La que pasa del tope se corta en su última coma dentro del tope y,
+    si no la tiene, se deja entera."""
     texto = sin_emojis(valor).strip() if isinstance(valor, str) else ""
     palabras = texto.split()
-    return texto if len(palabras) <= tope else " ".join(palabras[:tope]).rstrip(",;:") + "…"
+    if len(palabras) <= tope:
+        return texto
+    dentro = " ".join(palabras[:tope])
+    coma = dentro.rfind(",")
+    return dentro[:coma].rstrip() if coma > 0 else texto
+
+
+def _cifras_del_caso(problem_case: dict | None) -> set[str]:
+    """Fallo 132 (parte 3): las cifras de los datos del cliente («45 tiendas»), que también valen en el resumen."""
+    valores = [d.get("value") for d in (problem_case or {}).values() if isinstance(d, dict)]
+    return _cifras(" ".join(" ".join(map(str, v)) if isinstance(v, list) else str(v) for v in valores if v))
 
 
 def _sin_cifras_nuevas(texto: str, validas: set[str], donde: str) -> str:
@@ -131,13 +156,36 @@ def _resumen_de_seccion(datos, validas: set[str], donde: str) -> dict:
     return r if any(r.values()) else {}
 
 
-def _servicio_nombrado(texto: str, servicios: list[str]) -> str | None:
-    """El servicio del inventario que nombra un texto («Amazon S3» o «S3»), o None."""
+def _nombres_de_servicio(servicio: str) -> set[str]:
+    """Fallo 132 (parte 3): cómo puede nombrar un texto un servicio del inventario: entero, sin la nube delante y por su
+    marca. 'Microsoft Fabric OneLake' → Microsoft Fabric OneLake, Fabric OneLake, Microsoft Fabric, Fabric y OneLake.
+    Nunca una palabra genérica suelta («Data», «Lake», «Delta»)."""
+    entero = re.sub(r"\s*\([^)]*\)", "", servicio or "").strip()
+    sin_nube = rb._SIN_NUBE.sub("", entero).strip()
+    palabras = sin_nube.split()
+    sueltas = lambda *ps: not all(_normalize_text(p) in _NO_SUELTAS for p in ps)
+    nombres = {entero}
+    if sin_nube != entero and palabras:
+        if sueltas(*palabras):
+            nombres.add(sin_nube)
+        if len(palabras) > 1 and sueltas(palabras[0]):
+            nombres |= {f"{entero[:len(entero) - len(sin_nube)].strip()} {palabras[0]}", palabras[0]}
+    nombres |= {p for p in palabras if re.fullmatch(r"[A-Z][a-z]+[A-Z]\w*", p)}  # las marcas pegadas: OneLake
+    return {n for n in nombres if len(_normalize_text(n)) >= 2}
+
+
+def _servicio_nombrado(texto: str, filas: list[dict], trozos: list[str]) -> str | None:
+    """El servicio del inventario que nombra un texto, entero, sin la nube o por su marca, o None. Fallo 132 (parte 3):
+    pueden salir la nube y lo que el cliente ya usa: las fuentes del inventario y lo que nombran sus datos."""
     clave = _normalize_text(texto)
-    for servicio in servicios:
-        for nombre in {servicio, rb._SIN_NUBE.sub("", servicio)}:
+    for fila in filas:
+        servicio = fila.get("servicio", "")
+        if "fuente" in _normalize_text(fila.get("capa", "")) or inventario.lo_tiene_el_cliente(servicio, trozos):
+            continue
+        for nombre in _nombres_de_servicio(servicio):
             n = _normalize_text(nombre)
-            if len(n) >= 2 and re.search(rf"(?<!\w){re.escape(n)}(?!\w)", clave):
+            if (not inventario.lo_tiene_el_cliente(nombre, trozos)
+                    and re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", clave)):
                 return servicio
     return None
 
@@ -181,9 +229,10 @@ def resumir_propuesta(problem_case: dict | None = None) -> dict:
         bruto = _llamar(descripcion, "Un objeto JSON con el resumen de cada sección.")
         datos = _leer_json(bruto, ETIQUETA, "las secciones de la propuesta salen sin resumen")
         resultado = {}
+        del_caso = _cifras_del_caso(problem_case)
         for clave, texto in textos.items():
             entrada = datos.get(clave) if isinstance(datos, dict) else None
-            validas = _cifras(texto)
+            validas = _cifras(texto) | del_caso
             r = _resumen_de_seccion(entrada, validas, clave)
             para_todos = _frase(entrada.get("para_todos"), PARA_TODOS, validas, f"{clave} · para_todos") \
                 if isinstance(entrada, dict) else ""
@@ -205,7 +254,7 @@ def resumir_propuesta(problem_case: dict | None = None) -> dict:
 
 # ── Llamada 2: general, puntos clave, fases del roadmap y CRISP-DM ──
 
-def _resumir_proyecto(soup, propuesta: dict, estados: dict, problem_case: dict | None, servicios: list[str]) -> dict:
+def _resumir_proyecto(soup, propuesta: dict, estados: dict, problem_case: dict | None, filas: list[dict]) -> dict:
     textos = _textos_propuesta(soup)
     fases = {clave: texto for clave, div_id, _ in FASES
              if estados.get(div_id, SI) == SI and (texto := _texto(soup, div_id))}
@@ -224,13 +273,15 @@ def _resumir_proyecto(soup, propuesta: dict, estados: dict, problem_case: dict |
         f'"fases": {{"<clave de fase>": {{"puntos": ["…", "…"], {_FORMATO_SECCION[1:-1]}}}}}, '
         '"crisp": {' + ", ".join(f'"{c}": ["…", "…"]' for c, _, _ in CRISP) + "}}\n"
         "resumen_general: 60 palabras como máximo: qué se propone y qué consigue el cliente.\n"
-        "puntos_clave: 4 o 5 de todo el proyecto, de 25 palabras como máximo, para alguien sin perfil técnico: sin "
-        "nombres de servicios ni siglas sin explicar. En «seccion», la clave del texto del que sale (una de: "
-        f"{', '.join(list(textos) + list(fases))}) o null.\n"
-        f"fases: solo estas: {', '.join(fases) or 'ninguna'}. puntos: 2, de 15 palabras como máximo y sin nombres "
-        "de servicios. " + _TOPES + "\n"
-        "crisp: 2 puntos, de 15 palabras como máximo, por cada fase de la metodología CRISP-DM aplicada a este "
-        "proyecto (" + ", ".join(f"{c}: {n}" for c, n, _ in CRISP) + ").\n\n"
+        "puntos_clave: 4 o 5 de todo el proyecto, de 25 palabras como máximo, para alguien sin perfil técnico. "
+        # Fallo 132 (parte 3): la misma regla que aplica _servicio_nombrado(), para que casi nunca haya que quitar nada
+        "Pueden nombrar la nube elegida, las herramientas que el cliente ya usa según sus datos y conceptos como "
+        "Lakehouse, ERP o CRM, diciendo qué hacen; ningún otro servicio de la solución, ni siquiera a medias (ni su "
+        "marca ni su nombre corto: «Fabric», «OneLake», «Purview»…), y ninguna sigla sin explicar. En «seccion», la "
+        f"clave del texto del que sale (una de: {', '.join(list(textos) + list(fases))}) o null.\n"
+        f"fases: solo estas: {', '.join(fases) or 'ninguna'}. puntos: 2, " + _VINETAS + " " + _TOPES + "\n"
+        "crisp: 2 puntos por cada fase de la metodología CRISP-DM aplicada a este proyecto ("
+        + ", ".join(f"{c}: {n}" for c, n, _ in CRISP) + "), " + _VINETAS + "\n\n"
         + (f"El cliente ya tiene (se reutiliza): {', '.join(ya)}.\n\n" if ya else "")
         + f"{contexto_cliente(problem_case or {})}\n\nLO ESCRITO DEL PROYECTO:\n" + "\n\n".join(partes))
     try:
@@ -244,20 +295,24 @@ def _resumir_proyecto(soup, propuesta: dict, estados: dict, problem_case: dict |
         logger.error("[resumen] Llamada 2 sin JSON: la pestaña Resumen sale sin puntos clave y las fases del roadmap, "
                      "sin interruptor")
         return {}
-    todo = _cifras(" ".join(list(textos.values()) + list(fases.values())))
+    del_caso = _cifras_del_caso(problem_case)  # fallo 132 (parte 3)
+    todo = _cifras(" ".join(list(textos.values()) + list(fases.values()))) | del_caso
     resultado = {"general": _frase(datos.get("resumen_general"), GENERAL, todo, "resumen general"),
                  "puntos": [], "fases": {}, "crisp": {}}
+    trozos = inventario.trozos_del_cliente(problem_case)
     for punto in (datos.get("puntos_clave") or [])[:PUNTOS_CLAVE[0]]:
         texto, seccion = (punto.get("texto"), punto.get("seccion")) if isinstance(punto, dict) else (punto, None)
         texto = _frase(texto, PUNTOS_CLAVE[1], todo, "punto clave")
-        servicio = _servicio_nombrado(texto, servicios)
+        servicio = _servicio_nombrado(texto, filas, trozos)
         if servicio:
             logger.warning("[resumen] Fuera un punto clave que nombra un servicio (%s)", servicio)
         elif texto:
             resultado["puntos"].append((texto, seccion if isinstance(seccion, str) else None))
+    if len(resultado["puntos"]) < 4:  # fallo 132 (parte 3): sin llamadas nuevas, con los que queden
+        logger.warning("[resumen] Solo %d puntos clave tras quitar los que nombran servicios", len(resultado["puntos"]))
     for clave, texto in fases.items():
         entrada = (datos.get("fases") or {}).get(clave)
-        validas = _cifras(texto)
+        validas = _cifras(texto) | del_caso
         r = _resumen_de_seccion(entrada, validas, f"fase {clave}")
         puntos = _lista(entrada.get("puntos"), *PUNTOS_FASE, validas, f"fase {clave} · puntos") \
             if isinstance(entrada, dict) else []
@@ -512,8 +567,8 @@ def completar_resumen(propuesta: dict | None, problem_solution: dict | None = No
     try:
         soup = parse_html(html_del_informe(rb.REPORT_PATH))
         try:
-            servicios = [f.get("servicio", "") for f in solucion.get("inventario") or [] if isinstance(f, dict)]
-            proyecto = _resumir_proyecto(soup, propuesta or {}, estados, problem_case, servicios)
+            filas = [f for f in solucion.get("inventario") or [] if isinstance(f, dict)]
+            proyecto = _resumir_proyecto(soup, propuesta or {}, estados, problem_case, filas)
         finally:
             progreso.avanzar("Resumen: puntos clave y fases")
         montar_resumen(soup, propuesta or {}, proyecto, solucion.get("cifras_costes") or {}, estados)
