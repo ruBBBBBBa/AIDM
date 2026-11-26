@@ -457,7 +457,11 @@ respuestas.update({1: json.dumps({"arquitectura": {"para_todos": "Un almacén ú
                        {"texto": "Un Lakehouse (un almacén único) alimenta los cuadros de Power BI.", "seccion": None}],
                        "fases": {"fuentes": {"puntos": [SIN_COMA, CON_COMA]}},
                        "crisp": {"negocio": ["Entender qué decide la dirección cada semana."]}})})
-sopa = resumir()
+logging.getLogger("aidm").addHandler(recoger)  # el caso 8 lo quitó al acabar
+try:
+    sopa = resumir()
+finally:
+    logging.getLogger("aidm").removeHandler(recoger)
 assert [li.get_text() for li in sopa.select("#resumen-puntos > li")] == [
     "Los datos de Business Central y de los TPV llegan cada noche a Azure.",
     "Un Lakehouse (un almacén único) alimenta los cuadros de Power BI."], sopa.select("#resumen-puntos > li")
