@@ -360,15 +360,11 @@ def _volver(soup):
 
 
 def _interruptor_y_resumen(soup, card, r: dict) -> None:
-    """«Detalle | Resumen» (Detalle por defecto) y el resumen de la sección, delante de su texto."""
+    """«Resumen | Detalle» (Resumen por defecto si tiene contenido) y el resumen de la sección, delante de su texto."""
     body = card.find("div", class_="section-body")
     prose = body.find("div", class_="prose") if body else None
     if prose is None:
         return
-    grupo = _nueva(soup, "div", class_="vista-seccion", role="group", aria_label="Vista de la sección")
-    for vista, texto, pulsado in (("detalle", "Detalle", "true"), ("resumen", "Resumen", "false")):
-        grupo.append(_nueva(soup, "button", texto, class_="vista-btn", type="button", data_vista=vista,
-                            aria_pressed=pulsado))
     resumen = _nueva(soup, "div", class_="resumen-seccion")
     for campo, titulo in TITULOS_RESUMEN:
         valor = r.get(campo)
@@ -382,6 +378,13 @@ def _interruptor_y_resumen(soup, card, r: dict) -> None:
             resumen.append(ul)
         else:
             resumen.append(_nueva(soup, "p", valor))
+    inicial = "resumen" if resumen.contents else "detalle"  # un resumen vacío no se enseña de entrada
+    grupo = _nueva(soup, "div", class_="vista-seccion", role="group", aria_label="Vista de la sección")
+    for vista, texto in (("resumen", "Resumen"), ("detalle", "Detalle")):
+        grupo.append(_nueva(soup, "button", texto, class_="vista-btn", type="button", data_vista=vista,
+                            aria_pressed="true" if vista == inicial else "false"))
+    if inicial == "resumen":
+        card["class"] = [c for c in card.get("class", []) if c != "modo-resumen"] + ["modo-resumen"]
     prose.insert_before(grupo)
     prose.insert_before(resumen)
 
@@ -409,6 +412,8 @@ def montar_resumen(soup, propuesta: dict, proyecto: dict, cifras: dict, estados:
     """Monta la pestaña Resumen, los interruptores, los «← Volver al resumen» y lo de CRISP-DM en el informe."""
     for viejo in soup.select(".volver-resumen, .vista-seccion, .resumen-seccion"):  # por si se monta dos veces
         viejo.decompose()
+    for card in soup.select(".section-card.modo-resumen"):
+        card["class"].remove("modo-resumen")
     reutilizadas = soup.select_one("#tab-roadmap p.rdm-ya-implantado")
     if reutilizadas is not None:
         reutilizadas["id"] = REUTILIZADAS
@@ -459,7 +464,7 @@ def montar_resumen(soup, propuesta: dict, proyecto: dict, cifras: dict, estados:
                            "Resumen van sin enlace")
             crisp_destinos = {}
 
-    # Interruptor «Detalle | Resumen» y «← Volver al resumen» en cada desplegable de destino
+    # Interruptor «Resumen | Detalle» y «← Volver al resumen» en cada desplegable de destino
     for clave, _, _, destino in SECCIONES + [COSTES]:
         card = soup.find(id=destino).find_parent(class_="section-card") if clave in enlaces else None
         if card is not None and propuesta.get(clave):

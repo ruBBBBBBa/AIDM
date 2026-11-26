@@ -389,8 +389,9 @@ assert [b.p.get_text() if b.p else "" for b in bloques] == [
     "Coste total (equipo incluido): 72.000 € – 80.000 € · al mes, lo que queda funcionando: 1.200 € · plazo: 4 meses."]
 # El «Resumen» de arquitectura: sin la frase de 9137 ni la pieza de 9137; la cifra que sí está en la sección se queda
 tarjeta = sopa.find(id="seccion-arquitectura").find_parent(class_="section-card")
-assert [(b.get_text(), b["aria-pressed"]) for b in tarjeta.select(".vista-btn")] == [("Detalle", "true"),
-                                                                                      ("Resumen", "false")]
+assert [(b.get_text(), b["aria-pressed"]) for b in tarjeta.select(".vista-btn")] == [("Resumen", "true"),
+                                                                                      ("Detalle", "false")]
+assert "modo-resumen" in tarjeta["class"]  # se abre en el resumen
 resumen_arq = tarjeta.select_one(".resumen-seccion")
 assert cifra_buena in resumen_arq.get_text() and "9137" not in resumen_arq.get_text(), resumen_arq
 assert [li.get_text() for li in resumen_arq.select("li")] == ["Un lago de datos", "Depender de un proveedor"]
