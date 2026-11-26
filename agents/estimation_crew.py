@@ -186,6 +186,7 @@ class ComponenteCoste(BaseModel):
                                                          "entra (el lago de datos): entonces unidades es lo que entra "
                                                          "en un mes, y el programa suma lo que se va acumulando")
     _cantidad: float | None = PrivateAttr(default=None)  # fallo 53: el uso que dio el modelo, antes de pasarlo a paquetes
+    _en_sus_datos: bool = PrivateAttr(default=False)  # fallo 136: licencia que ya tiene, comprobada por el fallo 101
 
     @field_validator("moneda", mode="before")
     @classmethod
@@ -316,10 +317,23 @@ class PerfilEquipo(BaseModel):
 
 class FuncionSinTarifa(BaseModel):
     funcion: str = Field(description="Trabajo de una persona que no encaja en ningún perfil de la tabla de tarifas "
-                                     "(por ejemplo, un experto en un programa concreto del cliente)")  # fallo 118
+                                     "(por ejemplo, un experto en un programa concreto del cliente). Si lo hace "
+                                     "personal del propio cliente, el nombre termina en «(equipo del cliente)»")  # 118, 136
     horas_mes: int = Field(default=0, description="Horas al mes que necesita en el desarrollo")
     # Fallo 55: como los perfiles, con las horas de la implantación aparte; antes el modelo partía la función en dos
     horas_mes_implantacion: int = Field(default=0, description="Horas al mes en la implantación; 0 si no participa")
+
+
+# Fallo 136: una función que hace el personal del propio cliente («Soporte de redes de las tiendas (Equipo Técnico del
+# Cliente)») no es coste de Inetum: se lista aparte y no cuenta para el encaje provisional ni para el mínimo sin tarifa.
+# «Experto en Business Central del cliente» sí es de Inetum: hace falta que diga que es su equipo o su personal
+_DEL_CLIENTE = re.compile(r"\b(?:equipo|personal|plantilla|departamento|area|it|sistemas|tecnicos?)\b(?:\s+\S+){0,3}?"
+                          r"\s+del (?:propio )?cliente\b|\b(?:a cargo|por parte) del cliente\b|\bdel propio cliente\b|"
+                          r"\b(?:client|customer)(?:'s)? (?:team|staff|it)\b")
+
+
+def es_del_cliente(funcion: str) -> bool:
+    return bool(_DEL_CLIENTE.search(_normalize_text(funcion or "")))
 
 
 def _funcion_y_fase(nombre: str) -> tuple[str, str | None]:
@@ -546,6 +560,7 @@ def _calcular_equipo(equipo: _EquipoDeUnAlcance, tarifas: dict[tuple[str, str], 
                        "último del plazo; revisa cuántos hacen falta."]
     # Funciones que el agente no pudo asignar a un perfil con tarifa: tampoco se suman
     # Fallo 55: cada una con sus horas en el desarrollo y en la implantación, como los perfiles
+    del_cliente = []  # fallo 136: las del personal del cliente, aparte
     for f in equipo.funciones_sin_tarifa:
         nombre = f.funcion.strip().replace("|", "/")
         if not nombre:
@@ -554,21 +569,28 @@ def _calcular_equipo(equipo: _EquipoDeUnAlcance, tarifas: dict[tuple[str, str], 
         if not con_fases:  # sin fase de implantación, todos los meses son de desarrollo
             h_dev, h_impl = h_dev or h_impl, 0
         if h_dev and h_impl:
-            no_sumados.append(f"{nombre} ({h_dev} h/mes y {h_impl} h/mes en implantación)")
+            texto = f"{nombre} ({h_dev} h/mes y {h_impl} h/mes en implantación)"
         elif h_dev or h_impl:
-            no_sumados.append(f"{nombre} ({h_dev} h/mes)" if h_dev else f"{nombre} ({h_impl} h/mes en implantación)")
+            texto = f"{nombre} ({h_dev} h/mes)" if h_dev else f"{nombre} ({h_impl} h/mes en implantación)"
         else:
-            no_sumados.append(nombre)
+            texto = nombre
+        if es_del_cliente(nombre):
+            del_cliente.append(texto)
+            continue
+        no_sumados.append(texto)
         falta_dev += h_dev
         falta_impl += h_impl
     if no_sumados:
         lineas += ["", f"Sin presupuestar, porque no tienen tarifa en la tabla: {'; '.join(no_sumados)}."]
+    if del_cliente:
+        lineas += ["", "A cargo del cliente (dedicación de su propio equipo; no es coste de Inetum ni se presupuesta): "
+                       f"{'; '.join(del_cliente)}."]
     # Fallo 42 (C16): para el encaje, un mínimo por lo que falta, a la tarifa más baja de la tabla
     tarifa_minima = min(tarifas.values(), default=0.0)
     falta_min = tarifa_minima * (falta_dev * dev_min + falta_impl * meses_impl)
     falta_max = tarifa_minima * (falta_dev * dev_max + falta_impl * meses_impl)
     return {"mensual": mensual_dev, "total_min": total_min, "total_max": total_max,
-            "meses_min": meses_min, "meses_max": meses_max, "no_sumados": no_sumados,
+            "meses_min": meses_min, "meses_max": meses_max, "no_sumados": no_sumados, "del_cliente": del_cliente,
             "meses_implantacion": meses_impl, "desarrollo_min": desarrollo_min, "desarrollo_max": desarrollo_max,
             "implantacion": implantacion,
             "horas_sin_tarifa": falta_dev, "horas_sin_tarifa_impl": falta_impl, "tarifa_minima": tarifa_minima,
@@ -868,14 +890,20 @@ def _sin_coste_propio(c: ComponenteCoste) -> bool:
     return bool(fila) and not fila["precio_eur"]
 
 
+# Fallo 136: una fila sin coste propio que no vale aunque su nombre case: Entra ID P1 y P2 se pagan por usuario
+_NO_ES_ESTA_FILA = {"azure-entra-id-free": re.compile(r"\b(?:p1|p2|premium|governance|suite)\b")}
+
+
 def _con_fila_sin_coste(c: ComponenteCoste, problem_case: dict | None) -> ComponenteCoste:
     """Fallo 101: un componente a 0 € sin fila que es un servicio sin coste propio de la tabla (de la nube del cliente)
     la lleva, para que el informe diga qué se paga en vez de «por revisar». El 19 nov, Lake Formation salía así."""
     if c.tarifa or c.importe_eur:
         return c
     con_maquina = _MAQUINA.search(_normalize_text(c.componente))  # fallo 90: la VM de la puerta de enlace sí se paga
+    nombre = _normalize_text(c.componente)
     fila = next((f for f in _filas_precios(problem_case, c.componente) if not f["precio_eur"]
-                 and not (f["id"] == _FILA_PROGRAMA_PUERTA and con_maquina)), None)
+                 and not (f["id"] == _FILA_PROGRAMA_PUERTA and con_maquina)
+                 and not (f["id"] in _NO_ES_ESTA_FILA and _NO_ES_ESTA_FILA[f["id"]].search(nombre))), None)
     return _con_precio_de_tabla(c.model_copy(update={"tarifa": fila["id"], "unidades": 1})) if fila else c
 
 
@@ -998,17 +1026,38 @@ def _tecnologias_cliente(problem_case: dict | None) -> list[str] | None:
     # Un nombre de producto tiene pocas palabras: las frases largas («madurez baja en alumbrado público») no cuentan
     return sorted(t for t in trozos if len(t) >= 4 and len(t.split()) <= 4 and t not in _SOLO_NUBE | _GENERICOS)
 
-def _ya_lo_tiene(c: ComponenteCoste, tecnologias: list[str] | None = None) -> bool:
+# Fallo 136: el directorio de Microsoft. «Microsoft 365», «Azure AD», «Active Directory» o «directorio en Azure» en los
+# datos del cliente (también en las evidencias) son Entra ID: el 25 nov salía «Entra ID no está entre lo que usa»
+_ENTRA_ID = re.compile(r"\b(?:microsoft 365|office 365|m365|azure ad|azure active directory|active directory|entra id|"
+                       r"microsoft entra|directorio (?:de|en) azure)\b")
+
+
+def _trozos_cliente(problem_case: dict | None) -> list[str] | None:
+    """Fallo 136: lo que el cliente ya usa según sus datos, en trozos enteros aunque sean largos («sql server en local
+    para los tpv»), y «entra id» si usa el directorio de Microsoft. None si el caso no trae esos datos. Antes se tiraban
+    los trozos de más de 4 palabras, y Business Central y el SQL Server de los TPV no casaban."""
+    if not any(_valor_caso(problem_case, campo) for campo in _CAMPOS_TECNOLOGIA):
+        return None
+    trozos = inventario_mod.trozos_del_cliente(problem_case, _CAMPOS_TECNOLOGIA)
+    # Y cada parte entre comas con su paréntesis: «Power BI (20 licencias Pro)» es Power BI Pro
+    trozos += [t.strip() for campo in _CAMPOS_TECNOLOGIA
+               for t in re.split(r"[,;]", _normalize_text(_valor_caso(problem_case, campo))) if t.strip()]
+    datos = " ".join(_normalize_text(_valor_caso(problem_case, campo)) for campo in _CAMPOS_TECNOLOGIA + ("evidencias",))
+    return trozos + ["entra id"] if _ENTRA_ID.search(datos) else trozos
+
+
+def _ya_lo_tiene(c: ComponenteCoste, trozos: list[str] | None = None) -> bool:
     """Fallo 45: la referencia dice que el cliente ya lo tiene. Fallo 54: y, si hay datos del cliente, su nombre está
     entre lo que ya usa. El 28 oct, el modelo escribió «Ya lo tiene el cliente» en Event Hubs, Purview y Azure Monitor
-    para justificar un nivel gratuito, y ninguno estaba en el stack de Iberdrola."""
+    para justificar un nivel gratuito, y ninguno estaba en el stack de Iberdrola. Fallo 136: «está entre lo que usa» es
+    que todas las palabras de su nombre estén en un mismo trozo de sus datos (_trozos_cliente): «TPV SQL Server» casa
+    con «SQL Server en local para los TPV», y «Power BI Premium» no casa con «Power BI»."""
     texto = _normalize_text(f"{c.componente} {c.referencia}")
     if not any(frase in texto for frase in _YA_LO_TIENE):
         return False
-    if tecnologias is None:  # sin datos del cliente no se puede comprobar: vale lo que dice el modelo
+    if trozos is None or c._en_sus_datos:  # sin datos del cliente no se puede comprobar: vale lo que dice el modelo
         return True
-    nombre = _normalize_text(c.componente)
-    return any(t in nombre for t in tecnologias)
+    return inventario_mod.lo_tiene_el_cliente(c.componente, trozos)
 
 # Fallo 101: licencias que hacen falta además de las que el cliente ya tiene
 _MAS_LICENCIAS = re.compile(r"\b(?:adicional(?:es)?|mas licencias|nuevas licencias|nuevos usuarios|ampliac\w*|ampliar"
@@ -1031,6 +1080,7 @@ def _sin_licencias_que_ya_tiene(componentes: list[ComponenteCoste], tecnologias:
             logger.warning("%s: el cliente ya lo tiene según sus datos; no se suma", c.componente)
             c = c.model_copy(update={"precio_unitario_eur": 0, "tarifa": "", "moneda": "EUR", "referencia": (
                 f"{c.referencia.rstrip('. ')}. Ya lo tiene el cliente (está en sus datos): no se suma.")})
+            c._en_sus_datos = True  # fallo 136: «Power BI Pro» con «Power BI» en sus datos sigue siendo suyo
         salida.append(c)
     return salida
 
@@ -1125,6 +1175,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     # Fallo 54: lo que el cliente ya usa, para comprobar los «ya lo tiene»
     tecnologias = _tecnologias_cliente(problem_case)
     componentes = _sin_licencias_que_ya_tiene(componentes, tecnologias)  # fallo 101
+    trozos = _trozos_cliente(problem_case)  # fallo 136: para los «ya lo tiene»
 
     # Fallo 51 (C12): el modelo la escribe en markdown y con sangría; se quita la sangría y se convierte a HTML
     justificacion = _sin_valorar_presupuesto(textwrap.dedent(r.justificacion).strip())
@@ -1250,7 +1301,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
     # Fallo 79: lo que queda funcionando cada mes (infraestructura, licencias y soporte), frente al límite mensual
     limite_mes = _limite_mensual(problem_case)
     al_mes = sum(_coste_al_mes(c, meses_max) for c in sumados if c.periodicidad != "unico")
-    ya_tiene = [c.componente for c in componentes if not c.importe_eur and not c.tarifa and _ya_lo_tiene(c, tecnologias)]
+    ya_tiene = [c.componente for c in componentes if not c.importe_eur and not c.tarifa and _ya_lo_tiene(c, trozos)]
     if limite_mes:
         motivo += (f" Al mes, lo que queda funcionando (infraestructura, licencias y soporte) cuesta unos {_eur(al_mes)}, "
                    f"{'dentro del' if al_mes <= limite_mes[1] else 'por encima del'} límite mensual del cliente "
@@ -1297,7 +1348,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
 
     # Fallo 54: un 0 € vale si cabe en lo gratuito de la tabla o si el cliente lo tiene de verdad (está en sus datos)
     a_cero = [c for c in componentes if not c.importe_eur and not _en_gratuito(c) and not _sin_coste_propio(c)
-              and (c.tarifa or not _ya_lo_tiene(c, tecnologias))]  # fallo 101: lo sin coste propio no se avisa
+              and (c.tarifa or not _ya_lo_tiene(c, trozos))]  # fallo 101: lo sin coste propio no se avisa
     if a_cero:
         nombres = _lista([c.componente for c in a_cero])
         avisos.append(f"Ojo: {escape(nombres)} {'va' if len(a_cero) == 1 else 'van'} a 0 €, así que no suman nada al "
@@ -1416,7 +1467,7 @@ def _format_cost_report(report: CostEstimationReport, infracost_raw: str = "", e
         if not c.importe_eur:
             importe = ("0 € (sin coste propio)" if _sin_coste_propio(c)  # fallo 101
                        else "0 € (cabe en el nivel gratuito)" if _en_gratuito(c)
-                       else "0 € (ya lo tiene el cliente)" if not c.tarifa and _ya_lo_tiene(c, tecnologias)
+                       else "0 € (ya lo tiene el cliente)" if not c.tarifa and _ya_lo_tiene(c, trozos)
                        else '<span style="color:#b45309;">0 € (por revisar)</span>')
         elif any(c is x for x in fuera):  # fallo 59
             importe += ' <span style="color:#b45309;">(no se suma: revisar)</span>'
@@ -2130,6 +2181,9 @@ def run_estimation_crew(
             "cada una una sola vez, con sus horas al mes en el desarrollo (horas_mes) y en la implantación "
             "(horas_mes_implantacion), como los perfiles; no pongas ahí formación, licencias ni servicios, que se "
             "valoran aparte. "
+            # Fallo 136: el trabajo del personal del cliente no es coste de Inetum
+            "Si una función la hace el personal del propio cliente (su equipo de IT, por ejemplo), termina su nombre "
+            "con «(equipo del cliente)»: no se presupuesta, se lista aparte como dedicación del cliente. "
             "Para cada perfil indica: su nombre exacto en la tabla de tarifas (primera columna), "
             "el nivel (Junior/Middle/Senior) y las horas al mes en el desarrollo (horas_mes) y en la implantación "
             "(horas_mes_implantacion), con 0 en la fase en la que no participe. 160 horas al mes es jornada completa: úsala solo para "

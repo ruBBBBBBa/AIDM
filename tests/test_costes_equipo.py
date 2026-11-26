@@ -425,3 +425,38 @@ prompts.clear()
 ec.run_estimation_crew("PROPUESTA SIMULADA", "groq/openai/gpt-oss-20b", problem_case=caso)  # sin límite, no
 assert "cubre el soporte y el consumo cloud" not in next(p for p in prompts if "valora el coste de cada componente" in p)
 print("OK 16: con límite mensual, el prompt de costes dice que el soporte no puede ocupar todo el límite")
+
+# 17) Fallo 136: una función del personal del propio cliente se lista aparte, como dedicación del cliente: no es coste de
+#     Inetum, no deja el encaje «provisional» ni cuenta para el mínimo de lo que no tiene tarifa. El 25 nov, el soporte
+#     de los TPV del equipo técnico del cliente se sumaba a 20 €/h y subía el MVP. Un experto de Inetum en un programa del
+#     cliente sigue como antes. Datos inventados
+import re
+
+SOPORTE = ec.FuncionSinTarifa(funcion="Soporte de redes de las tiendas (Equipo Técnico del Cliente)", horas_mes=40)
+EXPERTO = ec.FuncionSinTarifa(funcion="Experto en Business Central del cliente", horas_mes=20)
+con_cliente = mvp.model_copy(update={"funciones_sin_tarifa": [SOPORTE]})
+calculado = _calcular_equipo(con_cliente, tarifas)
+assert calculado["no_sumados"] == [] and calculado["horas_sin_tarifa"] == 0 and calculado["falta_max"] == 0, calculado
+assert calculado["del_cliente"] == ["Soporte de redes de las tiendas (Equipo Técnico del Cliente) (40 h/mes)"]
+assert ("A cargo del cliente (dedicación de su propio equipo; no es coste de Inetum ni se presupuesta): Soporte de "
+        "redes de las tiendas (Equipo Técnico del Cliente) (40 h/mes).") in calculado["texto"], calculado["texto"]
+assert "no tienen tarifa" not in calculado["texto"]
+calculado["resto"] = _calcular_equipo(resto, tarifas)
+html = ec._format_cost_report(informe, "", calculado, dos)
+assert "(provisional)" not in html and "no tienen tarifa" not in html, html
+solo_mvp = _calcular_equipo(mvp, tarifas)
+solo_mvp["resto"] = _calcular_equipo(resto, tarifas)
+parte = lambda h: re.search(r"el MVP se lleva el ([\d–]+ %)", h).group(1)
+assert parte(html) == parte(ec._format_cost_report(informe, "", solo_mvp, dos)), "el MVP no sube por el cliente"
+con_experto = mvp.model_copy(update={"funciones_sin_tarifa": [SOPORTE, EXPERTO]})
+calculado = _calcular_equipo(con_experto, tarifas)
+assert calculado["no_sumados"] == ["Experto en Business Central del cliente (20 h/mes)"] and calculado["horas_sin_tarifa"] == 20
+calculado["resto"] = _calcular_equipo(resto, tarifas)
+assert "(provisional)" in ec._format_cost_report(informe, "", calculado, dos)
+assert ec.es_del_cliente("Validación funcional a cargo del cliente") and ec.es_del_cliente("Client IT team support")
+assert not ec.es_del_cliente("Experto en SAP")
+prompts.clear()
+ec.run_estimation_crew("PROPUESTA SIMULADA", "groq/openai/gpt-oss-20b", problem_case=caso)
+assert any("termina su nombre con «(equipo del cliente)»" in p for p in prompts), "el prompt del equipo lo pide"
+print("OK 17: la función del equipo del cliente va aparte, sin «provisional» ni mínimo por ella; el experto de Inetum, "
+      "como antes")

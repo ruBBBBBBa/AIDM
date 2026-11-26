@@ -201,4 +201,56 @@ ec.run_estimation_crew("Power BI lee de Athena a través de una instancia EC2.",
 assert "aws-ec2-windows-t3-medium" in prompts[0] and "licencia-power-bi-gateway" in prompts[0]
 print("OK 8: el programa de la puerta de enlace va sin coste propio y su VM Windows lleva la fila de EC2 Windows")
 
+# 9) Fallo 136: «ya lo tiene» casa si todas las palabras del componente están en un mismo trozo de sus datos, aunque el
+#    trozo sea largo; el directorio de Azure o Microsoft 365 son Entra ID; los pipelines de Data Factory en Fabric, Delta
+#    Lake e Iceberg van sin coste propio. El 25 nov, Business Central, el SQL Server de los TPV y Entra ID salían en el
+#    «Ojo» y el hueco de verdad (el Self-Hosted Integration Runtime) quedaba mezclado con ellos. Datos inventados
+TEXTIL = {"plataforma_objetivo": {"value": "Microsoft Azure"},
+          "stack_tecnologico_actual": {"description": "Stack", "value": "Microsoft Dynamics 365 Business Central, "
+                                       "Shopify, Salesforce, SQL Server en local en los TPV de las tiendas y Power BI"},
+          "herramienta_de_visualizacion": {"description": "BI", "value": "Power BI (12 licencias Pro)"},
+          "evidencias": {"description": "Evidencias", "value": ["Usan el directorio en Azure para sus cuentas"]}}
+YA = "Ya lo tiene el cliente."
+BC = componente("Microsoft Dynamics 365 Business Central", 0, 1, "licencia", "mensual", YA, "licencias")
+TPV = componente("TPV SQL Server", 0, 1, "servidor", "mensual", "Ya lo tiene el cliente (servidores locales).")
+ENTRA = componente("Microsoft Entra ID", 0, 1, "directorio", "mensual", YA)
+SHIR = componente("Self-Hosted Integration Runtime", 0, 1, "instalación", "mensual", YA)
+PRO_YA = componente("Power BI Pro", 0, 12, "licencia", "mensual", YA, "licencias")
+PIPES = componente("Data Factory pipelines en Microsoft Fabric", 0, 1, "mes", "mensual", "Dentro de la capacidad F2.")
+DELTA = componente("Delta Lake", 0, 1, "mes", "mensual", "Formato abierto.")
+ICEBERG = componente("Apache Iceberg", 0, 1, "mes", "mensual", "Formato abierto.")
+trozos = ec._trozos_cliente(TEXTIL)
+assert "entra id" in trozos and ec._trozos_cliente({}) is None
+assert all(_ya_lo_tiene(ComponenteCoste(**c), trozos) for c in (BC, TPV, ENTRA, PRO_YA))
+assert not _ya_lo_tiene(ComponenteCoste(**SHIR), trozos)
+html = _format_cost_report(informe(SYNAPSE, BC, TPV, ENTRA, SHIR, PRO_YA, PIPES, DELTA, ICEBERG), problem_case=TEXTIL)
+assert ("Ojo: Self-Hosted Integration Runtime va a 0 €, así que no suman nada al total. Si se pagan por uso (cómputo, "
+        "ejecuciones, un endpoint…), el coste real será mayor. El modelo dice que el cliente ya lo tiene, pero no está "
+        "entre lo que usa según sus datos.") in html, html  # solo el hueco de verdad
+assert html.count("0 € (ya lo tiene el cliente)") == 3 and html.count("0 € (sin coste propio)") == 4, html
+assert html.count("0 € (por revisar)") == 1 and ">2.400 €</div>" in html
+# Lo que no casa: Entra ID P1 (se paga), Power BI Premium (tiene Pro), y Azure Data Factory, que se paga y no toma la
+# fila sin coste de los pipelines de Fabric
+P1 = componente("Microsoft Entra ID P1", 0, 30, "usuario", "mensual", YA, "licencias")
+PREMIUM = componente("Power BI Premium", 0, 1, "capacidad", "mensual", YA, "licencias")
+ADF = componente("Azure Data Factory", 0, 1, "mes", "mensual", "Orquestación de las cargas.")
+html = _format_cost_report(informe(SYNAPSE, P1, PREMIUM, ADF), problem_case=TEXTIL)
+assert "Ojo: Microsoft Entra ID P1, Power BI Premium y Azure Data Factory van a 0 €" in html, html
+assert "ya los tiene (Microsoft Entra ID P1 y Power BI Premium), pero no están entre lo que usa" in html, html
+assert ec._con_fila_sin_coste(ComponenteCoste(**ADF), TEXTIL).tarifa == ""
+assert "azure-fabric-data-factory" not in [f["id"] for f in ec._filas_precios(TEXTIL, "Azure Data Factory")]
+assert ec._con_fila_sin_coste(ComponenteCoste(**PIPES), TEXTIL).tarifa == "azure-fabric-data-factory"
+assert ec._con_fila_sin_coste(ComponenteCoste(**P1), TEXTIL).tarifa == ""
+# Los formatos abiertos valen con cualquier nube; las filas, con su fuente
+assert ec._con_fila_sin_coste(ComponenteCoste(**ICEBERG), en_aws).tarifa == "apache-iceberg"
+assert ec._con_fila_sin_coste(ComponenteCoste(**DELTA), en_aws).tarifa == "delta-lake"
+assert ec._con_fila_sin_coste(ComponenteCoste(**componente("Delta Live Tables", 0, 1, "mes", "mensual", "")),
+                              en_aws).tarifa == ""
+assert "fabric/data-factory/pricing-pipelines" in precios["azure-fabric-data-factory"]["fuente"]
+assert "microsoft-entra-pricing" in precios["azure-entra-id-free"]["fuente"]
+assert all(precios[i]["precio_eur"] == 0 and precios[i]["fecha"] == "2026-11-26" for i in
+           ("azure-fabric-data-factory", "azure-entra-id-free", "delta-lake", "apache-iceberg"))
+print("OK 9: Business Central, el SQL Server de los TPV, Entra ID y Power BI Pro casan con sus datos; los pipelines de "
+      "Fabric, Delta Lake e Iceberg van sin coste propio, y el «Ojo» solo habla del Self-Hosted Integration Runtime")
+
 print("\nTodo bien: el fallo 45 está arreglado (en la parte que se puede comprobar sin el LLM real).")
