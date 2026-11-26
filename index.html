@@ -497,6 +497,13 @@
   overflow: visible;
 }
 
+/* Ocultar contador y fases de ejecución en la pantalla de carga */
+.intelligence-steps,
+.intelligence-timer,
+.intelligence-footnote {
+  display: none !important;
+}
+
 </style>
 </head>
 <body>
@@ -724,13 +731,16 @@ async function refreshEstado(silencioso) {
   try {
     const r = await fetch("/api/estado"); if (!r.ok) return null;
     const e = await r.json();
+   
     (e.avisos || []).forEach((a) => {
       if (a.id > avisoVisto) { avisoVisto = a.id; if (!silencioso) addMsg("aviso", a.texto); }   // el aviso no entra en messages: los agentes no lo leen
     });
     if (busy) {
       const f = Math.max(0, Math.min(1, Number(e.fraccion) || 0));
       const b = $("busy"); b.classList.toggle("det", f > 0); b.style.setProperty("--p", (f * 100) + "%");
-      actualizarIntelligence(f, e.texto);
+      if (e.generando_informe) {
+        actualizarIntelligence(f, e.texto);
+      }
       progTxt = f > 0 ? Math.round(f * TOTAL_PASOS) + " de " + TOTAL_PASOS + " pasos" + (e.texto ? " · " + e.texto : "") : "";
     }
     return e;
@@ -822,7 +832,6 @@ function actualizarIntelligence(fraccion, texto) {
   const f = Math.max(0, Math.min(1, Number(fraccion) || 0));
   // No mostrar una evolución simulada. Si la API aún no comunica avance,
   // la aplicación mantiene su indicador de espera original.
-  if (f <= 0) return;
   $("intelligence").classList.add("active");
   $("intelligenceFill").style.width = (100 * f) + "%";
   $("intelligenceProgress").setAttribute("aria-valuenow", String(Math.round(100 * f)));
