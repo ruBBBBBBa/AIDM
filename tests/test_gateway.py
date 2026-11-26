@@ -32,6 +32,20 @@ from crewai import Crew
 from crewai.events import crewai_event_bus
 
 import gateway
+from datetime import datetime as _datetime
+
+
+class _Mediodia(_datetime):
+    """Fallo 135: el reloj del gateway marca siempre las 12:00 de hoy. El cupo de Gemini vuelve a empezar a las 09:00,
+    y el resultado no puede depender de la hora a la que se lanza el test."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return _datetime.now(tz).replace(hour=12, minute=0, second=0, microsecond=0)
+
+
+gateway.datetime = _Mediodia
+gateway.CUPOS_PATH = Path(tempfile.mkdtemp()) / "cupos_gemini.json"  # antes de importar los agentes: nunca el tuyo
 import utils
 import agents.discovery_agent_logic as discovery
 import agents.estimation_crew as ec
