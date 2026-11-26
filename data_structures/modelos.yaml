@@ -12,14 +12,10 @@
 #   (pruebas_modelos/comparar.py). «comparar.py --comprobar» dice si algún nombre no existe con tus claves.
 
 perfiles:
-  extraccion:       # JSON fiel a lo que dice el usuario, rápido y muchas veces (discovery)
-    - mistral/ministral-14b-2512
+  extraccion: # JSON fiel a lo que dice el usuario, rápido y muchas veces (discovery)
+    - sambanova/gemma-4-31B-it 
     - gemini/gemini-3.5-flash-lite
-    - groq/openai/gpt-oss-20b
-  # Fallo 98 (16 nov): en el plan gratuito, Mistral Large 4 y Large 3 (mistral-large-2512) dan 403 tier_not_allowed, y
-  # Medium, Small y Magistral, 429 aunque se espere entre llamadas: fuera de todos los perfiles. Ministral 14B responde
-  # y se queda en el discovery. Redacción, cálculo y roadmap van con Gemini 3.6 Flash, Flash-Lite de primera reserva y
-  # Cloudflare detrás. Gemini 3.8 Flash no contestó en 60 s.
+    - groq/openai/gpt-oss-120b
   calculo:
     - gemini/gemini-3.6-flash              # 4 nov: costes y equipo válidos
     - gemini/gemini-3.5-flash-lite         # fallo 98
@@ -98,6 +94,8 @@ modelos:
   
   cloudflare/@cf/openai/gpt-oss-120b: {max_tokens: 8192}         # 10.000 neuronas al día, para todos sus modelos; los costes gastaron 5.527
   cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct: {max_tokens: 4096}
+
+  sambanova/gemma-4-31B-it: {max_tokens: 2048}
 
 
 # Consumo de cada ejecución: al acabar el informe, el log resume las llamadas y los tokens de cada modelo (el que de
