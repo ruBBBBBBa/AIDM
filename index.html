@@ -547,6 +547,8 @@
           <div id="intelligenceStatus" class="intelligence-status">Esperando datos de progreso…</div>
           <div class="intelligence-timer">Tiempo de ejecución <strong id="intelligenceTimer">00:00</strong></div>
           <div class="intelligence-footnote">Las cuatro etapas representan visualmente el progreso global comunicado por el servidor.</div>
+            <!-- Fallo 135: cuadrante de posicionamiento (lo pinta assets/js/cuadrante.js cuando llega) -->
+            <div id="cuadrante"></div>
             <!-- AIDM Tech News: noticias tecnológicas (fallo 127: carrusel, primero las del sector) -->
             <section class="tech-news" id="techNews" aria-label="Actualidad tecnológica" aria-roledescription="carrusel">
               <div class="tech-news-header">
@@ -600,6 +602,7 @@
   </section>
 </div>
 
+<script src="/assets/js/cuadrante.js"></script>
 <script>
 const INTRO = "Describe la estructura y los requisitos de tu proyecto de Data y AI.";
 const GROUPS = [
@@ -727,6 +730,18 @@ async function refreshCaso() {
   try { const r = await fetch("/api/caso"); setConn(r.ok); if (r.ok) renderCaso(await r.json()); } catch (e) { setConn(false); }
 }
 
+// Fallo 135: el cuadrante se pide en cada sondeo mientras se genera el informe, hasta tenerlo (204 = aún no)
+let cuadrantePintado = false, pidiendoCuadrante = false;
+async function pedirCuadrante() {
+  if (cuadrantePintado || pidiendoCuadrante || typeof pintarCuadrante !== "function") return;
+  pidiendoCuadrante = true;
+  try {
+    const r = await fetch("/api/posicionamiento");
+    if (r.status === 200) cuadrantePintado = pintarCuadrante($("cuadrante"), await r.json());
+  } catch (err) { /* sin cuadrante: la espera sigue igual */ }
+  finally { pidiendoCuadrante = false; }
+}
+
 async function refreshEstado(silencioso) {
   try {
     const r = await fetch("/api/estado"); if (!r.ok) return null;
@@ -740,6 +755,7 @@ async function refreshEstado(silencioso) {
       const b = $("busy"); b.classList.toggle("det", f > 0); b.style.setProperty("--p", (f * 100) + "%");
       if (e.generando_informe) {
         actualizarIntelligence(f, e.texto);
+        pedirCuadrante();  // fallo 135
       }
       progTxt = f > 0 ? Math.round(f * TOTAL_PASOS) + " de " + TOTAL_PASOS + " pasos" + (e.texto ? " · " + e.texto : "") : "";
     }
@@ -779,6 +795,7 @@ function volverAlInforme() {
 
 function resetPantalla() {
   cerrarIntelligence();
+  cuadrantePintado = false; $("cuadrante").replaceChildren();  // fallo 135
   report = { html:"", name:"informe_aidm.html" };
   messages = [{ role:"assistant", content:INTRO }]; prev = {};
   $("chat").replaceChildren(); showHero(); setSheet(false);
