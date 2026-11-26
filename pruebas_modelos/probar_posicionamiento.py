@@ -5,7 +5,7 @@ escribe data_structures/posicionamiento.json: enseña el JSON tras las guardias,
 
 Uso (desde la carpeta del proyecto, con el venv activado):
     python pruebas_modelos/probar_posicionamiento.py                      # Groq solo, con data_structures/problem_case.json
-    python pruebas_modelos/probar_posicionamiento.py --caso .claude/casos/bodegas.json
+    python pruebas_modelos/probar_posicionamiento.py --caso .claude/casos/moda_cantabrica.json
     python pruebas_modelos/probar_posicionamiento.py --modelo cloudflare/@cf/openai/gpt-oss-120b
     python pruebas_modelos/probar_posicionamiento.py --perfil             # como en la ejecución: Groq y Cloudflare de reserva
 """
@@ -38,6 +38,10 @@ def main() -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     caso = json.loads((RAIZ / opciones.caso).read_text(encoding="utf-8"))
+    if falta := posicionamiento.faltan(caso):
+        print(f"[posicionamiento] Caso sin datos (falta {', '.join(falta)}): no se llama al modelo. "
+              f"Copia antes un caso: copy .claude\\casos\\moda_cantabrica.json data_structures\\problem_case.json")
+        return 1
     mensajes = posicionamiento.mensajes(caso)
     prompt = posicionamiento.tokens_aproximados(mensajes[0]["content"] + mensajes[1]["content"])
     print(f"Prompt: unos {prompt} tokens (tope {posicionamiento.PROMPT_MAX}) + max_tokens {posicionamiento.MAX_TOKENS}"

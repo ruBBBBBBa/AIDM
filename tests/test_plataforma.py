@@ -401,7 +401,10 @@ for prueba in (LANA, ENORME):
     m = pos.mensajes(prueba)
     tokens = pos.tokens_aproximados(m[0]["content"] + m[1]["content"])
     assert tokens <= pos.PROMPT_MAX and tokens + pos.MAX_TOKENS < 8000, tokens
-assert "Aragón y Navarra" in pos.mensajes(LANA)[1]["content"] and "Excel semanal" in pos.mensajes(LANA)[1]["content"]
+datos_lana = pos.mensajes(LANA)[1]["content"]  # la forma real de problem_case.json: {"description", "value"}
+for linea in ("- sector: Textil y moda", "- objetivo_del_proyecto: Previsión de demanda por tienda",
+              "- madurez_analitica_actual: Excel semanal", "Tiendas en Aragón y Navarra"):
+    assert linea in datos_lana, (linea, datos_lana)
 assert "Nunca inventes una empresa" in pos.INSTRUCCIONES and "sin cifras" in pos.INSTRUCCIONES
 # El perfil: Groq y Cloudflare de reserva, sin ningún Gemini
 assert gateway.modelos_de("posicionamiento", con_saltados=True) == (
@@ -459,6 +462,16 @@ try:
         graph.plataforma_node({"problem_case": LANA})
     assert len(hilos) == 1 and hilos[0]["target"] is pos.trabajar and hilos[0]["daemon"] is True, hilos
     assert hilos[0]["args"][2] == pos.RUTA and not pos.RUTA.exists() and not completados
+    # Con la forma real del caso pero sin sector ni objetivo (el caso vacío del 26 nov): ni hilo ni llamada
+    hilos.clear()
+    avisos_pos.clear()
+    pos.RUTA.write_text("{}", encoding="utf-8")
+    vacio = caso(madurez_analitica_actual="Excel semanal")
+    assert pos.faltan(vacio) == ["sector", "objetivo_del_proyecto"] and pos.faltan(LANA) == []
+    with contextlib.redirect_stdout(io.StringIO()):
+        graph.plataforma_node({"problem_case": vacio})
+    assert not hilos and not completados and not pos.RUTA.exists(), hilos
+    assert "[posicionamiento] Caso sin datos (falta sector, objetivo_del_proyecto): no se llama al modelo" in avisos_pos
     # Si no se puede lanzar, el informe sigue
     pos.threading.Thread = hilo_que_falla
     avisos_pos.clear()

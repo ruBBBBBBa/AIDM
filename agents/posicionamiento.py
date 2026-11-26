@@ -32,6 +32,7 @@ AVISO = "Posición orientativa estimada por IA a partir de información pública
 CAMPOS = ("sector", "tamaño_empresa", "objetivo_del_proyecto", "plazo_objetivo", "enfoque_ai",
           "herramienta_de_visualizacion", "madurez_analitica_actual", "stack_tecnologico_actual",
           "tiene_equipo_datos", "tamano_equipo_tecnico")
+IMPRESCINDIBLES = ("sector", "objetivo_del_proyecto")  # sin ellos no se llama al modelo
 MAX_CAMPO = 300        # caracteres de cada dato
 MAX_EVIDENCIAS = 1500  # caracteres de las evidencias juntas (de ahí sale la zona: el caso no tiene ese campo)
 
@@ -97,6 +98,13 @@ def mensajes(problem_case: dict) -> list[dict]:
     while tokens_aproximados(INSTRUCCIONES + usuario) > PROMPT_MAX and len(usuario) > 200:
         usuario = _corto(usuario, len(usuario) - 300)  # no debería pasar con los topes de arriba
     return [{"role": "system", "content": INSTRUCCIONES}, {"role": "user", "content": usuario}]
+
+
+def faltan(problem_case: dict) -> list[str]:
+    """Los campos imprescindibles que el caso no tiene (vacíos o de relleno)."""
+    return [c for c in IMPRESCINDIBLES
+            if es_valor_de_relleno(((problem_case or {}).get(c) or {}).get("value"))
+            or not str(((problem_case or {}).get(c) or {}).get("value") or "").strip()]
 
 
 def _numero(valor) -> float | None:
@@ -196,7 +204,7 @@ def pedir(problem_case: dict, modelo=None) -> str:
     """La llamada al modelo (Groq y Cloudflare de reserva, sin Gemini). reasoning_effort bajo; drop_params, para que
     LiteLLM no falle con un proveedor que no lo admita. `modelo`: otro, sin reservas (pruebas_modelos/)."""
     import gateway
-    modelo = gateway.ModeloDeTarea(modelo, TAREA) if modelo else gateway.modelo(TAREA)
+    modelo = gateway.ModeloDeTarea(modelo, TAREA) if modelo else gateway.modelo("posicionamiento")
     respuesta = gateway.completar(modelo, mensajes(problem_case), max_tokens=MAX_TOKENS,
                                   reasoning_effort="low", drop_params=True)
     return respuesta.choices[0].message.content or ""
@@ -229,7 +237,8 @@ def trabajar(problem_case: dict, mio: int, ruta: Path | None = None) -> dict | N
 
 
 def lanzar(problem_case: dict, ruta: Path | None = None) -> None:
-    """Borra el cuadrante anterior y lanza el hilo sin esperarlo. En los tests (AIDM_SIN_POSICIONAMIENTO=1), nada."""
+    """Borra el cuadrante anterior y lanza el hilo sin esperarlo. En los tests (AIDM_SIN_POSICIONAMIENTO=1), nada.
+    Sin sector u objetivo no se llama al modelo: el 26 nov, con el caso vacío, se gastó una llamada para nada."""
     global _actual
     if os.getenv("AIDM_SIN_POSICIONAMIENTO", "").strip() == "1":
         return
@@ -239,6 +248,9 @@ def lanzar(problem_case: dict, ruta: Path | None = None) -> None:
             mio = _actual
             ruta = Path(ruta or RUTA)
             _borrar(ruta)
+        if falta := faltan(problem_case):
+            logger.warning("[posicionamiento] Caso sin datos (falta %s): no se llama al modelo", ", ".join(falta))
+            return
         threading.Thread(target=trabajar, args=(problem_case, mio, ruta), name="posicionamiento", daemon=True).start()
     except Exception as exc:
         logger.warning("[posicionamiento] No se ha podido lanzar (%s: %s): el informe sigue", type(exc).__name__, exc)
