@@ -12,6 +12,7 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent.parent  # la carpeta del proyecto (este archivo está en tests/)
 sys.path.insert(0, str(RAIZ))  # para importar utils, agents, graph… desde aquí
 os.environ["AIDM_DECISION_URL"] = ""  # fallo 69: este test no usa el modelo de decisión, aunque esté en tu .env
+os.environ["AIDM_SIN_POSICIONAMIENTO"] = "1"  # fallo 135: sin el hilo del cuadrante (llamaría a Groq de verdad)
 import contextlib
 import io
 import json
@@ -356,5 +357,120 @@ assert ec2["precio_origen"] == "0.064" and "AmazonEC2" in ec2["fuente"] and ec2[
 assert "aws-ec2-windows-t3-medium" in ec._tabla_precios(caso(cloud_provider="AWS"),
                                                         "On-premises Data Gateway (Power BI) – VM Windows EC2 t3.medium")
 print("OK 13: la VM Windows de la puerta de enlace sale del CSV de EC2, con una sola fila tras los filtros")
+
+# 14) Fallo 135: el cuadrante de posicionamiento. Las guardias, el prompt (cabe en Groq), el JSON ilegible o la llamada
+#     que falla (no se guarda nada y el informe sigue) y que plataforma_node, en los tests, no lanza el hilo
+import logging
+import threading
+import gateway
+from agents import posicionamiento as pos
+
+avisos_pos = []
+recoger_pos = logging.Handler()
+recoger_pos.emit = lambda r: avisos_pos.append(r.getMessage())
+logging.getLogger("aidm").addHandler(recoger_pos)
+carpeta_pos = Path(tempfile.mkdtemp())
+pos.RUTA = carpeta_pos / "posicionamiento.json"  # nunca el de data_structures
+LANA = caso(nombre_del_cliente="Lanas del Cierzo, S.L.", sector="Textil y moda", tamaño_empresa="Mediana, 40 tiendas",
+            objetivo_del_proyecto="Previsión de demanda por tienda", madurez_analitica_actual="Excel semanal",
+            plazo_objetivo="9 meses", evidencias=["Tiendas en Aragón y Navarra"])
+BUENO = {"area": "Previsión de demanda y stock",
+         "cliente": {"hoy": {"x": -2, "y": "6,5", "motivo": "Informes en Excel desde 2019"},
+                     "con_proyecto": {"x": 14, "y": 8, "motivo": "Lanas del Cierzo tendrá previsión por tienda"}},
+         "competidores": [{"nombre": "Tejidos Alfa", "x": 8, "y": 9, "motivo": "Analítica propia", "confianza": "ALTA"},
+                          {"nombre": "Lanas del Cierzo", "x": 3, "y": 3, "motivo": "El cliente", "confianza": "alta"},
+                          {"nombre": "Sin posición", "x": "mucho", "y": 2},
+                          {"nombre": "Moda Beta", "x": 5, "y": 4, "motivo": "Crece un 20 % al año", "confianza": "rara"},
+                          {"nombre": "Gamma", "x": 2, "y": 2}, {"nombre": "Delta", "x": 4, "y": 6},
+                          {"nombre": "Épsilon", "x": 6, "y": 1}, {"nombre": "tejidos alfa", "x": 1, "y": 1}]}
+limpio = pos.limpiar(BUENO, LANA)
+assert limpio["cliente"]["hoy"] == {"x": 0.0, "y": 6.5, "motivo": "Informes en Excel desde 2019"}, limpio  # el año vale
+assert limpio["cliente"]["con_proyecto"] == {"x": 10.0, "y": 8.0, "motivo": ""}, "el nombre del cliente no sale"
+assert [c["nombre"] for c in limpio["competidores"]] == ["Tejidos Alfa", "Moda Beta", "Gamma", "Delta"], limpio
+assert [c["confianza"] for c in limpio["competidores"][:2]] == ["alta", "baja"] and limpio["competidores"][1]["motivo"] == ""
+assert limpio["ejes"] == {"x": "Madurez actual en previsión de demanda y stock",
+                          "y": "Ambición e inversión en previsión de demanda y stock"} and limpio["aviso"] == pos.AVISO
+assert any("con cifras" in a for a in avisos_pos) and any("salía como competidor" in a for a in avisos_pos), avisos_pos
+assert pos.limpiar({**BUENO, "competidores": [BUENO["competidores"][1]]}, LANA) is None, "sin competidores, nada"
+assert pos.limpiar({**BUENO, "cliente": {"hoy": BUENO["cliente"]["hoy"]}}, LANA) is None
+assert pos.limpiar({**BUENO, "area": ""}, LANA) is None and pos.limpiar(["no"], LANA) is None
+# El prompt: con datos enormes, no pasa de PROMPT_MAX y, con el max_tokens, cabe en los 8.000 por minuto de Groq
+ENORME = caso(**{c: "dato largo " * 400 for c in pos.CAMPOS}, nombre_del_cliente="Lanas del Cierzo, S.L.",
+              evidencias=["evidencia larga " * 100] * 30)
+for prueba in (LANA, ENORME):
+    m = pos.mensajes(prueba)
+    tokens = pos.tokens_aproximados(m[0]["content"] + m[1]["content"])
+    assert tokens <= pos.PROMPT_MAX and tokens + pos.MAX_TOKENS < 8000, tokens
+assert "Aragón y Navarra" in pos.mensajes(LANA)[1]["content"] and "Excel semanal" in pos.mensajes(LANA)[1]["content"]
+assert "Nunca inventes una empresa" in pos.INSTRUCCIONES and "sin cifras" in pos.INSTRUCCIONES
+# El perfil: Groq y Cloudflare de reserva, sin ningún Gemini
+assert gateway.modelos_de("posicionamiento", con_saltados=True) == (
+    "posicionamiento", ["groq/openai/gpt-oss-120b", "cloudflare/@cf/openai/gpt-oss-120b"])
+# El hilo: JSON ilegible o llamada que falla → no se guarda nada y sale [posicionamiento]; si va bien, se guarda
+pedir_real = pos.pedir
+avisos_pos.clear()
+pos.pedir = lambda c, modelo=None: "Lo siento, no puedo darte un JSON"
+assert pos.trabajar(LANA, pos._actual) is None and not pos.RUTA.exists()
+assert any(a.startswith("[posicionamiento]") for a in avisos_pos), avisos_pos
+
+
+def pedir_que_falla(c, modelo=None):
+    raise TimeoutError("Groq no contesta")
+
+
+avisos_pos.clear()
+pos.pedir = pedir_que_falla
+assert pos.trabajar(LANA, pos._actual) is None and not pos.RUTA.exists()
+assert any(a.startswith("[posicionamiento] Sin cuadrante (TimeoutError") for a in avisos_pos), avisos_pos
+pos.pedir = lambda c, modelo=None: json.dumps(BUENO)
+assert pos.trabajar(LANA, pos._actual) == limpio and json.loads(pos.RUTA.read_text(encoding="utf-8")) == limpio
+# Una ejecución vieja (se pulsó «Nueva sesión» o empezó otra) no escribe
+mio = pos._actual
+pos.olvidar()
+assert not pos.RUTA.exists()
+avisos_pos.clear()
+assert pos.trabajar(LANA, mio) is None and not pos.RUTA.exists()
+assert any("ya no es la actual" in a for a in avisos_pos), avisos_pos
+pos.pedir = pedir_real
+# plataforma_node en los tests (AIDM_SIN_POSICIONAMIENTO=1): ni hilo ni gateway.completar
+completados, hilos = [], []
+completar_real, hilo_real = gateway.completar, pos.threading.Thread
+gateway.completar = lambda *a, **k: completados.append(k) or None
+elegir_real = graph.elegir_plataforma
+graph.elegir_plataforma = lambda c: {**c, utils.PLATAFORMA_OBJETIVO: {"value": "Microsoft Azure"}}
+pos.threading.Thread = lambda *a, **k: hilos.append(k) or hilo_real(target=lambda: None)
+
+
+def hilo_que_falla(*a, **k):
+    raise RuntimeError("sin hilos")
+
+
+try:
+    assert os.environ.get("AIDM_SIN_POSICIONAMIENTO") == "1"
+    with contextlib.redirect_stdout(io.StringIO()):
+        salida = graph.plataforma_node({"problem_case": LANA})
+    assert salida["problem_case"][utils.PLATAFORMA_OBJETIVO]["value"] == "Microsoft Azure"
+    assert not hilos and not completados, (hilos, completados)
+    assert not [h for h in threading.enumerate() if h.name == "posicionamiento"]
+    # Sin la variable, lanzar() solo crea el hilo (aquí, uno vacío), sin esperarlo, y borra el cuadrante anterior
+    del os.environ["AIDM_SIN_POSICIONAMIENTO"]
+    pos.RUTA.write_text("{}", encoding="utf-8")
+    with contextlib.redirect_stdout(io.StringIO()):
+        graph.plataforma_node({"problem_case": LANA})
+    assert len(hilos) == 1 and hilos[0]["target"] is pos.trabajar and hilos[0]["daemon"] is True, hilos
+    assert hilos[0]["args"][2] == pos.RUTA and not pos.RUTA.exists() and not completados
+    # Si no se puede lanzar, el informe sigue
+    pos.threading.Thread = hilo_que_falla
+    avisos_pos.clear()
+    with contextlib.redirect_stdout(io.StringIO()):
+        salida = graph.plataforma_node({"problem_case": LANA})
+    assert salida["problem_case"][utils.PLATAFORMA_OBJETIVO]["value"] == "Microsoft Azure"
+    assert any(a.startswith("[posicionamiento] No se ha podido lanzar") for a in avisos_pos), avisos_pos
+finally:
+    os.environ["AIDM_SIN_POSICIONAMIENTO"] = "1"
+    gateway.completar, pos.threading.Thread, graph.elegir_plataforma = completar_real, hilo_real, elegir_real
+    logging.getLogger("aidm").removeHandler(recoger_pos)
+print("OK 14: el cuadrante pasa por las guardias, su prompt cabe en Groq, sin JSON no se guarda nada, una ejecución "
+      "vieja no escribe y, en los tests, plataforma_node no lanza el hilo")
 
 print("\nTodo bien: el fallo 67 funciona (en la parte que se puede comprobar sin el LLM real).")

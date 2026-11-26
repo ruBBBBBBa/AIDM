@@ -1,0 +1,50 @@
+<!doctype html>
+<!-- Fallo 135: página de prueba del cuadrante, sin servidor. Se abre con doble clic. Datos inventados. -->
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prueba del cuadrante</title>
+<style>
+  body { margin:0; padding:24px 16px; background:#0a111b; color:#e7edf6; font-family:system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .panel { max-width:420px; margin:0 auto; padding:20px; border-radius:16px; background:#111b29; border:1px solid #233145; }
+  h1 { font-size:.9rem; font-weight:600; color:#93a1b5; margin:0 0 4px; }
+  .botones { display:flex; gap:8px; margin-top:12px; }
+  button { font:inherit; font-size:.8rem; padding:6px 10px; border-radius:8px; border:1px solid #385174; background:none; color:#e7edf6; cursor:pointer; }
+</style>
+</head>
+<body>
+<div class="panel">
+  <h1>Pantalla de espera (simulada)</h1>
+  <div id="cuadrante"></div>
+  <div class="botones">
+    <button type="button" id="conDatos">Con datos</button>
+    <button type="button" id="sinDatos">Sin datos (no pinta nada)</button>
+  </div>
+</div>
+<script src="cuadrante.js"></script>
+<script>
+var EJEMPLO = {
+  "area": "Analítica de ventas, stock y previsión de demanda",
+  "ejes": {
+    "x": "Madurez actual en analítica de ventas, stock y previsión de demanda",
+    "y": "Ambición e inversión en analítica de ventas, stock y previsión de demanda"
+  },
+  "cliente": {
+    "hoy": {"x": 2.5, "y": 6.0, "motivo": "Informes semanales en hojas de cálculo, sin almacén de datos ni histórico."},
+    "con_proyecto": {"x": 6.0, "y": 7.5, "motivo": "Datos de tiendas y web unificados y previsión de demanda en el plazo previsto."}
+  },
+  "competidores": [
+    {"nombre": "Competidor A", "x": 8.0, "y": 8.5, "motivo": "Plataforma de datos propia y analítica de stock por tienda.", "confianza": "alta"},
+    {"nombre": "Competidor B", "x": 5.5, "y": 4.0, "motivo": "Cuadros de mando corporativos, sin previsión publicada.", "confianza": "media"},
+    {"nombre": "Competidor C con un nombre bastante largo", "x": 3.5, "y": 2.5, "motivo": "Poca información pública sobre su analítica.", "confianza": "baja"}
+  ],
+  "aviso": "Posición orientativa estimada por IA a partir de información pública general. No es un estudio de mercado."
+};
+var caja = document.getElementById("cuadrante");
+document.getElementById("conDatos").onclick = function () { pintarCuadrante(caja, EJEMPLO); };
+document.getElementById("sinDatos").onclick = function () { pintarCuadrante(caja, {"competidores": []}); };
+pintarCuadrante(caja, EJEMPLO);
+</script>
+</body>
+</html>

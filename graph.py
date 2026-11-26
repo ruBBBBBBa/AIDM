@@ -8,6 +8,7 @@ from agents.structure_proposal_agent_logic import build_structure_proposal
 from agents.solution_builder_crew import propose_solution
 from agents.roadmap_builder import leer_fases, roadmap_builder
 from agents.resumen_secciones import completar_resumen, resumir_propuesta
+from agents import posicionamiento
 
 from utils import PLATAFORMA_OBJETIVO, load_problem_case
 
@@ -54,6 +55,7 @@ _avisar = None
 def plataforma_node(state: AgentState) -> AgentState:
     """Fallo 67: después del discovery se elige el hiperescalar; su nube manda en todo el informe.
     Fallo 72: lo que ha decidido sale en el chat antes de que empiecen los agentes del informe."""
+    posicionamiento.lanzar(state.get("problem_case", {}))  # fallo 135: en paralelo con las decisiones; no se espera
     progreso.pintar_pendiente()  # fallo 94: la barra sale en 0 en cuanto empieza el informe
     gateway.escribir_cupos("Al empezar el informe")  # fallo 92: cuántas peticiones de Gemini quedan hoy
     progreso.pintar_pendiente()  # fallo 94: la barra sale en 0 en cuanto empieza el informe

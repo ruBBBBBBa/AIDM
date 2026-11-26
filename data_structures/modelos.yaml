@@ -39,6 +39,9 @@ perfiles:
     - gemini/gemini-3.5-flash-lite
     - cloudflare/@cf/openai/gpt-oss-120b   # fallo 98: en lugar de mistral-small-latest (429); ventana de 128K
     - groq/openai/gpt-oss-120b
+  posicionamiento:  # fallo 135: el cuadrante de la pantalla de espera, sin Gemini (su cupo es para el informe)
+    - groq/openai/gpt-oss-120b
+    - cloudflare/@cf/openai/gpt-oss-120b
   codigo:           # Terraform (solo con Infracost)
     - mistral/codestral-latest
     - cloudflare/@cf/qwen/qwen2.5-coder-32b-instruct
@@ -73,6 +76,7 @@ tareas:
   roadmap_ml: tecnico
   roadmap_bi: tecnico
   resumen_secciones: contexto_largo   # fallo 132: la pestaña Resumen del informe (agents/resumen_secciones.py)
+  posicionamiento: posicionamiento    # fallo 135: el cuadrante de posicionamiento (agents/posicionamiento.py)
 
 # Reglas de cada proveedor, para todos sus modelos; las de «modelos:», más abajo, mandan sobre estas.
 # Con SambaNova y NVIDIA, LiteLLM hace 3 conexiones por cada intento (el cliente de OpenAI que usa por debajo reintenta

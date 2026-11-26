@@ -30,4 +30,8 @@ pruebas_modelos/resultados/
 # Fallo 92: las peticiones de hoy a Gemini, entre ejecuciones
 data_structures/cupos_gemini.json
 
+# Fallo 135: el cuadrante de posicionamiento de la última ejecución
+data_structures/posicionamiento.json
+data_structures/posicionamiento.tmp
+
 .idmenv/

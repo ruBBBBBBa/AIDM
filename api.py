@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 # Igual que en interface.py: con la salida a un archivo en Windows, un print raro no debe tumbar el turno.
@@ -39,6 +39,7 @@ for _flujo in (sys.stdout, sys.stderr):
 
 from graph import run_graph  # los módulos pesados se cargan una sola vez, al arrancar el servidor
 from utils import INFORME_GENERADO, fuentes_locales  # fallo 66: el informe sin enlaces a Google Fonts
+from agents import posicionamiento  # fallo 135
 
 DATA = Path("data_structures")
 REPORT_PATH = INFORME_GENERADO  # fallo 116: el informe de la ejecución, no la plantilla
@@ -154,6 +155,7 @@ def reset():
         return JSONResponse({"error": "Hay una ejecución en curso. Espera a que termine."}, status_code=409)
     try:
         shutil.copyfile(DATA / "problem_case_recovery.json", DATA / "problem_case.json")
+        posicionamiento.olvidar(DATA / "posicionamiento.json")  # fallo 135: sin cuadrante, y un hilo tardío no lo escribe
         informe = None
         with _estado_lock:
             estado.update(ocupado=False, fraccion=0.0, texto="", avisos=[], completado=False)
@@ -174,6 +176,16 @@ def get_estado():
     """Progreso real, avisos de la plataforma y si el informe ya está hecho. Se sondea cada 3 s."""
     with _estado_lock:
         return {**estado, "avisos": list(estado["avisos"])}
+
+
+@app.get("/api/posicionamiento")
+def get_posicionamiento():
+    """Fallo 135: el cuadrante de posicionamiento, o 204 mientras no está (o si no lo habrá)."""
+    ruta = DATA / "posicionamiento.json"
+    try:
+        return json.loads(ruta.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return Response(status_code=204)
 
 
 @app.get("/api/informe")

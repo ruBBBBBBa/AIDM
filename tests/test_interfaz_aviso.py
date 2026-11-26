@@ -20,6 +20,7 @@ RAIZ = Path(__file__).resolve().parent.parent  # la carpeta del proyecto (este a
 sys.path.insert(0, str(RAIZ))  # para importar utils, agents, graph… desde aquí
 os.chdir(RAIZ)                 # para que las rutas relativas (data_structures/…) apunten al proyecto
 os.environ["AIDM_DECISION_URL"] = ""  # sin el modelo de decisión, aunque esté en tu .env
+os.environ["AIDM_SIN_POSICIONAMIENTO"] = "1"  # fallo 135: run_graph no lanza el hilo del cuadrante (llamaría a Groq)
 
 import contextlib
 import io

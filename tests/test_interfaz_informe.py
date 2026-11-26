@@ -358,4 +358,24 @@ assert "allow-modals" in re.search(r'<iframe id="report" sandbox="([^"]+)"', Pat
 print("OK 5: la pestaña Resumen va primera; cada enlace llega a un id que existe (con fases «no» y «ya lo tiene» y una "
       "sección sin generar), sin ids repetidos; CRISP-DM oculta y sin enlaces hasta que lea #crisp-datos")
 
-print("\nTodo bien: los fallos 3, 127 y 132 están arreglados.")
+# 6) Fallo 135: GET /api/posicionamiento da 204 sin cuadrante, el JSON cuando está y otra vez 204 tras «Nueva sesión»
+#    (POST /api/reset lo borra). Datos inventados, en la carpeta temporal de la prueba
+shutil.copy(Path("data_structures/problem_case_recovery.json"), api.DATA / "problem_case_recovery.json")
+CUADRANTE = {"area": "Previsión de demanda", "cliente": {"hoy": {"x": 2, "y": 6, "motivo": "Excel"},
+                                                         "con_proyecto": {"x": 6, "y": 8, "motivo": "Previsión"}},
+             "competidores": [{"nombre": "Tejidos Alfa", "x": 8, "y": 9, "motivo": "Analítica propia", "confianza": "media"}]}
+assert api.get_posicionamiento().status_code == 204
+(api.DATA / "posicionamiento.json").write_text(json.dumps(CUADRANTE, ensure_ascii=False), encoding="utf-8")
+assert api.get_posicionamiento() == CUADRANTE
+(api.DATA / "posicionamiento.json").write_text('{"area": "a medi', encoding="utf-8")
+assert api.get_posicionamiento().status_code == 204, "un archivo roto no rompe la web"
+(api.DATA / "posicionamiento.json").write_text(json.dumps(CUADRANTE, ensure_ascii=False), encoding="utf-8")
+actual = api.posicionamiento._actual
+assert api.reset() == {"ok": True}
+assert not (api.DATA / "posicionamiento.json").exists() and api.get_posicionamiento().status_code == 204
+assert api.posicionamiento._actual == actual + 1, "un hilo de la ejecución anterior ya no escribe"
+assert Path("assets/js/cuadrante.js").exists() and "window.pintarCuadrante" in Path("assets/js/cuadrante.js").read_text(
+    encoding="utf-8")
+print("OK 6: /api/posicionamiento da 204, luego el cuadrante, y otra vez 204 tras «Nueva sesión»")
+
+print("\nTodo bien: los fallos 3, 127, 132 y 135 están arreglados.")
