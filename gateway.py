@@ -81,7 +81,7 @@ def _escribir(linea: str) -> None:
 # El 14 nov, Mistral Large 4 contestó 403 «This model is not available in your subscription tier» (tier_not_allowed)
 # en las 7 llamadas de redacción; LiteLLM reintentó cada una dos veces antes de pasar a Gemini. Ese error no se arregla
 # repitiendo: no se reintenta, el modelo se salta durante el resto del proceso y el log lo dice una sola vez.
-_FUERA_DEL_PLAN = re.compile(r"tier_not_allowed|not available in your subscription tier", re.IGNORECASE)
+_FUERA_DEL_PLAN = re.compile(r"tier_not_allowed|not available in your subscription tier|billing_no_api_budget_configured|You need a subscription|payment method is required", re.IGNORECASE)
 _saltados: dict[str, str] = {}  # modelo → por qué se salta
 _bloqueo_saltados = threading.Lock()
 
